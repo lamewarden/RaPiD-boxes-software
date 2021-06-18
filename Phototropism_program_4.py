@@ -1,3 +1,5 @@
+__author__ = 'Lamewarden'
+
 import sys  # library for arguments
 import picamera
 import time
