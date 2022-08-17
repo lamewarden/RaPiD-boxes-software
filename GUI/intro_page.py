@@ -16,7 +16,7 @@ import subprocess
 
 
 # LED strip configuration:
-LED_COUNT = 35  # Number of LED pixels.
+LED_COUNT = 20  # Number of LED pixels.
 LED_PIN = 18  # GPIO pin connected to the pixels (real nuber is 12) (must support PWM!).
 LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
 LED_DMA = 10  # DMA channel to use for generating signal (try 10)
@@ -324,10 +324,10 @@ def launch():
         """ Creating a window with a progress bar and info of the experiment stage"""
 
         # Setting user name and folder name
-        subprocess.call('python3 /home/pi/camera/Apps/experiment_status.py &', shell=True)
+        subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py &', shell=True)
         users_folders()
         meta_data_file_create()
-        meta_data_file_create("/home/pi/camera/Apps/meta_data.py")
+        meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
         # init colored photo
         init_photo(int(color[0]), int(color[1]), int(color[2]), int(color[3]), 'init_photo')
         # starting AH cycle
