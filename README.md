@@ -17,6 +17,8 @@ WaveShare 4.3' TFT resistive display was used for the grafical user interface op
 - [Controlling Python script](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/terminal_interface/Phototropism_program_4.py)
 
 [4. Files for GUI-based control](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/GUI)
+- [External library to control NeoPixel RGB LEDs](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/GUI/rpi_ws281x-master)
+- 
 
 [5. Examples](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/examples)
 
