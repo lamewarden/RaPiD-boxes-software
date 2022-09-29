@@ -36,7 +36,7 @@ WaveShare 4.3' TFT resistive display was used for the grafical user interface op
 ### GUI mode
 1. Locate RaPiD-boxes_software folder to `/home/pi/camera`;
 2. Make all `*.py` files in `RaPiD-boxes-software/GUI/` executable by `sudo chmod +x <filename>`;
-3. Run `intro_page.py` file as root (unfortunatelly some libraries inside require superuser rights).
+3. Run `intro_page.py` file as root (unfortunatelly some libraries require superuser rights).
 
 
 
