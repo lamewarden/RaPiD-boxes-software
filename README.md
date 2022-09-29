@@ -1,9 +1,12 @@
 # RaPiD-chambers-software
-This setup is aimed to visualize gravity or light-stimulated movements of the plant seedlings. 
-Raspberry PI3B+ was selected as a platform. For imaging Raspberry PiNoir v2 camera was used, coupled with 
-12 IR (880nm) LED illumination to avoid undesirable light responce in plants. 
-For the Lateral and top-down illumination adafruit NeoPixel RGBW LED stripes with 60 LEDs/m were used.
-WaveShare 4.3' TFT resistive display was used for the grafical user interface operation.
+This setup is aimed at visualizing gravity or light-stimulated movements of the plant seedlings. 
+Raspberry PI3B+ was selected as a platform. For imaging, a Raspberry PiNoir v2 camera was used, coupled with 
+12 IR (880nm) LED illumination to avoid undesirable light responses in plants. 
+For the Lateral and top-down illumination adafruit, NeoPixel RGBW LED stripes with 60 LEDs/m were used.
+WaveShare 4.3' TFT resistive display was used for the graphical user interface operation.
+
+## Contacts:
+For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
 
 
 
