@@ -20,7 +20,7 @@ For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
 - [Controlling Python script](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/terminal_interface/Phototropism_program_4.py)
 
 [4. Files for GUI-based control](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/GUI);
-- [External library to control NeoPixel RGB LEDs](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/GUI/rpi_ws281x-master);
+- [External library to control NeoPixel RGB LEDs](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/GUI/rpi_ws281x-master), written by [richardghirst](https://github.com/richardghirst);
 - [Main program file](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/GUI/intro_page.py);
 - [Experiment status window](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/GUI/experiment_status.py);
 - [Control buttons](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/GUI/controls.py);
