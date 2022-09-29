@@ -23,7 +23,6 @@ WaveShare 4.3' TFT resistive display was used for the grafical user interface op
 - [Control buttons](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/GUI/controls.py);
 
 [5. Examples](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/examples)
-[6. Additional setup steps, preparing Raspberry to the ]
 
 
 ## Operating manual
