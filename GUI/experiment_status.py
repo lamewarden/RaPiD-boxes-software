@@ -9,7 +9,10 @@ import tkinter as tk
 from tkinter.messagebox import showinfo
 from PIL import ImageTk, Image
 import glob
+import subprocess
 
+# setting working directory
+os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
 def update_progress_label():
     return f"Current Progress: {round((((timeit.default_timer() - start_time)/3600)/total_experiment_length) * 100, 3)}%"
@@ -31,6 +34,11 @@ def show_file():
     label1.grid(column=4, row=1, rowspan =7, columnspan=3)
 
 
+def meta_data_file_update(meta_loc='meta_data.py'):
+        f = open(meta_loc, "a+")
+        f.write(f"status_process_PID={os.getpid()}\r\n")
+        f.close()
+
 def loop_function():
     k = 0
     counter = 0
@@ -44,15 +52,15 @@ def loop_function():
         time.sleep(1)
         pr_win.update_idletasks()
         print(counter)
+        print(os.getpid())
         if counter % 3600 == 0 or counter == 20:
             show_file()
     pr_win.after(100, showinfo(message='The progress completed!'))
 
-# waiting till the initial picture is made
-# time.sleep(20)
 
 # experiment start time
 start_time = timeit.default_timer()
+proccess_pid = os.getpid()
 
 
 """ Creating a window with a progress bar and info of the experiment stage"""
@@ -64,13 +72,13 @@ progress_label.config(font=("Arial", 18, 'bold'), anchor="center")
 progress_label.grid(rowspan=1, columnspan=2, column=0, ipadx=1, ipady=15)
 # Buttons
 # Kill the app
-kill_butt = tk.Button(pr_win, text="Close", width=16, bg='white', command=pr_win.destroy)
-kill_butt.grid(row=1, column=0, ipadx=5, ipady=5, sticky='w')
-kill_butt.config(font=("Arial", 14, 'bold'), bg='white')
-# reboot hte system
-restart_butt = tk.Button(pr_win, text="Reboot", width=16, bg='white', command=lambda: os.system('reboot now'))
-restart_butt.grid(row=1, column=1, ipadx=5, ipady=5, sticky='w')
-restart_butt.config(font=("Arial", 14, 'bold'), bg='white')
+# kill_butt = tk.Button(pr_win, text="Close", width=16, bg='white', command=pr_win.destroy)
+# kill_butt.grid(row=1, column=0, ipadx=5, ipady=5, sticky='w')
+# kill_butt.config(font=("Arial", 14, 'bold'), bg='white')
+# # reboot hte system
+# restart_butt = tk.Button(pr_win, text="Reboot", width=16, bg='white', command=lambda: os.system('reboot now'))
+# restart_butt.grid(row=1, column=1, ipadx=5, ipady=5, sticky='w')
+# restart_butt.config(font=("Arial", 14, 'bold'), bg='white')
 
 # Total progress bar
 MAX = 30
@@ -119,8 +127,14 @@ loc_info.config(font=("Arial", 14, 'bold'), anchor="w")
 loc_info.grid(row=6, columnspan=2, column=0, ipadx=1, ipady=15)
 
 
+# Updating meta-data
+meta_data_file_update()
 
+subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/controls.py &', shell=True)
 
-
+# refreshing the screen
 loop_function()
+
+
+
 pr_win.mainloop()
