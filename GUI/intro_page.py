@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/bin/python3
 
 import tkinter as tk
 from tkinter import ttk
@@ -14,9 +14,11 @@ from rpi_ws281x import *
 import numpy as np
 import subprocess
 
+# setting working directory
+os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
 # LED strip configuration:
-LED_COUNT = 20  # Number of LED pixels.
+LED_COUNT = 70  # Number of LED pixels.
 LED_PIN = 18  # GPIO pin connected to the pixels (real nuber is 12) (must support PWM!).
 LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
 LED_DMA = 10  # DMA channel to use for generating signal (try 10)
@@ -277,17 +279,19 @@ def warning_message(message):
 
 
 def launch():
-    def meta_data_file_create(meta_loc='meta_data.txt'):
+    def meta_data_file_create(meta_loc='meta_data.py'):
         f = open(meta_loc, "w+")
         f.write("# Experiment info\r\n")
         f.close()
         f = open(meta_loc, "a+")
         f.write(f"total_experiment_length={total_experiment_length}\r\n")
+        f.write(f"prelight_decision={prelight_decision}\r\n")
         f.write(f"apical_decision={apical_decision}\r\n")
         f.write(f"apical_hours={total_hours}\r\n")
         f.write(f"ph_decision={ph_decision}\r\n")
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
-        f.write(f"location='{os.getcwd()}'")
+        f.write(f"location='{os.getcwd()}'\r\n")
+        f.write(f"main_process_PID={os.getpid()}\r\n")
         f.close()
 
 
@@ -299,6 +303,7 @@ def launch():
     else:
 
         ''' Controlling part'''
+        prelight_decision = pre_light.get() # checking if we want to have 6h pre illumination stage
         apical_decision = ah_choice.get()  # argument which turns off apical hook opening tracing (making pictures of it)
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
@@ -330,6 +335,8 @@ def launch():
         meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
         # init colored photo
         init_photo(int(color[0]), int(color[1]), int(color[2]), int(color[3]), 'init_photo')
+        # Initial illumination
+        initial_ill(prelight_decision)
         # starting AH cycle
         ah_cycle(pic_num, apical_decision, period_sec)
         # starting ph cycle (or not starting)
@@ -338,9 +345,21 @@ def launch():
         init_photo(0, 0, 0, 10, 'final_photo')
 
 
-def colorWipe(strip, palette, wait_ms=50):
-    """Wipe color across display a pixel at a time."""
-    for i in range(strip.numPixels()):
+def initial_ill(prelight_decision):
+    if prelight_decision == 1:
+        for i in range(360):
+            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
+            time.sleep(600)
+        colorWipe(strip, Color(0, 0, 0, 0), 0)
+    else:
+        colorWipe(strip, Color(0, 0, 0, 0), 0)
+
+
+def colorWipe(strip, palette, wait_ms=50, strip_length=[0,22]):
+    """Updated color Wipe.
+    Wipe color across display a pixel at a time"""
+    for i in range(strip_length[0],strip_length[1]):   # range of illuminated LEDs is defined
+        print(i)
         strip.setPixelColor(i, palette)
         strip.show()
         time.sleep(wait_ms / 1000.0)
