@@ -42,8 +42,8 @@ For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
 7.  Enable automatic login
     Assuming your using the default username and password.
 
-- From the command line enter 'sudo raspi-config'
-- Select 'Boot Options', 'Desktop/CLI', 'Console Autologin'
+- From the command line enter `sudo raspi-config`
+- Select `Boot Options`, `Desktop/CLI`, `Console Autologin`
 
 8. Install neopixel for python3:
 `sudo pip3 install rpi_ws281x adafruit-circuitpython-neopixel`
