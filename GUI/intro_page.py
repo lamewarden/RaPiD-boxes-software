@@ -14,6 +14,7 @@ from rpi_ws281x import *
 import numpy as np
 import subprocess
 
+
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
@@ -505,19 +506,29 @@ window.configure(background='white')
 launch_button = tk.Button(window, text="Launch", width=16, command=launch)
 launch_button.grid(row=1, column=3, ipady=10, ipadx=5, sticky='e')
 launch_button.config(font=("Arial", 14, 'bold'), bg='white')
+
 # close
 close_butt = tk.Button(window, text="Close", width=16, bg='white', command=window.destroy)
 close_butt.grid(row=1, column=0, ipadx=5, ipady=10, sticky='w')
 close_butt.config(font=("Arial", 14, 'bold'), bg='white')
+
 # user
 usr_name = tk.Button(window, text="Select user", width=16, bg='white', command=lambda: open_username('user name'))
 usr_name.grid(row=1, column=1, ipadx=5, ipady=10, sticky='w')
 usr_name.config(font=("Arial", 14, 'bold'), bg='white')
+
 # experiment_name
 exp_name = tk.Button(window, text="Experiment name", width=16, bg='white',
                      command=lambda: open_username('experiment name'))
 exp_name.grid(row=1, column=2, ipadx=5, ipady=10, sticky='w')
 exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+
+#focus
+exp_name = tk.Button(window, text="Focus", width=16, bg='white',
+                     command=lambda: open_username('experiment name'))
+exp_name.grid(row=1, column=5, ipadx=5, ipady=10, sticky='w')
+exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+
 
 ### Checkboxes ###
 

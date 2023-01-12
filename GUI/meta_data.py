@@ -1,10 +1,10 @@
 # Experiment info
-total_experiment_length=110
+total_experiment_length=171
 prelight_decision=1
-apical_decision=0
-apical_hours=90
+apical_decision=1
+apical_hours=131
 ph_decision=1
-light=[0, 242, 0, 0]
-location='/home/pi/camera/Experiments/767/2022.11.03_PI3__TYU'
-main_process_PID=2349
-status_process_PID=2377
+light=[255, 0, 255, 0]
+location='/home/pi/camera/Experiments/HHRJTKJ/2022.11.09_PI3__TTRUJT'
+main_process_PID=663
+status_process_PID=882
