@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk
+import tkinter.font as font
 import socket
 import picamera
 import time
@@ -114,6 +115,13 @@ def open_username(username_dict):
         p_label.config(font=("Arial", 15, 'bold'))
         p_label.grid(row=0, column=0, ipadx=1, ipady=15)
         p.after(3000, key.destroy)
+        
+        
+def streaming(timer=20):
+    camera = picamera.PiCamera()
+    camera.start_preview()
+    time.sleep(timer)
+    camera.stop_preview()
 
     key = tk.Toplevel(window)  # key window name
     key.title('Cool custom keyboard')  # title Name
@@ -501,33 +509,46 @@ window.title("RaPiDBox v 1" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 
-# ### Navigation buttons
-# run
-launch_button = tk.Button(window, text="Launch", width=16, command=launch)
-launch_button.grid(row=1, column=3, ipady=10, ipadx=5, sticky='e')
-launch_button.config(font=("Arial", 14, 'bold'), bg='white')
+# defining font size
+f = font.Font(size=14, family="Arial", weight="bold")
 
-# close
-close_butt = tk.Button(window, text="Close", width=16, bg='white', command=window.destroy)
-close_butt.grid(row=1, column=0, ipadx=5, ipady=10, sticky='w')
-close_butt.config(font=("Arial", 14, 'bold'), bg='white')
+# # ### Navigation buttons
+gridframe = tk.Frame(window)
+gridframe.grid(row=1, column=0, columnspan=4,  ipady=0, ipadx=0, sticky='e')
+close_butt = tk.Button(gridframe, text='Close',width = 13, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
+user_name = tk.Button(gridframe, text='User',width = 13, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
+exp_name = tk.Button(gridframe, text='Folder',width = 13, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
+focus = tk.Button(gridframe, text='Live',width = 13, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
+launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
 
-# user
-usr_name = tk.Button(window, text="Select user", width=16, bg='white', command=lambda: open_username('user name'))
-usr_name.grid(row=1, column=1, ipadx=5, ipady=10, sticky='w')
-usr_name.config(font=("Arial", 14, 'bold'), bg='white')
 
-# experiment_name
-exp_name = tk.Button(window, text="Experiment name", width=16, bg='white',
-                     command=lambda: open_username('experiment name'))
-exp_name.grid(row=1, column=2, ipadx=5, ipady=10, sticky='w')
-exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+# # ### Navigation buttons
+# # run
+# launch_button = tk.Button(window, text="Launch", width=16, command=launch)
+# launch_button.grid(row=1, column=3, ipady=10, ipadx=5, sticky='e')
+# launch_button.config(font=("Arial", 14, 'bold'), bg='white')
 
-#focus
-exp_name = tk.Button(window, text="Focus", width=16, bg='white',
-                     command=lambda: open_username('experiment name'))
-exp_name.grid(row=1, column=5, ipadx=5, ipady=10, sticky='w')
-exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+# # close
+# close_butt = tk.Button(window, text="Close", width=16, bg='white', command=window.destroy)
+# close_butt.grid(row=1, column=0, ipadx=5, ipady=10, sticky='w')
+# close_butt.config(font=("Arial", 14, 'bold'), bg='white')
+
+# # user
+# usr_name = tk.Button(window, text="Select user", width=16, bg='white', command=lambda: open_username('user name'))
+# usr_name.grid(row=1, column=1, ipadx=5, ipady=10, sticky='w')
+# usr_name.config(font=("Arial", 14, 'bold'), bg='white')
+
+# # experiment_name
+# exp_name = tk.Button(window, text="Experiment name", width=16, bg='white',
+#                      command=lambda: open_username('experiment name'))
+# exp_name.grid(row=1, column=2, ipadx=5, ipady=10, sticky='w')
+# exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+
+# #focus
+# exp_name = tk.Button(window, text="Focus", width=16, bg='white',
+#                      command=lambda: open_username('experiment name'))
+# exp_name.grid(row=2, column=4, ipadx=5, ipady=10, sticky='w')
+# exp_name.config(font=("Arial", 14, 'bold'), bg='white')
 
 
 ### Checkboxes ###
