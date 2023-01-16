@@ -14,8 +14,8 @@ from fractions import Fraction
 from rpi_ws281x import *
 import numpy as np
 import subprocess
-import imageio
 from fish import *
+import imageio
 
 
 # setting working directory
@@ -83,6 +83,7 @@ def color_switcher():
     color_var[1] = green_choice.get()
     color_var[2] = blue_choice.get()
     
+    
 def streaming(timer=40000):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
     colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
@@ -93,7 +94,6 @@ def streaming(timer=40000):
     # time.sleep(timer)
     # camera.stop_preview()
     colorWipe(strip, Color(0, 0, 0, 0), 0)
-
 
 
 def open_username(username_dict):
@@ -360,6 +360,9 @@ def launch():
         bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
+        # Processing
+        unfishing()
+        
 
 
 def initial_ill(prelight_decision, sleep_time=600):
@@ -505,6 +508,14 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     GPIO.cleanup()
 
+
+def unfishing(distortion=-0.067):
+    for file in os.listdir():
+        f = os.path.join(os.getcwd(), file)
+        if f[-3:] == 'jpg':
+            imgobj = imageio.imread(f)
+            output_img = fish(imgobj, distortion)
+            imageio.imwrite(str(file[:-4] + '_processed'), output_img, format='png')
 
 
 # Variables
