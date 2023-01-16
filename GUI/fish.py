@@ -1,4 +1,5 @@
-import imageio
+import imageio.v3 as iio
+
 import numpy as np
 from math import sqrt
 import sys
@@ -100,7 +101,7 @@ def parse_args(args=sys.argv[1:]):
 if __name__ == "__main__":
     args = parse_args()
     try:
-        imgobj = imageio.imread(args.image)
+        imgobj = iio.imread(args.image)
     except Exception as e:
         print(e)
         sys.exit(1)
@@ -112,4 +113,4 @@ if __name__ == "__main__":
             sys.exit(0)
     
     output_img = fish(imgobj, args.distortion)
-    imageio.imwrite(args.outpath, output_img, format='png')
+    iio.imwrite(args.outpath, output_img, format='png')

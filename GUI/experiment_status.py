@@ -70,15 +70,7 @@ pr_win.geometry('800x450')
 progress_label = tk.Label(pr_win, text="Experiment is running")
 progress_label.config(font=("Arial", 18, 'bold'), anchor="center")
 progress_label.grid(rowspan=1, columnspan=2, column=0, ipadx=1, ipady=15)
-# Buttons
-# Kill the app
-# kill_butt = tk.Button(pr_win, text="Close", width=16, bg='white', command=pr_win.destroy)
-# kill_butt.grid(row=1, column=0, ipadx=5, ipady=5, sticky='w')
-# kill_butt.config(font=("Arial", 14, 'bold'), bg='white')
-# # reboot hte system
-# restart_butt = tk.Button(pr_win, text="Reboot", width=16, bg='white', command=lambda: os.system('reboot now'))
-# restart_butt.grid(row=1, column=1, ipadx=5, ipady=5, sticky='w')
-# restart_butt.config(font=("Arial", 14, 'bold'), bg='white')
+
 
 # Total progress bar
 MAX = 30
