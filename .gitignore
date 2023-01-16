@@ -2,7 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+*.pyc
+*.png
+*.jpg
 # C extensions
 *.so
 
@@ -114,7 +116,7 @@ venv.bak/
 .spyderproject
 .spyproject
 
-# Rope project settings
+# Rope projegitct settings
 .ropeproject
 
 # mkdocs documentation

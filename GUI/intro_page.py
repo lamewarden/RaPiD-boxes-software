@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk
+import tkinter.font as font
 import socket
 import picamera
 import time
@@ -13,6 +14,9 @@ from fractions import Fraction
 from rpi_ws281x import *
 import numpy as np
 import subprocess
+from fish import *
+import imageio
+
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
@@ -78,6 +82,18 @@ def color_switcher():
     color_var[0] = red_choice.get()
     color_var[1] = green_choice.get()
     color_var[2] = blue_choice.get()
+    
+    
+def streaming(timer=40000):
+    colorWipe(strip, Color(0, 0, 0, 0), 0)
+    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
+    subprocess.call("raspistill -t {}".format(timer), shell=True)
+    # camera = picamera.PiCamera()
+    # camera.resolution = '1280 x 720'
+    # camera.start_preview()
+    # time.sleep(timer)
+    # camera.stop_preview()
+    colorWipe(strip, Color(0, 0, 0, 0), 0)
 
 
 def open_username(username_dict):
@@ -113,7 +129,8 @@ def open_username(username_dict):
         p_label.config(font=("Arial", 15, 'bold'))
         p_label.grid(row=0, column=0, ipadx=1, ipady=15)
         p.after(3000, key.destroy)
-
+        
+        
     key = tk.Toplevel(window)  # key window name
     key.title('Cool custom keyboard')  # title Name
 
@@ -343,22 +360,25 @@ def launch():
         bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
+        # Processing
+        unfishing()
+        
 
 
-def initial_ill(prelight_decision):
+def initial_ill(prelight_decision, sleep_time=600):
     if prelight_decision == 1:
         for i in range(360):
             colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
-            time.sleep(600)
+            time.sleep(sleep_time)
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     else:
         colorWipe(strip, Color(0, 0, 0, 0), 0)
 
 
-def colorWipe(strip, palette, wait_ms=50, strip_length=[0,22]):
+def colorWipe(strip, palette, wait_ms=50, strip_length=[0,22], step=1):
     """Updated color Wipe.
     Wipe color across display a pixel at a time"""
-    for i in range(strip_length[0],strip_length[1]):   # range of illuminated LEDs is defined
+    for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
         print(i)
         strip.setPixelColor(i, palette)
         strip.show()
@@ -393,7 +413,7 @@ def init_photo(r, g, b, w, text):
     with picamera.PiCamera() as camera:
         camera.resolution = (3280, 2464)
         camera.framerate = 0.2
-        camera.shutter_speed = 700000
+        camera.shutter_speed = 400000
         camera.exposure_mode = 'off'
         camera.iso = 200
         time.sleep(5)
@@ -414,7 +434,7 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 400000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off of autoexposure
                 camera.iso = 100
                 # Give the camera a good long time to measure AWB
@@ -433,7 +453,7 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 400000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off autoexposure
                 camera.iso = 100
                 # Give the camera a good long time to measure AWB
@@ -470,7 +490,7 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 400000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off of autoexposure
                 camera.iso = 100
                 # Give the camera a good long time to measure AWB
@@ -489,6 +509,14 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
     GPIO.cleanup()
 
 
+def unfishing(distortion=-0.067):
+    for file in os.listdir():
+        f = os.path.join(os.getcwd(), file)
+        if f[-3:] == 'jpg':
+            imgobj = imageio.imread(f)
+            output_img = fish(imgobj, distortion)
+            imageio.imwrite(str(file[:-4] + '_processed'), output_img, format='png')
+
 
 # Variables
 username = {'experiment name': '', 'user name': ''}  # global variable
@@ -500,24 +528,18 @@ window.title("RaPiDBox v 1" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 
-# ### Navigation buttons
-# run
-launch_button = tk.Button(window, text="Launch", width=16, command=launch)
-launch_button.grid(row=1, column=3, ipady=10, ipadx=5, sticky='e')
-launch_button.config(font=("Arial", 14, 'bold'), bg='white')
-# close
-close_butt = tk.Button(window, text="Close", width=16, bg='white', command=window.destroy)
-close_butt.grid(row=1, column=0, ipadx=5, ipady=10, sticky='w')
-close_butt.config(font=("Arial", 14, 'bold'), bg='white')
-# user
-usr_name = tk.Button(window, text="Select user", width=16, bg='white', command=lambda: open_username('user name'))
-usr_name.grid(row=1, column=1, ipadx=5, ipady=10, sticky='w')
-usr_name.config(font=("Arial", 14, 'bold'), bg='white')
-# experiment_name
-exp_name = tk.Button(window, text="Experiment name", width=16, bg='white',
-                     command=lambda: open_username('experiment name'))
-exp_name.grid(row=1, column=2, ipadx=5, ipady=10, sticky='w')
-exp_name.config(font=("Arial", 14, 'bold'), bg='white')
+# defining font size
+f = font.Font(size=14, family="Arial", weight="bold")
+
+# # ### Navigation buttons
+gridframe = tk.Frame(window)
+gridframe.grid(row=1, column=0, columnspan=4,  ipady=0, ipadx=0, sticky='e')
+close_butt = tk.Button(gridframe, text='Close',width = 13, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
+user_name = tk.Button(gridframe, text='User',width = 13, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
+exp_name = tk.Button(gridframe, text='Folder',width = 13, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
+focus = tk.Button(gridframe, text='Live',width = 13, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
+launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
+
 
 ### Checkboxes ###
 
@@ -558,14 +580,14 @@ w1.config(font=("Arial", 12, 'bold'), bg='white')
 
 # phototrop experiment length
 PH_label = "Phototropic bending experiment length (hours):"
-w2 = tk.Scale(window, from_=0, to=80, width=26, tickinterval=10, label=PH_label, variable=ph_value, orient='horizontal')
+w2 = tk.Scale(window, from_=0, to=80, width=26, tickinterval=20, label=PH_label, variable=ph_value, orient='horizontal')
 w2.set(20)
 w2.grid(row=6, column=0, ipadx=147, ipady=1, columnspan=2)
 w2.config(font=("Arial", 12, 'bold'), bg='white')
 
 # Frequency of imaging
 freq_label = "Interval between images (minutes):"
-w3 = tk.Scale(window, from_=0, to=240, width=26, tickinterval=50, label=freq_label, variable=freq_value,
+w3 = tk.Scale(window, from_=10, to=240, width=26, tickinterval=30, label=freq_label, variable=freq_value,
               orient='horizontal')
 w3.set(20)
 w3.grid(row=5, columnspan=2, column=2, rowspan=1, ipadx=144, ipady=1, sticky='w')
@@ -573,7 +595,7 @@ w3.config(font=("Arial", 12, 'bold'), bg='white')
 
 # Light intencity
 light_power_label = "Light intensity:"
-w4 = tk.Scale(window, from_=0, to=255, width=26, tickinterval=50, label=light_power_label, variable=light_power,
+w4 = tk.Scale(window, from_=0, to=100, width=26, tickinterval=10, label=light_power_label, variable=light_power,
               orient='horizontal')
 w4.set(10)
 w4.grid(row=6, columnspan=2, column=2, rowspan=1, ipadx=144, ipady=1, sticky='w')
