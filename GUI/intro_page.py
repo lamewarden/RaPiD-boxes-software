@@ -80,6 +80,13 @@ def color_switcher():
     color_var[0] = red_choice.get()
     color_var[1] = green_choice.get()
     color_var[2] = blue_choice.get()
+    
+def streaming(timer=20):
+    camera = picamera.PiCamera()
+    camera.start_preview()
+    time.sleep(timer)
+    camera.stop_preview()
+
 
 
 def open_username(username_dict):
@@ -117,12 +124,6 @@ def open_username(username_dict):
         p.after(3000, key.destroy)
         
         
-def streaming(timer=20):
-    camera = picamera.PiCamera()
-    camera.start_preview()
-    time.sleep(timer)
-    camera.stop_preview()
-
     key = tk.Toplevel(window)  # key window name
     key.title('Cool custom keyboard')  # title Name
 
