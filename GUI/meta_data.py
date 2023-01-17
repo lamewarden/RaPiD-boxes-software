@@ -1,10 +1,10 @@
 # Experiment info
-total_experiment_length=110
+total_experiment_length=1
 prelight_decision=0
 apical_decision=1
-apical_hours=90
-ph_decision=1
-light=[0, 10, 0, 0]
-location='/home/pi/camera/Experiments/default_user/2023.01.16_PI3__T3'
-main_process_PID=3733
-status_process_PID=3775
+apical_hours=1
+ph_decision=0
+light=[100, 100, 100, 0]
+location='/home/pi/camera/Experiments/IVAN/2023.01.16_PI3__TEST2'
+main_process_PID=811
+status_process_PID=1281

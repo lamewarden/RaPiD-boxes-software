@@ -55,7 +55,7 @@ def loop_function():
         print(os.getpid())
         if counter % 3600 == 0 or counter == 20:
             show_file()
-    pr_win.after(100, showinfo(message='The progress completed!'))
+    pr_win.after(100, showinfo(message='The experiment is finished!'))
 
 
 # experiment start time
@@ -73,7 +73,7 @@ progress_label.grid(rowspan=1, columnspan=2, column=0, ipadx=1, ipady=15)
 
 
 # Total progress bar
-MAX = 30
+MAX = 102
 progress_var = tk.DoubleVar() #here you have ints but when calc. %'s usually floats
 theLabel = tk.Label(pr_win, text="Sample text to show")
 progressbar = ttk.Progressbar(pr_win, variable=progress_var,

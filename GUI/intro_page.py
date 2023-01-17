@@ -325,7 +325,8 @@ def launch():
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
         total_hours_blue = ph_value.get()  # for how long we want blue LEDs on (hours)
-        total_experiment_length = total_hours + total_hours_blue
+        processing_time_hours = (total_hours + total_hours_blue * (60/period_min) * 8)/60
+        total_experiment_length = total_hours + total_hours_blue + processing_time_hours
 
         # intensity of the light
         light_intensity = light_power.get()
@@ -467,9 +468,9 @@ def ah_cycle(pic_num, apical_decision, period_sec):
             exists = os.path.isfile("./current_look_{}(dark_stage).jpg".format(i-1))
             if exists:
                 os.remove("./current_look_{}(dark_stage).jpg".format(i-1))
+        GPIO.cleanup()
         elapsed = timeit.default_timer() - start_time
         time.sleep(float(period_sec) - elapsed)
-    GPIO.cleanup()
 
 
 def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec):
