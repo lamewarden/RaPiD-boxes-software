@@ -305,6 +305,8 @@ def launch():
         f.write(f"prelight_decision={prelight_decision}\r\n")
         f.write(f"apical_decision={apical_decision}\r\n")
         f.write(f"apical_hours={total_hours}\r\n")
+        f.write(f"phototropic_hours={total_hours_blue}\r\n")
+        f.write(f"processing_hours={processing_time_hours}\r\n")
         f.write(f"ph_decision={ph_decision}\r\n")
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
@@ -325,7 +327,7 @@ def launch():
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
         total_hours_blue = ph_value.get()  # for how long we want blue LEDs on (hours)
-        processing_time_hours = (total_hours + total_hours_blue * (60/period_min) * 8)/60
+        processing_time_hours = round((total_hours + total_hours_blue * (60/period_min) * 8)/60, 3)
         total_experiment_length = total_hours + total_hours_blue + processing_time_hours
 
         # intensity of the light
