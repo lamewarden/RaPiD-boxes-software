@@ -1,11 +1,8 @@
 # RaPiD-chambers-software
 Original publication - 
 [RaPiD-chamber: Easy to self-assemble live-imaging chamber with adjustable LEDs allows to track small differences in dynamic plant movement adaptation on tissue level](https://www.biorxiv.org/content/10.1101/2022.08.13.503848v1)
-This setup is aimed at visualizing gravity or light-stimulated movements of the plant seedlings. 
-Raspberry PI3B+ was selected as a platform. For imaging, a Raspberry PiNoir v2 camera was used, coupled with 
-12 IR (880nm) LED illumination to avoid undesirable light responses in plants. 
-For the Lateral and top-down illumination adafruit, NeoPixel RGBW LED stripes with 60 LEDs/m were used.
-WaveShare 4.3' TFT resistive display was used for the graphical user interface operation.
+
+This project is designed to show how plants move in response to gravity or light. To accomplish this, a Raspberry PI3B+ computer and a Raspberry PiNoir v2 camera which is IR-sensitive were used. Illumination is set up with 12 infrared (IR) lights to prevent unwanted reactions from the plants. To create light stimuli for dark grown plants, Adafruit NeoPixel RGBW LED stripes with 60 LEDs per meter were used for both lateral and top-down illumination. The project also uses a WaveShare 4.3-inch TFT resistive display to create a graphical user interface for operation.
 
 ## Contacts:
 For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
