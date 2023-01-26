@@ -1,4 +1,6 @@
 # RaPiD-chambers-software
+Original publication - 
+[RaPiD-chamber: Easy to self-assemble live-imaging chamber with adjustable LEDs allows to track small differences in dynamic plant movement adaptation on tissue level](https://www.biorxiv.org/content/10.1101/2022.08.13.503848v1)
 This setup is aimed at visualizing gravity or light-stimulated movements of the plant seedlings. 
 Raspberry PI3B+ was selected as a platform. For imaging, a Raspberry PiNoir v2 camera was used, coupled with 
 12 IR (880nm) LED illumination to avoid undesirable light responses in plants. 
