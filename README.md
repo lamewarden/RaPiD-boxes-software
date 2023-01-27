@@ -26,10 +26,10 @@ For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
 
 [5. Examples](https://github.com/lamewarden/RaPiD-boxes-software/tree/main/examples)
 
+[6. Operating manual](https://github.com/lamewarden/RaPiD-boxes-software/blob/main/Manual.pdf)
 
-## Operating manual
 
-### Initial setup:
+## Initial setup:
 1.  Update packages:
     `sudo apt-get install python3-pil python3-pil.imagetk`
 2.  Autohide top panel
