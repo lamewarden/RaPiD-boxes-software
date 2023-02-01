@@ -96,7 +96,7 @@ exp_info.grid(row=5, columnspan=2, column=0, ipadx=1, ipady=15)
 
 # Assay type
 if apical_decision == 1 and ph_decision == 1:
-    ap_h_info = tk.Label(pr_win, text=f"Ap.hook {round(apical_hours,1)}h + phototropism {round(phototropic_hours, 1)}h \r\nprocessing{round(processing_hours,1)}h")
+    ap_h_info = tk.Label(pr_win, text=f"Ap.hook {round(apical_hours,1)}h + phototropism {round(phototropic_hours, 1)}h \r\nprocessing {round(processing_hours,1)}h")
     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130,  rowspan =2)
 elif apical_decision == 0 and ph_decision == 1:
