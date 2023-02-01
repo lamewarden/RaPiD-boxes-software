@@ -82,11 +82,11 @@ def color_switcher():
     color_var[0] = red_choice.get()
     color_var[1] = green_choice.get()
     color_var[2] = blue_choice.get()
-    
-    
+
+
 def streaming(timer=40000):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
-    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
+    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], wait_ms=0, step=3)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
@@ -129,8 +129,8 @@ def open_username(username_dict):
         p_label.config(font=("Arial", 15, 'bold'))
         p_label.grid(row=0, column=0, ipadx=1, ipady=15)
         p.after(3000, key.destroy)
-        
-        
+
+
     key = tk.Toplevel(window)  # key window name
     key.title('Cool custom keyboard')  # title Name
 
@@ -305,6 +305,8 @@ def launch():
         f.write(f"prelight_decision={prelight_decision}\r\n")
         f.write(f"apical_decision={apical_decision}\r\n")
         f.write(f"apical_hours={total_hours}\r\n")
+        f.write(f"phototropic_hours={total_hours_blue}\r\n")
+        f.write(f"processing_hours={processing_time_hours}\r\n")
         f.write(f"ph_decision={ph_decision}\r\n")
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
@@ -325,7 +327,8 @@ def launch():
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
         total_hours_blue = ph_value.get()  # for how long we want blue LEDs on (hours)
-        total_experiment_length = total_hours + total_hours_blue
+        processing_time_hours = round((total_hours + total_hours_blue * (60/period_min) * 8)/60, 3)
+        total_experiment_length = total_hours + total_hours_blue + processing_time_hours
 
         # intensity of the light
         light_intensity = light_power.get()
@@ -362,24 +365,23 @@ def launch():
         init_photo(0, 0, 0, 10, 'final_photo')
         # Processing
         unfishing()
-        
+
 
 
 def initial_ill(prelight_decision, sleep_time=600):
     if prelight_decision == 1:
         for i in range(360):
-            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
+            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64], wait_ms=0)
             time.sleep(sleep_time)
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     else:
         colorWipe(strip, Color(0, 0, 0, 0), 0)
 
 
-def colorWipe(strip, palette, wait_ms=50, strip_length=[0,22], step=1):
+def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
     """Updated color Wipe.
     Wipe color across display a pixel at a time"""
     for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
-        print(i)
         strip.setPixelColor(i, palette)
         strip.show()
         time.sleep(wait_ms / 1000.0)
@@ -409,7 +411,7 @@ def users_folders():
 
 def init_photo(r, g, b, w, text):
     ''' Creating a single photo with given LED parameters'''
-    colorWipe(strip, Color(r, g, b, w), 0)  # White wipe
+    colorWipe(strip, Color(r, g, b, w), 0)  
     with picamera.PiCamera() as camera:
         camera.resolution = (3280, 2464)
         camera.framerate = 0.2
@@ -424,6 +426,11 @@ def init_photo(r, g, b, w, text):
 
 def ah_cycle(pic_num, apical_decision, period_sec):
     """ Running an apical hook stage/dark stage """
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(23, GPIO.OUT)  # IR left
+    # GPIO.setup(18, GPIO.OUT)  # blue LEDs
+    GPIO.setup(26, GPIO.OUT)  # IR right
+    colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)
     # the cycle itself
     for i in range(pic_num):
         start_time = timeit.default_timer()  # when making of picture starts
@@ -483,7 +490,7 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
     if total_hours_blue != 0 or ph_decision != 0:
         for i in range(pic_num_blue):
             start_time = timeit.default_timer()  # when making of picture starts
-            colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light
+            colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off the light
             GPIO.output(23, GPIO.HIGH)
             GPIO.output(26, GPIO.HIGH)
             with picamera.PiCamera() as camera:
@@ -499,7 +506,7 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
                 camera.awb_gains = (Fraction(2), Fraction(1))
 
                 camera.capture("./{}_{}_irradiated.jpg".format(i, color))
-            colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), 0)
+            colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), wait_ms=0, strip_length=[0, 21])
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
@@ -547,7 +554,7 @@ pre_light = tk.IntVar()
 ah_choice = tk.IntVar()
 ph_choice = tk.IntVar()
 
-c1 = tk.Checkbutton(window, text='6h white light pretreatment', width=26, variable=pre_light, onvalue=1, offvalue=0,
+c1 = tk.Checkbutton(window, text='6h white light pre-treatment', width=26, variable=pre_light, onvalue=1, offvalue=0,
                     command=print_selection)
 c1.grid(row=2, column=0, ipadx=25, ipady=15, columnspan=2)
 c1.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
