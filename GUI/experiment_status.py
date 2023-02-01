@@ -55,7 +55,7 @@ def loop_function():
         print(os.getpid())
         if counter % 3600 == 0 or counter == 20:
             show_file()
-    pr_win.after(100, showinfo(message='The progress completed!'))
+    pr_win.after(100, showinfo(message='The experiment is finished!'))
 
 
 # experiment start time
@@ -73,7 +73,7 @@ progress_label.grid(rowspan=1, columnspan=2, column=0, ipadx=1, ipady=15)
 
 
 # Total progress bar
-MAX = 30
+MAX = 102
 progress_var = tk.DoubleVar() #here you have ints but when calc. %'s usually floats
 theLabel = tk.Label(pr_win, text="Sample text to show")
 progressbar = ttk.Progressbar(pr_win, variable=progress_var,
@@ -96,15 +96,15 @@ exp_info.grid(row=5, columnspan=2, column=0, ipadx=1, ipady=15)
 
 # Assay type
 if apical_decision == 1 and ph_decision == 1:
-    ap_h_info = tk.Label(pr_win, text=f"Apical hook {apical_hours}h + phototropism {total_experiment_length-apical_hours}h")
+    ap_h_info = tk.Label(pr_win, text=f"Ap.hook {round(apical_hours,1)}h + phototropism {round(phototropic_hours, 1)}h \r\nprocessing {round(processing_hours,1)}h")
     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130,  rowspan =2)
 elif apical_decision == 0 and ph_decision == 1:
-    ap_h_info = tk.Label(pr_win, text=f"Phototropism {total_experiment_length-apical_hours}h")
+    ap_h_info = tk.Label(pr_win, text=f"Phototropism {round(phototropic_hours, 1)}h + processing{round(processing_hours,1)}h")
     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
 elif apical_decision == 1 and ph_decision == 2:
-    ap_h_info = tk.Label(pr_win, text=f"Apical hook development {apical_hours}h")
+    ap_h_info = tk.Label(pr_win, text=f"Apical hook development {apical_hours}h + processing{round(processing_hours,1)}h")
     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
 
