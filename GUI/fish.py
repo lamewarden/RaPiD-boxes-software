@@ -1,4 +1,4 @@
-import imageio.v3 as iio
+import imageio
 
 import numpy as np
 from math import sqrt

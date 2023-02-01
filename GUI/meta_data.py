@@ -1,12 +1,12 @@
 # Experiment info
-total_experiment_length=2.4166666666666665
-prelight_decision=0
+total_experiment_length=346.5
+prelight_decision=1
 apical_decision=1
-apical_hours=1
-phototropic_hours=1
-processing_hours=0.4166666666666667
+apical_hours=270
+phototropic_hours=60
+processing_hours=16.5
 ph_decision=1
-light=[0, 49, 0, 0]
-location='/home/pi/camera/Experiments/IVAN/2023.01.17_PI3__TEST_5'
-main_process_PID=2685
-status_process_PID=2763
+light=[10, 0, 10, 0]
+location='/home/pi/camera/Experiments/KAC_230124/2023.01.23_PI3__230124_ALL'
+main_process_PID=758
+status_process_PID=883
