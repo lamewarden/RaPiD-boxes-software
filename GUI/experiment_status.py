@@ -51,8 +51,6 @@ def loop_function():
         time_left['text'] = update_time_left_label()
         time.sleep(1)
         pr_win.update_idletasks()
-        print(counter)
-        print(os.getpid())
         if counter % 3600 == 0 or counter == 20:
             show_file()
     pr_win.after(100, showinfo(message='The experiment is finished!'))
@@ -95,18 +93,38 @@ exp_info.config(font=("Arial", 18, 'bold'), anchor="w")
 exp_info.grid(row=5, columnspan=2, column=0, ipadx=1, ipady=15)
 
 # Assay type
-if apical_decision == 1 and ph_decision == 1:
-    ap_h_info = tk.Label(pr_win, text=f"Ap.hook {round(apical_hours,1)}h + phototropism {round(phototropic_hours, 1)}h \r\nprocessing {round(processing_hours,1)}h")
-    ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
-    ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130,  rowspan =2)
-elif apical_decision == 0 and ph_decision == 1:
-    ap_h_info = tk.Label(pr_win, text=f"Phototropism {round(phototropic_hours, 1)}h + processing{round(processing_hours,1)}h")
-    ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
-    ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
-elif apical_decision == 1 and ph_decision == 2:
-    ap_h_info = tk.Label(pr_win, text=f"Apical hook development {apical_hours}h + processing{round(processing_hours,1)}h")
-    ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
-    ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
+
+
+
+
+string = ""
+if prelight_decision == 1:
+    string += f"PreLight 6h"
+if apical_decision == 1:
+    string += f" + Ap.hook {round(apical_hours,1)}h\\n"
+if light_decision == 1:
+    string += f" + Lat.light {round(phototropic_hours, 1)}h"
+if light_decision == 2:
+    string += f" + Up.light {round(phototropic_hours, 1)}h"
+string += f" + Processing {round(processing_hours,1)}h"
+
+ap_h_info = tk.Label(pr_win, text=string)
+ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
+ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130,  rowspan =2)
+
+# and light_decision == 1:
+#     ap_h_info = tk.Label(pr_win, text=f"Ap.hook {round(apical_hours,1)}h + phototropism {round(phototropic_hours, 1)}h \r\nprocessing {round(processing_hours,1)}h")
+#     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
+#     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130,  rowspan =2)
+# elif apical_decision == 0 and light_decision == 1:
+#     ap_h_info = tk.Label(pr_win, text=f"Phototropism {round(phototropic_hours, 1)}h + processing{round(processing_hours,1)}h")
+#     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
+#     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
+# elif apical_decision == 1 and light_decision == 0:
+#     ap_h_info = tk.Label(pr_win, text=f"Apical hook development {apical_hours}h + processing{round(processing_hours,1)}h")
+#     ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")
+#     ap_h_info.grid(row=5, columnspan=2, column=0, ipadx=10, ipady=130, rowspan =2)
+# elif apical_decision == 0 and light_decision == 2:
 
 # light
 light_info = tk.Label(pr_win, text=f"Light settings: {light}")

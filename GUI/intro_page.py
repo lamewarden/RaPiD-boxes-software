@@ -58,17 +58,14 @@ def get_ip():
     return IP
 
 
-def print_selection():
-    # Text widget - info text selection ###
-    if (pre_light.get() == 1):
-        pretreatment = True
-
-    if (ah_choice.get() == 1) & (ph_choice.get() == 0):
-        w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
-    elif (ah_choice.get() == 1) & (ph_choice.get() == 1):
-        w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
-    elif (ah_choice.get() == 0) & (ph_choice.get() == 1):
-        w1.config(font=("Arial", 12, 'bold'), label="Length of the initial dark period (hours):", bg='white')
+# def print_selection():
+#     # Text widget - info text selection ###
+#     if (ah_choice.get() == 1) & (light_choice.get() == 0):
+#         w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
+#     elif (ah_choice.get() == 1) & (light_choice.get() == 1):
+#         w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
+#     elif (ah_choice.get() == 0) & (light_choice.get() == 1):
+#         w1.config(font=("Arial", 12, 'bold'), label="Length of the initial dark period (hours):", bg='white')
 
 
 def show_values():
@@ -84,7 +81,7 @@ def color_switcher():
     color_var[2] = blue_choice.get()
 
 
-def streaming(timer=40000):
+def streaming(timer=20000):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
     colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
@@ -305,9 +302,9 @@ def launch():
         f.write(f"prelight_decision={prelight_decision}\r\n")
         f.write(f"apical_decision={apical_decision}\r\n")
         f.write(f"apical_hours={total_hours}\r\n")
-        f.write(f"phototropic_hours={total_hours_blue}\r\n")
+        f.write(f"phototropic_hours={total_hours_light}\r\n")
         f.write(f"processing_hours={processing_time_hours}\r\n")
-        f.write(f"ph_decision={ph_decision}\r\n")
+        f.write(f"light_decision={light_decision}\r\n")
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
         f.write(f"main_process_PID={os.getpid()}\r\n")
@@ -315,7 +312,7 @@ def launch():
 
 
     ''' masterfunction where all data recorded before should go into motion'''
-    if ah_choice.get() == 0 and ph_choice.get() == 0:
+    if ah_choice.get() == 0 and light_choice.get() == 0:
         warning_message('experiment')
     elif color_var == [0, 0, 0, 0]:
         warning_message('color settings')
@@ -326,14 +323,14 @@ def launch():
         apical_decision = ah_choice.get()  # argument which turns off apical hook opening tracing (making pictures of it)
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
-        total_hours_blue = ph_value.get()  # for how long we want blue LEDs on (hours)
-        processing_time_hours = round((total_hours + total_hours_blue * (60/period_min) * 8)/60, 3)
-        total_experiment_length = total_hours + total_hours_blue + processing_time_hours
+        total_hours_light = light_value.get()  # for how long we want blue LEDs on (hours)
+        processing_time_hours = round((total_hours + total_hours_light * (60/period_min) * 8)/60, 3)
+        total_experiment_length = total_hours + total_hours_light + processing_time_hours + prelight_decision*6 + 0.1
 
         # intensity of the light
         light_intensity = light_power.get()
         # color of the color strip
-        ph_decision = ph_choice.get()
+        light_decision = light_choice.get()
 
         # period_hours = round(period_min/60)
         total_minutes = total_hours * 60  # necessary for counting number of pictures		initial value is 60
@@ -341,10 +338,9 @@ def launch():
         pic_num = int(total_minutes // period_min)  # takes only int part of quotient
 
         # unilateral light (blue)
-        total_minutes_blue = total_hours_blue * 60  # initial value is 60
+        total_minutes_blue = total_hours_light * 60  # initial value is 60
         pic_num_blue = int(total_minutes_blue // period_min)
         color = list(np.array(color_var) * light_intensity)
-        print(color, color)
 
         """ Creating a window with a progress bar and info of the experiment stage"""
 
@@ -360,7 +356,7 @@ def launch():
         # starting AH cycle
         ah_cycle(pic_num, apical_decision, period_sec)
         # starting ph cycle (or not starting)
-        bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec)
+        bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
         # Processing
@@ -478,14 +474,14 @@ def ah_cycle(pic_num, apical_decision, period_sec):
     GPIO.cleanup()
 
 
-def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec):
+def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec):
     ''' Running a phototropic stage'''
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(23, GPIO.OUT)  # IR left
     GPIO.setup(26, GPIO.OUT)  # IR right
 
     # that will release us from constant deleting of already existing folders
-    if total_hours_blue != 0 or ph_decision != 0:
+    if total_hours_light != 0 or light_decision != 0:
         for i in range(pic_num_blue):
             start_time = timeit.default_timer()  # when making of picture starts
             colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off the light
@@ -502,9 +498,11 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
                 # (you may wish to use fixed AWB instead)
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
-
                 camera.capture("./{}_{}_irradiated.jpg".format(i, color))
-            colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
+            if light_decision == 1:
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
+            elif light_decision == 2:
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
@@ -520,7 +518,7 @@ def unfishing(distortion=-0.067):
         if f[-3:] == 'jpg':
             imgobj = imageio.imread(f)
             output_img = fish(imgobj, distortion)
-            imageio.imwrite(str(file[:-4] + '_processed'), output_img, format='png')
+            imageio.imwrite(str(file[:-4] + '_processed.png'), output_img, format='png')
 
 
 # Variables
@@ -529,7 +527,7 @@ username = {'experiment name': '', 'user name': ''}  # global variable
 ### This creates the main window of an application
 window = tk.Tk()
 SIGNATURE = socket.getfqdn() + " " + get_ip()
-window.title("RaPiDBox v 1" + "  (" + SIGNATURE + ")")
+window.title("RaPiDBox v 3.1" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 
@@ -550,33 +548,35 @@ launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=
 
 pre_light = tk.IntVar()
 ah_choice = tk.IntVar()
-ph_choice = tk.IntVar()
+light_choice = tk.IntVar()
 
-c1 = tk.Checkbutton(window, text='6h white light pre-treatment', width=26, variable=pre_light, onvalue=1, offvalue=0,
-                    command=print_selection)
+c1 = tk.Checkbutton(window, text='6h white light pre-treatment', width=26, variable=pre_light, onvalue=1, offvalue=0)
 c1.grid(row=2, column=0, ipadx=25, ipady=15, columnspan=2)
 c1.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
-c2 = tk.Checkbutton(window, text='Apical hook development', width=26, variable=ah_choice, onvalue=1, offvalue=0,
-                    command=print_selection)
+c2 = tk.Checkbutton(window, text='Dark stage', width=26, variable=ah_choice, onvalue=1, offvalue=0)
 c2.grid(row=3, column=0, ipadx=25, ipady=15, columnspan=2)
 c2.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
-c3 = tk.Checkbutton(window, text='Phototropic bending', width=26, variable=ph_choice, onvalue=1, offvalue=0,
-                    command=print_selection)
-c3.grid(row=4, column=0, ipadx=25, ipady=15, columnspan=2)
+# Create two Radiobutton widgets with different values
+c3 = tk.Radiobutton(window, text='Lateral light', width=13, variable=light_choice, value=1)
+c3.grid(row=4, column=0, ipady=15, columnspan=1)
 c3.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+
+c4 = tk.Radiobutton(window, text='Upright light', width=13, variable=light_choice, value=2)
+c4.grid(row=4, column=1, ipady=15)
+c4.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
 ### Sliders ###
 
 ah_value = tk.IntVar()
-ph_value = tk.IntVar()
+light_value = tk.IntVar()
 freq_value = tk.IntVar()
 light_power = tk.IntVar()
 
 # AH/Dark experiment length
 
-AH_label = "Apical hook experiment length (hours):"
+AH_label = "Dark stage length (hours):"
 w1 = tk.Scale(window, from_=0, to=350, width=26, tickinterval=50, label=AH_label, variable=ah_value,
               orient='horizontal')
 w1.set(90)
@@ -584,8 +584,8 @@ w1.grid(row=5, column=0, ipadx=147, ipady=1, columnspan=2)
 w1.config(font=("Arial", 12, 'bold'), bg='white')
 
 # phototrop experiment length
-PH_label = "Phototropic bending experiment length (hours):"
-w2 = tk.Scale(window, from_=0, to=80, width=26, tickinterval=20, label=PH_label, variable=ph_value, orient='horizontal')
+PH_label = "Light stage length (hours):"
+w2 = tk.Scale(window, from_=0, to=80, width=26, tickinterval=20, label=PH_label, variable=light_value, orient='horizontal')
 w2.set(20)
 w2.grid(row=6, column=0, ipadx=147, ipady=1, columnspan=2)
 w2.config(font=("Arial", 12, 'bold'), bg='white')

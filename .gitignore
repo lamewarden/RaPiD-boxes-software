@@ -7,6 +7,7 @@
 *.png
 *.jpg
 *.save
+*.txt
 # C extensions
 *.so
 
