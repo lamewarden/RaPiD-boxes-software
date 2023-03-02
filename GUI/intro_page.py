@@ -86,7 +86,7 @@ def color_switcher():
 
 def streaming(timer=40000):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
-    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], wait_ms=0, step=3)
+    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
@@ -371,7 +371,7 @@ def launch():
 def initial_ill(prelight_decision, sleep_time=600):
     if prelight_decision == 1:
         for i in range(360):
-            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64], wait_ms=0)
+            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
             time.sleep(sleep_time)
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     else:
@@ -411,7 +411,7 @@ def users_folders():
 
 def init_photo(r, g, b, w, text):
     ''' Creating a single photo with given LED parameters'''
-    colorWipe(strip, Color(r, g, b, w), 0)  
+    colorWipe(strip, Color(r, g, b, w))  
     with picamera.PiCamera() as camera:
         camera.resolution = (3280, 2464)
         camera.framerate = 0.2
@@ -428,7 +428,6 @@ def ah_cycle(pic_num, apical_decision, period_sec):
     """ Running an apical hook stage/dark stage """
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(23, GPIO.OUT)  # IR left
-    # GPIO.setup(18, GPIO.OUT)  # blue LEDs
     GPIO.setup(26, GPIO.OUT)  # IR right
     colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)
     # the cycle itself
@@ -483,7 +482,6 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
     ''' Running a phototropic stage'''
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(23, GPIO.OUT)  # IR left
-    # GPIO.setup(18, GPIO.OUT)  # blue LEDs
     GPIO.setup(26, GPIO.OUT)  # IR right
 
     # that will release us from constant deleting of already existing folders
@@ -506,7 +504,7 @@ def bending_cycle(color, total_hours_blue, ph_decision, pic_num_blue, period_sec
                 camera.awb_gains = (Fraction(2), Fraction(1))
 
                 camera.capture("./{}_{}_irradiated.jpg".format(i, color))
-            colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), wait_ms=0, strip_length=[0, 21])
+            colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
