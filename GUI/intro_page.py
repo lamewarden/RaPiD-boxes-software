@@ -16,7 +16,8 @@ import numpy as np
 import subprocess
 from fish import *
 import imageio
-
+import sys
+import signal
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
@@ -342,13 +343,18 @@ def launch():
         pic_num_blue = int(total_minutes_blue // period_min)
         color = list(np.array(color_var) * light_intensity)
 
-        """ Creating a window with a progress bar and info of the experiment stage"""
-
-        # Setting user name and folder name
-        subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py &', shell=True)
+# kill the process group
+        
+        # subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py >>/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
+        
         users_folders()
         meta_data_file_create()
         meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
+        # create a process group
+        e = subprocess.Popen(['python3', '/home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py'], preexec_fn=os.setsid)
+        time.sleep(3)
+        # Initiating controlls
+        c = subprocess.Popen(['python3', '/home/pi/Camera/RaPiD-boxes-software/GUI/controls.py'], preexec_fn=os.setsid)
         # init colored photo
         init_photo(int(color[0]), int(color[1]), int(color[2]), int(color[3]), 'init_photo')
         # Initial illumination
@@ -361,6 +367,13 @@ def launch():
         init_photo(0, 0, 0, 10, 'final_photo')
         # Processing
         unfishing()
+        # Mass suicide
+        os.killpg(os.getpgid(e.pid), signal.SIGTERM)
+        os.killpg(os.getpgid(c.pid), signal.SIGTERM)
+        open_popup(window)
+        subprocess.call('sudo reboot', shell=True)
+        sys.exit()
+        
 
 
 
@@ -520,6 +533,41 @@ def unfishing(distortion=-0.067):
             output_img = fish(imgobj, distortion)
             imageio.imwrite(str(file[:-4] + '_processed.png'), output_img, format='png')
 
+def open_popup(parent):
+    # Create a popup window
+    popup = tk.Toplevel(parent,bg="white")
+    # Set the size of the popup window to be equal to that of the main window
+    popup.geometry(parent.geometry())
+    # Remove the outer frame of the popup window
+    popup.overrideredirect(True)
+    # Get the screen width and height in pixels
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    # Calculate the position of the popup window to be at the center of the screen
+    position_x = (screen_width - 800) // 2
+    position_y = (screen_height - 480) // 2
+    # Move the popup window to that position
+    popup.geometry(f"+{position_x}+{position_y}")
+    # Create a label with a message
+    # label = tk.Label(popup, text="Into measureless distances flying, Behind you, before, years extend…", bg="white")
+    # label.pack()
+
+    # Create a custom font object with a large size 
+    huge_font = f.Font(family="Arial", size=20) 
+    middle_font = f.Font(family="Arial", size=15) 
+     
+     # Create a label widget with huge letters and assign it to huge_font 
+    message_label = tk.Label(popup, text="Your experiment is over. \n Please download your files ASAP,\n The storage is erazed automatically within a month\n \n Push the button to start over. ", font=middle_font, bg="white") 
+     
+     # Place message_label at center of pop up using pack() method 
+    message_label.pack(anchor="n")
+         # Create another button inside of pop up which will restart whole system (linux).
+    restart_button=tk.Button(popup,text="Restart",command=restart_system, height=4,width=50,bg="red", font=huge_font)
+    restart_button.pack(anchor="center")
+
+# Define another function which will restart whole system (linux).
+def restart_system():
+   os.system("sudo reboot")
 
 # Variables
 username = {'experiment name': '', 'user name': ''}  # global variable

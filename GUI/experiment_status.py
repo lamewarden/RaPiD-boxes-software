@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 import time
 import os
-import datetime
 import timeit
 from meta_data import *
 from tkinter import ttk
@@ -9,7 +8,7 @@ import tkinter as tk
 from tkinter.messagebox import showinfo
 from PIL import ImageTk, Image
 import glob
-import subprocess
+
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
@@ -101,7 +100,7 @@ string = ""
 if prelight_decision == 1:
     string += f"PreLight 6h"
 if apical_decision == 1:
-    string += f" + Ap.hook {round(apical_hours,1)}h\\n"
+    string += f" + Ap.hook {round(apical_hours,1)}h \r\n"
 if light_decision == 1:
     string += f" + Lat.light {round(phototropic_hours, 1)}h"
 if light_decision == 2:
@@ -140,7 +139,8 @@ loc_info.grid(row=6, columnspan=2, column=0, ipadx=1, ipady=15)
 # Updating meta-data
 meta_data_file_update()
 
-subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/controls.py &', shell=True)
+
+# subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/controls.py >>/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
 
 # refreshing the screen
 loop_function()

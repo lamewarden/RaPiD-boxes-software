@@ -3,7 +3,6 @@ import os
 from meta_data import *
 import tkinter as tk
 import signal
-from meta_data import *
 import subprocess
 
 # setting working directory
@@ -12,7 +11,7 @@ os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 def murderer():
     os.kill(main_process_PID, signal.SIGTERM)
     os.kill(status_process_PID, signal.SIGTERM)
-    subprocess.call('sudo python3 /home/pi/Camera/RaPiD-boxes-software/GUI/intro_page.py &', shell=True)
+    subprocess.call('XAUTHORITY=~/.Xauthority DISPLAY=:0 sudo /usr/bin/python3 /home/pi/Camera/RaPiD-boxes-software/GUI/intro_page.py >/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
     os.kill(os.getpid(), signal.SIGTERM)
 
 popup_butts = tk.Tk()
