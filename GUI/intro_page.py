@@ -379,7 +379,7 @@ def launch():
 
 def initial_ill(prelight_decision, sleep_time=600):
     if prelight_decision == 1:
-        for i in range(360):
+        for i in range(36):
             colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
             time.sleep(sleep_time)
         colorWipe(strip, Color(0, 0, 0, 0), 0)
