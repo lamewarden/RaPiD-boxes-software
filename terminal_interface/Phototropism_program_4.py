@@ -209,25 +209,7 @@ if (total_hours_blue) != 0:
     GPIO.cleanup()
     colorWipe(strip, Color(0, 0, 0, 0), 0)
 
-# Current working dirrectory for current experiment
-# os.chdir("../")
-current_workdir = os.getcwd()
-# Now let's mount disc through bash and copy all we need
-subprocess.call("sudo mount -t cifs //ds.asuch.cas.cz/ueb/lhr  /mnt/Shared -o user=LHR,pass=nMajF8 &> /dev/null",
-                shell=True)  # here we adress to bash and mount network drive
-# now we have to move to the mounted dir to make it available
-os.chdir("/mnt/Shared/Pictures/Raps_pi/PI4")
-# We check if server folder contains folder with our's username
-if os.path.isdir("/mnt/Shared/Pictures/Raps_pi/PI4/{username}".format(username=user_name)):
-    subprocess.call("sudo cp -r {cwdir} /mnt/Shared/Pictures/Raps_pi/PI4/{username}".format(username=user_name,
-                                                                                            cwdir=current_workdir),
-                    shell=True)
-    # os.chdir("/mnt/Shared/Pictures/Raps_pi/PI4/{username}".format(username = user_name))
-else:
-    subprocess.call("sudo mkdir /mnt/Shared/Pictures/Raps_pi/PI4/{username}".format(username=user_name), shell=True)
-    subprocess.call("sudo cp -r {cwdir} /mnt/Shared/Pictures/Raps_pi/PI4/{username}".format(username=user_name,
-                                                                                            cwdir=current_workdir),
-                    shell=True)
+
                     
 time.sleep(300)
 subprocess.call("sudo reboot", shell=True)
