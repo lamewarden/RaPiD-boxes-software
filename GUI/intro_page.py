@@ -70,7 +70,7 @@ def color_switcher():
 
 def streaming(timer=20000):
     colorWipe(Color(0, 0, 0, 0), 0)
-    colorWipe(Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
+    colorWipe(Color(50, 50, 50, 50), strip_length=[0, 10], step=1)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
@@ -570,7 +570,7 @@ username = {'experiment name': '', 'user name': ''}  # global variable
 ### This creates the main window of an application
 window = tk.Tk()
 SIGNATURE = socket.getfqdn() + " " + get_ip()
-window.title("RaPiDBox v 3.1" + "  (" + SIGNATURE + ")")
+window.title("RaPiDBox v 3.2" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 
@@ -590,7 +590,7 @@ launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=
 
 ### Checkboxes ###
 
-pre_light = 0
+pre_light = 0   # remove all mentions of pre_light
 ah_choice = tk.IntVar()
 light_choice = tk.IntVar()
 config_choice = tk.IntVar()
