@@ -22,27 +22,13 @@ import signal
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
-# LED strip configuration:
-LED_COUNT = 70  # Number of LED pixels.
-LED_PIN = 18  # GPIO pin connected to the pixels (real nuber is 12) (must support PWM!).
-LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
-LED_DMA = 10  # DMA channel to use for generating signal (try 10)
-LED_BRIGHTNESS = 255  # Set to 0 for darkest and 255 for brightest
-LED_INVERT = False  # True to invert the signal (when using NPN transistor level shift)
-LED_CHANNEL = 0
-LED_STRIP = ws.SK6812W_STRIP
 
-# Create NeoPixel object with appropriate configuration.
-strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
-                          LED_STRIP)
-# Intialize the library (must be called once before other functions).
-strip.begin()
 
 # IR LEDs configuration
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(26, GPIO.OUT)  # inderpendent IR board # 37
-GPIO.setup(23, GPIO.OUT)  # second IR board # 16
+GPIO.setup(24, GPIO.OUT)  # 24 - closer
+GPIO.setup(23, GPIO.OUT)  # further
 
 
 def get_ip():
@@ -83,15 +69,15 @@ def color_switcher():
 
 
 def streaming(timer=20000):
-    colorWipe(strip, Color(0, 0, 0, 0), 0)
-    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
+    colorWipe(Color(0, 0, 0, 0), 0)
+    colorWipe(Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
     # camera.start_preview()
     # time.sleep(timer)
     # camera.stop_preview()
-    colorWipe(strip, Color(0, 0, 0, 0), 0)
+    colorWipe(Color(0, 0, 0, 0), 0)
 
 
 def open_username(username_dict):
@@ -320,7 +306,7 @@ def launch():
     else:
 
         ''' Controlling part'''
-        prelight_decision = pre_light.get() # checking if we want to have 6h pre illumination stage
+        prelight_decision = 0 # checking if we want to have 6h pre illumination stage
         apical_decision = ah_choice.get()  # argument which turns off apical hook opening tracing (making pictures of it)
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
@@ -380,16 +366,32 @@ def launch():
 def initial_ill(prelight_decision, sleep_time=600):
     if prelight_decision == 1:
         for i in range(36):
-            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
+            colorWipe(Color(50, 50, 50, 50), strip_length=[22, 64])
             time.sleep(sleep_time)
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
+        colorWipe(Color(0, 0, 0, 0), 0)
     else:
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
+        colorWipe(Color(0, 0, 0, 0), 0)
 
 
-def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
+def colorWipe(palette=Color(0, 0, 0, 0), wait_ms=50, strip_length=[0, 10], step=1):
     """Updated color Wipe.
     Wipe color across display a pixel at a time"""
+    LED_COUNT = 10  # Number of LED pixels.
+    LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
+    LED_DMA = 10  # DMA channel to use for generating signal (try 10)
+    LED_BRIGHTNESS = 255  # Set to 0 for darkest and 255 for brightest
+    LED_INVERT = False  # True to invert the signal (when using NPN transistor level shift)
+    LED_CHANNEL = 0
+    LED_STRIP = ws.SK6812W_STRIP
+    if config_choice.get() == 23:
+        LED_PIN = 21  # 18/21
+    else:
+        LED_PIN = 18  # 18/21
+    # Create NeoPixel object with appropriate configuration.
+    strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
+                            LED_STRIP)
+    # Intialize the library (must be called once before other functions).
+    strip.begin()
     for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
         strip.setPixelColor(i, palette)
         strip.show()
@@ -420,7 +422,7 @@ def users_folders():
 
 def init_photo(r, g, b, w, text):
     ''' Creating a single photo with given LED parameters'''
-    colorWipe(strip, Color(r, g, b, w))  
+    colorWipe(Color(r, g, b, w))  
     with picamera.PiCamera() as camera:
         camera.resolution = (3280, 2464)
         camera.framerate = 0.2
@@ -430,21 +432,19 @@ def init_photo(r, g, b, w, text):
         time.sleep(5)
         camera.capture('{}.jpg'.format(text))
     # Switching off LED strip
-    colorWipe(strip, Color(0, 0, 0, 0), 0)
+    colorWipe(Color(0, 0, 0, 0), 0)
 
 
 def ah_cycle(pic_num, apical_decision, period_sec):
     """ Running an apical hook stage/dark stage """
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(23, GPIO.OUT)  # IR left
-    GPIO.setup(26, GPIO.OUT)  # IR right
-    colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)
+    GPIO.setup(config_choice.get(), GPIO.OUT)  # IR left
+    colorWipe(Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)
     # the cycle itself
     for i in range(pic_num):
         start_time = timeit.default_timer()  # when making of picture starts
         if int(apical_decision) == 1:  # by this, we disarm the whole cycle
-            GPIO.output(23, GPIO.HIGH)
-            GPIO.output(26, GPIO.HIGH)
+            GPIO.output(config_choice.get(), GPIO.HIGH)
             with picamera.PiCamera() as camera:
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
@@ -457,13 +457,11 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 camera.capture("./{}_cycle_{}h_dark.jpg".format(i, i*round(period_sec/3600, 2)))   # updated 2020.08.25
-            GPIO.output(23, GPIO.LOW)
-            GPIO.output(26, GPIO.LOW)
+            GPIO.output(config_choice.get(), GPIO.LOW)
         # Making image of current state, while dark stage is ongoing
         else:
             # Image of current plant look
-            GPIO.output(23, GPIO.HIGH)
-            GPIO.output(26, GPIO.HIGH)
+            GPIO.output(config_choice.get(), GPIO.HIGH)
             with picamera.PiCamera() as camera:
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
@@ -476,8 +474,7 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 camera.capture("./current_look_{}(dark_stage).jpg".format(i))
-            GPIO.output(23, GPIO.LOW)
-            GPIO.output(26, GPIO.LOW)
+            GPIO.output(config_choice.get() , GPIO.LOW)
             # current photo should be only one
             exists = os.path.isfile("./current_look_{}(dark_stage).jpg".format(i-1))
             if exists:
@@ -490,16 +487,15 @@ def ah_cycle(pic_num, apical_decision, period_sec):
 def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec):
     ''' Running a phototropic stage'''
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(23, GPIO.OUT)  # IR left
-    GPIO.setup(26, GPIO.OUT)  # IR right
+    # print(config_choice.get())
+    GPIO.setup(config_choice.get() , GPIO.OUT)  # IR left
 
     # that will release us from constant deleting of already existing folders
     if total_hours_light != 0 or light_decision != 0:
         for i in range(pic_num_blue):
             start_time = timeit.default_timer()  # when making of picture starts
-            colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off the light
-            GPIO.output(23, GPIO.HIGH)
-            GPIO.output(26, GPIO.HIGH)
+            colorWipe(Color(0, 0, 0, 0), 0)  # switch off the light
+            GPIO.output(config_choice.get(), GPIO.HIGH)
             with picamera.PiCamera() as camera:
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
@@ -513,15 +509,14 @@ def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 camera.capture("./{}_{}_irradiated.jpg".format(i, color))
             if light_decision == 1:
-                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
+                colorWipe(Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
             elif light_decision == 2:
-                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
-            GPIO.output(23, GPIO.LOW)
-            GPIO.output(26, GPIO.LOW)
+                colorWipe(Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
+            GPIO.output(config_choice.get(), GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
             elapsed = timeit.default_timer() - start_time
             time.sleep(float(period_sec) - elapsed)
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
+        colorWipe(Color(0, 0, 0, 0), 0)
     GPIO.cleanup()
 
 
@@ -589,31 +584,43 @@ close_butt = tk.Button(gridframe, text='Close',width = 13, font = f, height=2, b
 user_name = tk.Button(gridframe, text='User',width = 13, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
 exp_name = tk.Button(gridframe, text='Folder',width = 13, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
 focus = tk.Button(gridframe, text='Live',width = 13, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
-launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
+launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=2, bg='yellow', command=launch).pack(side=tk.LEFT)
+
 
 
 ### Checkboxes ###
 
-pre_light = tk.IntVar()
+pre_light = 0
 ah_choice = tk.IntVar()
 light_choice = tk.IntVar()
+config_choice = tk.IntVar()
 
-c1 = tk.Checkbutton(window, text='6h white light pre-treatment', width=26, variable=pre_light, onvalue=1, offvalue=0)
-c1.grid(row=2, column=0, ipadx=25, ipady=15, columnspan=2)
+# c1 = tk.Checkbutton(window, text='6h white light pre-treatment', width=26, variable=pre_light, onvalue=1, offvalue=0)
+# c1.grid(row=2, column=0, ipadx=25, ipady=15, columnspan=2)
+# c1.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+
+# Create two Radiobutton widgets with different values
+c0 = tk.Radiobutton(window, text='Wide angle', width=13, variable=config_choice, value=24)
+c0.grid(row=2, column=0, ipady=15, columnspan=1)
+c0.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+
+c1 = tk.Radiobutton(window, text='Narrow angle', width=13, variable=config_choice, value=23)
+c1.grid(row=2, column=1, ipady=15)
 c1.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+
 
 c2 = tk.Checkbutton(window, text='Dark stage', width=26, variable=ah_choice, onvalue=1, offvalue=0)
 c2.grid(row=3, column=0, ipadx=25, ipady=15, columnspan=2)
 c2.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
-# Create two Radiobutton widgets with different values
-c3 = tk.Radiobutton(window, text='Lateral light', width=13, variable=light_choice, value=1)
-c3.grid(row=4, column=0, ipady=15, columnspan=1)
-c3.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+# # Create two Radiobutton widgets with different values
+# c3 = tk.Radiobutton(window, text='Lateral light', width=13, variable=light_choice, value=1)
+# c3.grid(row=4, column=0, ipady=15, columnspan=1)
+# c3.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
-c4 = tk.Radiobutton(window, text='Upright light', width=13, variable=light_choice, value=2)
-c4.grid(row=4, column=1, ipady=15)
-c4.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
+c3 = tk.Checkbutton(window, text='Light stage', width=26, variable=light_choice, onvalue=1, offvalue=0)
+c3.grid(row=4, column=0, ipadx=25, ipady=15, columnspan=2)
+c3.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
 ### Sliders ###
 
