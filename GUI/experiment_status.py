@@ -100,12 +100,12 @@ string = ""
 if prelight_decision == 1:
     string += f"PreLight 6h"
 if apical_decision == 1:
-    string += f" + Ap.hook {round(apical_hours,1)}h \r\n"
+    string += f" Ap.hook {round(apical_hours,1)}h \r\n"
 if light_decision == 1:
-    string += f" + Lat.light {round(phototropic_hours, 1)}h"
+    string += f" Lat.light {round(phototropic_hours, 1)}h"
 if light_decision == 2:
-    string += f" + Up.light {round(phototropic_hours, 1)}h"
-string += f" + Processing {round(processing_hours,1)}h"
+    string += f" Up.light {round(phototropic_hours, 1)}h"
+
 
 ap_h_info = tk.Label(pr_win, text=string)
 ap_h_info.config(font=("Arial", 16, 'bold'), anchor="w")

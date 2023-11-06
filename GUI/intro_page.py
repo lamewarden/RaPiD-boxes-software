@@ -304,7 +304,6 @@ def launch():
         f.write(f"apical_decision={apical_decision}\r\n")
         f.write(f"apical_hours={total_hours}\r\n")
         f.write(f"phototropic_hours={total_hours_light}\r\n")
-        f.write(f"processing_hours={processing_time_hours}\r\n")
         f.write(f"light_decision={light_decision}\r\n")
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
@@ -325,8 +324,7 @@ def launch():
         total_hours = ah_value.get()  # how many hours before the light on (hours)
         period_min = freq_value.get()  # period between pictures (min)
         total_hours_light = light_value.get()  # for how long we want blue LEDs on (hours)
-        processing_time_hours = round((total_hours + total_hours_light * (60/period_min) * 8)/60, 3)
-        total_experiment_length = total_hours + total_hours_light + processing_time_hours + prelight_decision*6 + 0.1
+        total_experiment_length = total_hours + total_hours_light + prelight_decision*6 + 0.1
 
         # intensity of the light
         light_intensity = light_power.get()
@@ -366,7 +364,7 @@ def launch():
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
         # Processing
-        unfishing()
+        # unfishing()
         # Mass suicide
         os.killpg(os.getpgid(e.pid), signal.SIGTERM)
         os.killpg(os.getpgid(c.pid), signal.SIGTERM)
@@ -426,7 +424,7 @@ def init_photo(r, g, b, w, text):
         camera.framerate = 0.2
         camera.shutter_speed = 400000
         camera.exposure_mode = 'off'
-        camera.iso = 200
+        camera.iso = 100
         time.sleep(5)
         camera.capture('{}.jpg'.format(text))
     # Switching off LED strip
@@ -449,13 +447,14 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 800000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off of autoexposure
-                camera.iso = 100
+                camera.iso = 400
                 # Give the camera a good long time to measure AWB
                 # (you may wish to use fixed AWB instead)
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
+                time.sleep(5)
                 camera.capture("./{}_cycle_{}h_dark.jpg".format(i, i*round(period_sec/3600, 2)))   # updated 2020.08.25
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
@@ -468,13 +467,14 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 800000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off autoexposure
-                camera.iso = 100
+                camera.iso = 400
                 # Give the camera a good long time to measure AWB
                 # (you may wish to use fixed AWB instead)
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
+                time.sleep(5)
                 camera.capture("./current_look_{}(dark_stage).jpg".format(i))
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
@@ -504,13 +504,14 @@ def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period
                 camera.color_effects = (128, 128)  # b/w mode
                 camera.resolution = (3280, 2464)
                 camera.framerate = 0.2
-                camera.shutter_speed = 100000  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.shutter_speed = 800000  # exposure length, can be ajusted (max 6000000 - 6 sec)
                 camera.exposure_mode = 'off'  # turning off of autoexposure
-                camera.iso = 100
+                camera.iso = 400
                 # Give the camera a good long time to measure AWB
                 # (you may wish to use fixed AWB instead)
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
+                time.sleep(5)
                 camera.capture("./{}_{}_irradiated.jpg".format(i, color))
             if light_decision == 1:
                 colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
