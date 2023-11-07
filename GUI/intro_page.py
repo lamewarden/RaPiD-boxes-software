@@ -368,7 +368,7 @@ def launch():
         # Mass suicide
         os.killpg(os.getpgid(e.pid), signal.SIGTERM)
         os.killpg(os.getpgid(c.pid), signal.SIGTERM)
-        open_popup(window)
+        # open_popup(window)
         subprocess.call('sudo reboot', shell=True)
         sys.exit()
         
