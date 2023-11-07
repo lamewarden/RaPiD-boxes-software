@@ -14,7 +14,7 @@ import glob
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
 def update_progress_label():
-    return f"Current Progress: {round((((timeit.default_timer() - start_time)/3600)/total_experiment_length) * 100, 3)}%"
+    return f"Current Progress: {round((((timeit.default_timer() - start_time)/3600)/total_experiment_length) * 100, 1)}%"
 
 
 def update_time_left_label():
