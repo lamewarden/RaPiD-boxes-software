@@ -59,16 +59,6 @@ def get_ip():
     return IP
 
 
-# def print_selection():
-#     # Text widget - info text selection ###
-#     if (ah_choice.get() == 1) & (light_choice.get() == 0):
-#         w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
-#     elif (ah_choice.get() == 1) & (light_choice.get() == 1):
-#         w1.config(font=("Arial", 12, 'bold'), label="Length of the apical hook experiment (hours):", bg='white')
-#     elif (ah_choice.get() == 0) & (light_choice.get() == 1):
-#         w1.config(font=("Arial", 12, 'bold'), label="Length of the initial dark period (hours):", bg='white')
-
-
 def show_values():
     # Showing values on sliders
     print(w1.get(), w2.get(), w3.get())
