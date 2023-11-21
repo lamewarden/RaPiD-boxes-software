@@ -134,4 +134,6 @@ dmypy.json
 .pyre/
 
 # Local metadata files
-./GUI/meta_data.py
+*meta_data.py
+GUI/meta_data.py
+GUI/__pycache__/meta_data.cpython-37.pyc
