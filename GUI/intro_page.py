@@ -18,6 +18,7 @@ from fish import *
 import imageio
 import sys
 import signal
+import shutil
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
@@ -335,7 +336,7 @@ def launch():
         
         # subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py >>/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
         
-        users_folders()
+        orig_folder = users_folders()
         meta_data_file_create()
         meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
         # create a process group
@@ -353,7 +354,19 @@ def launch():
         bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
-        # Processing
+        # Backuping photos to remote server:
+        try:
+            remote_folder = users_folders('/mnt/Shared/Users')
+            shutil.copy2(orig_folder, remote_folder)
+            f = open('meta_data.py', "a")
+            f.write(f"backup_succesfull=True\r\n")
+            f.close()
+        except:
+            f = open('meta_data.py', "a")
+            f.write(f"backup_succesfull=False\r\n")
+            f.close()    
+
+        
         # unfishing()
         # Mass suicide
         os.killpg(os.getpgid(e.pid), signal.SIGTERM)
@@ -384,11 +397,11 @@ def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
         time.sleep(wait_ms / 1000.0)
 
 
-def users_folders():
+def users_folders(address = "/home/pi/camera/Experiments"):
     ''' creating experiment and user folder'''
-    folder_name = str(datetime.date.today()).replace('-', '.') + '_PI3_' + '_' + username['experiment name']
+    folder_name = str(datetime.date.today()).replace('-', '.') + '_CH1_' + '_' + username['experiment name']
     user_name = username['user name']
-    os.chdir("/home/pi/camera/Experiments")
+    os.chdir(address)
 
     if os.path.isdir("{}".format(user_name)):
         os.chdir("{}".format(user_name))
@@ -404,6 +417,8 @@ def users_folders():
     else:
         os.mkdir("{}".format(folder_name))
         os.chdir("{}".format(folder_name))
+
+    return os.getcwd()
 
 
 def init_photo(r, g, b, w, text):
