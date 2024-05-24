@@ -137,3 +137,4 @@ dmypy.json
 *meta_data.py
 GUI/meta_data.py
 GUI/__pycache__/meta_data.cpython-37.pyc
+GUI/meta_data.py

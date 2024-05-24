@@ -14,7 +14,6 @@ from fractions import Fraction
 from rpi_ws281x import *
 import numpy as np
 import subprocess
-from fish import *
 import imageio
 import sys
 import signal
@@ -335,10 +334,12 @@ def launch():
 # kill the process group
         
         # subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py >>/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
-        
-        orig_folder = users_folders()
-        meta_data_file_create()
+        # users_folders('/mnt/Shared/Users')
+        users_folders()
         meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
+        # Launching synchro process:
+        # subprocess.Popen(["/usr/bin/bash","/home/pi/Camera/RaPiD-boxes-software/GUI/synchronizer.sh"])
+        # subprocess.Popen(['bash', '/home/pi/Camera/RaPiD-boxes-software/GUI/synchronizer.sh'])
         # create a process group
         e = subprocess.Popen(['python3', '/home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py'], preexec_fn=os.setsid)
         time.sleep(3)
@@ -354,23 +355,11 @@ def launch():
         bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
-        # Backuping photos to remote server:
-        try:
-            remote_folder = users_folders('/mnt/Shared/Users')
-            shutil.copy2(orig_folder, remote_folder)
-            f = open('meta_data.py', "a")
-            f.write(f"backup_succesfull=True\r\n")
-            f.close()
-        except:
-            f = open('meta_data.py', "a")
-            f.write(f"backup_succesfull=False\r\n")
-            f.close()    
-
-        
         # unfishing()
         # Mass suicide
         os.killpg(os.getpgid(e.pid), signal.SIGTERM)
         os.killpg(os.getpgid(c.pid), signal.SIGTERM)
+        # os.killpg(os.getpgid(synchronizer.pid), signal.SIGTERM)
         # open_popup(window)
         subprocess.call('sudo reboot', shell=True)
         sys.exit()
@@ -401,7 +390,10 @@ def users_folders(address = "/home/pi/camera/Experiments"):
     ''' creating experiment and user folder'''
     folder_name = str(datetime.date.today()).replace('-', '.') + '_CH1_' + '_' + username['experiment name']
     user_name = username['user name']
-    os.chdir(address)
+    try:
+        os.chdir(address)
+    except:
+        return None
 
     if os.path.isdir("{}".format(user_name)):
         os.chdir("{}".format(user_name))
@@ -432,6 +424,7 @@ def init_photo(r, g, b, w, text):
         camera.iso = 100
         time.sleep(5)
         camera.capture('{}.jpg'.format(text))
+
     # Switching off LED strip
     colorWipe(strip, Color(0, 0, 0, 0), 0)
 
@@ -460,7 +453,9 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 time.sleep(5)
-                camera.capture("./{}_cycle_{}h_dark.jpg".format(i, i*round(period_sec/3600, 2)))   # updated 2020.08.25
+                img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2))
+                camera.capture(img_name)
+
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
         # Making image of current state, while dark stage is ongoing
@@ -480,13 +475,12 @@ def ah_cycle(pic_num, apical_decision, period_sec):
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 time.sleep(5)
-                camera.capture("./current_look_{}(dark_stage).jpg".format(i))
+                img_name = "./current_look_{}(dark_stage).jpg".format(i)
+                camera.capture(img_name)
             GPIO.output(23, GPIO.LOW)
             GPIO.output(26, GPIO.LOW)
             # current photo should be only one
             exists = os.path.isfile("./current_look_{}(dark_stage).jpg".format(i-1))
-            if exists:
-                os.remove("./current_look_{}(dark_stage).jpg".format(i-1))
         elapsed = timeit.default_timer() - start_time
         time.sleep(float(period_sec) - elapsed)
     GPIO.cleanup()
@@ -517,9 +511,10 @@ def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period
                 camera.awb_mode = 'off'
                 camera.awb_gains = (Fraction(2), Fraction(1))
                 time.sleep(5)
-                camera.capture("./{}_{}_irradiated.jpg".format(i, color))
+                img_name = "./{}_{}_irradiated.jpg".format(i, color)
+                camera.capture(img_name)
             if light_decision == 1:
-                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21], step=2)
             elif light_decision == 2:
                 colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
             GPIO.output(23, GPIO.LOW)
@@ -530,14 +525,6 @@ def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     GPIO.cleanup()
 
-
-def unfishing(distortion=-0.067):
-    for file in os.listdir():
-        f = os.path.join(os.getcwd(), file)
-        if f[-3:] == 'jpg':
-            imgobj = imageio.imread(f)
-            output_img = fish(imgobj, distortion)
-            imageio.imwrite(str(file[:-4] + '_processed.png'), output_img, format='png')
 
 def open_popup(parent):
     # Create a popup window
@@ -581,7 +568,7 @@ username = {'experiment name': '', 'user name': ''}  # global variable
 ### This creates the main window of an application
 window = tk.Tk()
 SIGNATURE = socket.getfqdn() + " " + get_ip()
-window.title("RaPiDBox v 3.1" + "  (" + SIGNATURE + ")")
+window.title("RaPiDBox v 3.6 (CH1)" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 

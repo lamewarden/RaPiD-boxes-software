@@ -1,11 +1,11 @@
 # Experiment info
-total_experiment_length=1.1
+total_experiment_length=48.1
 prelight_decision=0
-apical_decision=0
-apical_hours=0
-phototropic_hours=1
-light_decision=1
-light=[10, 0, 0, 10]
-location='/home/pi/camera/Experiments/T/2023.11.21_PI3__YU'
-main_process_PID=840
-status_process_PID=972
+apical_decision=1
+apical_hours=48
+phototropic_hours=0
+light_decision=0
+light=[0, 0, 0, 0]
+location='/home/pi/Camera/RaPiD-boxes-software/GUI'
+main_process_PID=928
+status_process_PID=932
