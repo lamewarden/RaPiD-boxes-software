@@ -18,137 +18,31 @@ import imageio
 import sys
 import signal
 import shutil
-from PIL import Image, ImageEnhance
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
+# LED strip configuration:
+LED_COUNT = 70  # Number of LED pixels.
+LED_PIN = 18  # GPIO pin connected to the pixels (real nuber is 12) (must support PWM!).
+LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
+LED_DMA = 10  # DMA channel to use for generating signal (try 10)
+LED_BRIGHTNESS = 255  # Set to 0 for darkest and 255 for brightest
+LED_INVERT = False  # True to invert the signal (when using NPN transistor level shift)
+LED_CHANNEL = 0
+LED_STRIP = ws.SK6812W_STRIP
 
-class NeoStrip:
-
-    def __init__(self,
-                 LED_COUNT=70,
-                 LED_PIN=18,
-                 LED_FREQ_HZ=800000,
-                 LED_DMA=10,
-                 LED_BRIGHTNESS=255,
-                 LED_INVERT = False,
-                 LED_CHANNEL=0,
-                 LED_STRIP=ws.SK6812W_STRIP):
-        self.strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
+# Create NeoPixel object with appropriate configuration.
+strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
                           LED_STRIP)
-        self.strip.begin()
-    
-    def colorWipe(self, palette, wait_ms=50, strip_length=[0, 64], step=1):
-        """Updated color Wipe.
-        Wipe color across display a pixel at a time"""
-        for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
-            self.strip.setPixelColor(i, palette)
-            self.strip.show()
-            time.sleep(wait_ms / 1000.0)
+# Intialize the library (must be called once before other functions).
+strip.begin()
 
-
-class IR_LED:
-
-    def __init__(self,
-                 warnings=False,
-                 mode=GPIO.BCM,
-                 PIN=26):
-        self.PIN = PIN
-        GPIO.setwarnings(warnings)
-        GPIO.setmode(mode)
-        GPIO.setup(PIN, GPIO.OUT)
-
-    def ir_on(self):
-        GPIO.output(self.PIN, GPIO.HIGH)
-
-    def ir_off(self):
-        GPIO.output(self.PIN, GPIO.LOW)
-
-
-class Camera(picamera.PiCamera):
-
-    def __init__(self,
-                 mode="BW",
-                 framerate=0.1,
-                 shutter_speed = 6000000,
-                 iso=1000,
-                 sleep_time = 8,
-                 fraction1=8,
-                 fraction2=8,
-                 resolution = (3280, 2464)):
-        if mode is "BW":
-            self.color_effects = (128, 128)  # b/w mode
-        self.resolution = resolution
-        self.framerate = framerate
-        self.shutter_speed = shutter_speed  # exposure length, can be ajusted (max 6000000 - 6 sec)
-        self.exposure_mode = 'off'  # turning off of autoexposure
-        self.iso = iso
-        # Give the camera a good long time to measure AWB
-        # (you may wish to use fixed AWB instead)
-        self.awb_mode = 'off'
-        self.awb_gains = (fraction1, fraction2)
-        self.sleep_time = sleep_time
-
-    def capture_img(self, img_name):
-        # self.img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2))
-        self.capture(img_name)
-
-
-    def hdr_capture(self, 
-                    img_name, 
-                    imgs_to_capture=10, 
-                    ampl_factor=2):
-        
-        stacked_image = None
-        for image in range(imgs_to_capture):
-            frame_name = img_name + "_" + str(image)
-            self.capture(frame_name)
-
-            # cutting redundant parts
-            image = Image.open(frame_name)
-            image_np = np.array(image)
-
-            if stacked_image is None:
-                stacked_image = np.zeros_like(image_np, dtype=np.float32)
-
-            stacked_image += image_np
-            # Calculate the average
-        if imgs_to_capture >=ampl_factor:
-            averaged_image = stacked_image / (imgs_to_capture//ampl_factor)
-        else:
-            averaged_image = stacked_image
-
-        # Clip values to valid range (0-255) and convert back to uint8
-        averaged_image = np.clip(averaged_image, 0, 255).astype(np.uint8)
-        # Save the enhanced image using PIL
-        enhanced_image = Image.fromarray(averaged_image)
-        enhanced_image.save(img_name)
-
-
-class Experiment:
-    def __init__(self,
-                 neostrip,
-                 irled,
-                 camera,
-                 **params):
-        self.neostrip = neostrip
-        self.irled = irled
-        self.camera = camera
-        self.params = params
-
-    def initial_illumination(self):
-        pass
-    
-
-    def ah_cycle(self):
-        pass
-
-    def bending_cycle(self):
-        pass
-
-
-        
+# IR LEDs configuration
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(26, GPIO.OUT)  # inderpendent IR board # 37
+#GPIO.setup(23, GPIO.OUT)  # second IR board # 16
 
 
 def get_ip():
@@ -542,7 +436,7 @@ fr=8
 
 def ah_cycle(pic_num, apical_decision, period_sec):
     """ Running an apical hook stage/dark stage """
-    GPIO.setmode(GPIO.BCM) # init new IR_LED object here
+    GPIO.setmode(GPIO.BCM)
    # GPIO.setup(23, GPIO.OUT)  # IR left
     GPIO.setup(26, GPIO.OUT)  # IR right
     colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)

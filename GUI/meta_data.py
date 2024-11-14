@@ -1,11 +1,11 @@
 # Experiment info
-total_experiment_length=1.1
-prelight_decision=0
-apical_decision=0
-apical_hours=0
-phototropic_hours=1
-light_decision=1
-light=[10, 0, 0, 10]
-location='/home/pi/camera/Experiments/T/2023.11.21_PI3__YU'
-main_process_PID=840
-status_process_PID=972
+total_experiment_length=116.1
+prelight_decision=1
+apical_decision=1
+apical_hours=90
+phototropic_hours=20
+light_decision=2
+light=[10, 10, 10, 0]
+location='/home/pi/camera/Experiments/T/2024.11.14_CH1__default_experiment'
+main_process_PID=1101
+status_process_PID=8180
