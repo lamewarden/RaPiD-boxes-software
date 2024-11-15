@@ -98,11 +98,16 @@ class Camera(picamera.PiCamera):
     def hdr_capture(self, 
                     img_name, 
                     imgs_to_capture=10, 
-                    ampl_factor=2):
+                    ampl_factor=2,
+                    sleep_time=8):
         
         stacked_image = None
+        frame_names = []
+
         for image in range(imgs_to_capture):
             frame_name = img_name + "_" + str(image)
+            frame_names.append(frame_name)
+            time.sleep(sleep_time)
             self.capture(frame_name)
 
             # cutting redundant parts
@@ -113,17 +118,23 @@ class Camera(picamera.PiCamera):
                 stacked_image = np.zeros_like(image_np, dtype=np.float32)
 
             stacked_image += image_np
+
             # Calculate the average
-        if imgs_to_capture >=ampl_factor:
-            averaged_image = stacked_image / (imgs_to_capture//ampl_factor)
+        if imgs_to_capture >= ampl_factor:
+            averaged_image = stacked_image / (imgs_to_capture // ampl_factor)
         else:
             averaged_image = stacked_image
 
         # Clip values to valid range (0-255) and convert back to uint8
         averaged_image = np.clip(averaged_image, 0, 255).astype(np.uint8)
+
         # Save the enhanced image using PIL
         enhanced_image = Image.fromarray(averaged_image)
         enhanced_image.save(img_name)
+
+        # Remove used frames at the end
+        for frame_name in frame_names:
+            os.remove(frame_name)
 
 
 class Experiment:
@@ -136,16 +147,50 @@ class Experiment:
         self.irled = irled
         self.camera = camera
         self.params = params
+        # Extract individual parameters as needed
+        self.pre_light = params['pre_light']
+        self.total_hours = params['total_hours']
+        self.initial_illumination = params['initial_illumination']
 
-    def initial_illumination(self):
-        pass
-    
+        # ... other parameters
 
-    def ah_cycle(self):
-        pass
+    def initial_illumination(self, sleep_time=600):
+        for i in range(36):
+            self.neostrip.colorWipe(Color(50, 50, 50, 50), strip_length=[22, 64])
+            time.sleep(sleep_time)
+            self.neostrip.colorWipe(Color(0, 0, 0, 0), 0)
 
-    def bending_cycle(self):
-        pass
+    def initial_photo(self, photo_name='initial_photo'):
+        self.neostrip.colorWipe(Color(10, 10, 10, 10), strip_length=[22, 64])
+        self.camera.framerate = 0.2
+        self.camera.shutter_speed = 200000
+        self.camera.iso = 100
+        self.camera.capture_img(photo_name + ".jpg")
+        self.neostrip.colorWipe(Color(0, 0, 0, 0))
+
+
+    def cycle(self, pic_num, period_sec, color_list=[0,0,0,0], strip_length_list=[22, 64]):
+        for i in range(pic_num):
+            start_time = timeit.default_timer()
+            self.neostrip.colorWipe(Color(0, 0, 0, 0), strip_length=strip_length_list)
+            self.irled.ir_on()
+            self.camera.framerate = 0.1
+            self.camera.shutter_speed = 6000000
+            self.camera.iso = 1000
+            self.camera.aw_mode = 'off'
+            self.camera.awb_gains = (8, 8)
+            self.camera.hdr_capture(img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2)))
+            if self.params['apical_decision'] == 0:
+                os.remove("./{}_cycle_{}h_dark.jpg".format(i-1, round(i*period_sec/3600, 2)))
+            self.irled.ir_off()
+            self.neostrip.colorWipe(Color(color_list[0], color_list[1], color_list[2], color_list[3]), strip_length=strip_length_list)
+            elapsed = timeit.default_timer() - start_time
+            time.sleep(float(period_sec) - elapsed)
+
+
+
+
+
 
 
         
@@ -404,6 +449,8 @@ def launch():
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
         f.write(f"main_process_PID={os.getpid()}\r\n")
+        # TODO: add also dynamically updated current round number, last image acquired time,
+        # name and location of the experiment folder so if the process crashes we automatically continue from there
         f.close()
 
 
@@ -473,23 +520,23 @@ def launch():
 
 
 
-def initial_ill(prelight_decision, sleep_time=600):
-    if prelight_decision == 1:
-        for i in range(36):
-            colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
-            time.sleep(sleep_time)
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
-    else:
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
+# def initial_ill(prelight_decision, sleep_time=600):
+#     if prelight_decision == 1:
+#         for i in range(36):
+#             colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
+#             time.sleep(sleep_time)
+#         colorWipe(strip, Color(0, 0, 0, 0), 0)
+#     else:
+#         colorWipe(strip, Color(0, 0, 0, 0), 0)
 
 
-def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
-    """Updated color Wipe.
-    Wipe color across display a pixel at a time"""
-    for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
-        strip.setPixelColor(i, palette)
-        strip.show()
-        time.sleep(wait_ms / 1000.0)
+# def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
+#     """Updated color Wipe.
+#     Wipe color across display a pixel at a time"""
+#     for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
+#         strip.setPixelColor(i, palette)
+#         strip.show()
+#         time.sleep(wait_ms / 1000.0)
 
 
 def users_folders(address = "/home/pi/camera/Experiments"):
