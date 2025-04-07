@@ -14,45 +14,264 @@ from fractions import Fraction
 from rpi_ws281x import *
 import numpy as np
 import subprocess
-from fish import *
 import imageio
 import sys
 import signal
 import shutil
-import json
-import threading
-from PIL import ImageTk, Image
+from PIL import Image, ImageEnhance
 
 # setting working directory
 os.chdir('/home/pi/Camera/RaPiD-boxes-software/GUI')
 
-# LED strip configuration:
-LED_COUNT = 70  # Number of LED pixels.
-LED_PIN = 18  # GPIO pin connected to the pixels (real nuber is 12) (must support PWM!).
-LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
-LED_DMA = 10  # DMA channel to use for generating signal (try 10)
-LED_BRIGHTNESS = 255  # Set to 0 for darkest and 255 for brightest
-LED_INVERT = False  # True to invert the signal (when using NPN transistor level shift)
-LED_CHANNEL = 0
-LED_STRIP = ws.SK6812W_STRIP
 
-# Create NeoPixel object with appropriate configuration.
-strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
+class NeoStrip:
+
+    def __init__(self,
+                 LED_COUNT=70,
+                 LED_PIN=18,
+                 LED_FREQ_HZ=800000,
+                 LED_DMA=10,
+                 LED_BRIGHTNESS=255,
+                 LED_INVERT = False,
+                 LED_CHANNEL=0,
+                 LED_STRIP=ws.SK6812W_STRIP):
+        self.strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL,
                           LED_STRIP)
-# Intialize the library (must be called once before other functions).
-strip.begin()
+        self.strip.begin()
+    
+    def colorWipe(self, palette, wait_ms=50, strip_length=[0, 64], step=1):
+        """Updated color Wipe.
+        Wipe color across display a pixel at a time"""
+        for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
+            self.strip.setPixelColor(i, palette)
+            self.strip.show()
+            time.sleep(wait_ms / 1000.0)
 
-# IR LEDs configuration
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(26, GPIO.OUT)  # inderpendent IR board # 37
-#GPIO.setup(23, GPIO.OUT)  # second IR board # 16
-# shutter=10000000
-# freq=0.01
-# fr1=8
-# fr2=8
-# sleeping = 10
-# iso=1500
+
+class IR_LED:
+
+    def __init__(self,
+                 warnings=False,
+                 mode=GPIO.BCM,
+                 PIN=26):
+        self.PIN = PIN
+        GPIO.setwarnings(warnings)
+        GPIO.setmode(mode)
+        GPIO.setup(PIN, GPIO.OUT)
+
+    def ir_on(self):
+        GPIO.output(self.PIN, GPIO.HIGH)
+
+    def ir_off(self):
+        GPIO.output(self.PIN, GPIO.LOW)
+
+
+class Camera(picamera.PiCamera):
+
+    def __init__(self,
+                 mode="BW",
+                 framerate=0.1,
+                 shutter_speed = 6000000,
+                 iso=1000,
+                 sleep_time = 8,
+                 fraction1=8,
+                 fraction2=8,
+                 resolution = (3280, 2464)):
+        if mode is "BW":
+            self.color_effects = (128, 128)  # b/w mode
+        self.resolution = resolution
+        self.framerate = framerate
+        self.shutter_speed = shutter_speed  # exposure length, can be ajusted (max 6000000 - 6 sec)
+        self.exposure_mode = 'off'  # turning off of autoexposure
+        self.iso = iso
+        # Give the camera a good long time to measure AWB
+        # (you may wish to use fixed AWB instead)
+        self.awb_mode = 'off'
+        self.awb_gains = (fraction1, fraction2)
+        self.sleep_time = sleep_time
+
+    def capture_img(self, img_name):
+        # self.img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2))
+        self.capture(img_name)
+
+
+    def hdr_capture(self, 
+                    img_name, 
+                    imgs_to_capture=10, 
+                    ampl_factor=2,
+                    sleep_time=8):
+        
+        stacked_image = None
+        frame_names = []
+
+        for image in range(imgs_to_capture):
+            frame_name = img_name + "_" + str(image)
+            frame_names.append(frame_name)
+            time.sleep(sleep_time)
+            self.capture(frame_name)
+
+            # cutting redundant parts
+            image = Image.open(frame_name)
+            image_np = np.array(image)
+
+            if stacked_image is None:
+                stacked_image = np.zeros_like(image_np, dtype=np.float32)
+
+            stacked_image += image_np
+
+            # Calculate the average
+        if imgs_to_capture >= ampl_factor:
+            averaged_image = stacked_image / (imgs_to_capture // ampl_factor)
+        else:
+            averaged_image = stacked_image
+
+        # Clip values to valid range (0-255) and convert back to uint8
+        averaged_image = np.clip(averaged_image, 0, 255).astype(np.uint8)
+
+        # Save the enhanced image using PIL
+        enhanced_image = Image.fromarray(averaged_image)
+        enhanced_image.save(img_name)
+
+        # Remove used frames at the end
+        for frame_name in frame_names:
+            os.remove(frame_name)
+
+
+class Experiment:
+    def __init__(self,
+                 neostrip,
+                 irled,
+                 camera,
+                 **params):
+        self.neostrip = neostrip
+        self.irled = irled
+        self.camera = camera
+        self.params = params
+        # Extract individual parameters as needed
+        self.pre_light = params['pre_light']
+        self.total_hours = params['total_hours']
+        self.initial_illumination = params['initial_illumination']
+
+        # ... other parameters
+
+    def initial_illumination(self, sleep_time=600):
+        for i in range(36):
+            self.neostrip.colorWipe(Color(50, 50, 50, 50), strip_length=[22, 64])
+            time.sleep(sleep_time)
+            self.neostrip.colorWipe(Color(0, 0, 0, 0), 0)
+
+    def initial_photo(self, photo_name='initial_photo'):
+        self.neostrip.colorWipe(Color(10, 10, 10, 10), strip_length=[22, 64])
+        self.camera.framerate = 0.2
+        self.camera.shutter_speed = 200000
+        self.camera.iso = 100
+        self.camera.capture_img(photo_name + ".jpg")
+        self.neostrip.colorWipe(Color(0, 0, 0, 0))
+
+
+    def cycle(self, pic_num, period_sec, color_list=[0,0,0,0], strip_length_list=[22, 64]):
+        for i in range(pic_num):
+            start_time = timeit.default_timer()
+            self.neostrip.colorWipe(Color(0, 0, 0, 0), strip_length=strip_length_list)
+            self.irled.ir_on()
+            self.camera.framerate = 0.1
+            self.camera.shutter_speed = 6000000
+            self.camera.iso = 1000
+            self.camera.aw_mode = 'off'
+            self.camera.awb_gains = (8, 8)
+            self.camera.hdr_capture(img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2)))
+            if self.params['apical_decision'] == 0:
+                os.remove("./{}_cycle_{}h_dark.jpg".format(i-1, round(i*period_sec/3600, 2)))
+            self.irled.ir_off()
+            self.neostrip.colorWipe(Color(color_list[0], color_list[1], color_list[2], color_list[3]), strip_length=strip_length_list)
+            elapsed = timeit.default_timer() - start_time
+            time.sleep(float(period_sec) - elapsed)
+
+    def run(self):
+        self.initial_illumination()
+        self.initial_photo()
+        self.cycle(self.params['pic_num'], self.params['period_sec'], self.params['color_list'], self.params['strip_length_list'])
+
+
+
+
+
+class Maintainer:
+
+    def __init__(self):
+        pass
+
+
+    @staticmethod
+    def get_ip():
+        '''function to get and show IP in the status bar'''
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # doesn't even have to be reachable
+            s.connect(('10.255.255.255', 1))
+            IP = s.getsockname()[0]
+        except Exception:
+            IP = '127.0.1.1'
+        finally:
+            s.close()
+        return IP
+    
+
+    @staticmethod
+    def users_folders(address="/home/pi/camera/Experiments"):
+        '''creating experiment and user folder'''
+        folder_name = str(datetime.date.today()).replace('-', '.') + '_CH1_' + '_' + username['experiment name']
+        user_name = username['user name']
+        try:
+            os.chdir(address)
+        except:
+            return None
+
+        if os.path.isdir("{}".format(user_name)):
+            os.chdir("{}".format(user_name))
+        else:
+            os.mkdir("{}".format(user_name))
+            os.chdir("{}".format(user_name))
+
+        # that will release us from constant deleting of already existing folders
+        if os.path.isdir("{}".format(folder_name)):
+            folder_name = folder_name + "copy"
+            os.mkdir("{}".format(folder_name))
+            os.chdir("{}".format(folder_name))
+        else:
+            os.mkdir("{}".format(folder_name))
+            os.chdir("{}".format(folder_name))
+
+        return os.getcwd()
+
+    @staticmethod
+    def meta_data_file_create(meta_loc='meta_data.py', **params):
+        f = open(meta_loc, "w+")
+        f.write("# Experiment info\r\n")
+        f.close()
+        f = open(meta_loc, "a+")
+        for key, value in params.items():
+            f.write(f"{key}={value}\r\n")
+        f.close()
+
+    @staticmethod
+    def meta_data_file_update(meta_loc='meta_data.py', **params):
+        f = open(meta_loc, "a+")
+        for  key, value in params.items():
+            f.write(f"{key}={value}\r\n")
+        f.close()
+
+        # TODO: add also dynamically updated current round number, last image acquired time,
+        # name and location of the experiment folder so if the process crashes we automatically continue from there
+        f.close()
+
+    @staticmethod
+    def restart_system():
+        os.system("sudo reboot")
+
+
+        
+
 
 def get_ip():
     '''function to get and show IP in the status bar'''
@@ -62,7 +281,7 @@ def get_ip():
         s.connect(('10.255.255.255', 1))
         IP = s.getsockname()[0]
     except Exception:
-        IP = '!Connection is not available!'
+        IP = '127.0.1.1'
     finally:
         s.close()
     return IP
@@ -83,7 +302,7 @@ def color_switcher():
 
 def streaming(timer=20000):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
-    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 44], step=3)
+    colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 22], step=3)
     subprocess.call("raspistill -t {}".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
@@ -91,195 +310,6 @@ def streaming(timer=20000):
     # time.sleep(timer)
     # camera.stop_preview()
     colorWipe(strip, Color(0, 0, 0, 0), 0)
-
-
-def capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename):
-    """
-    Turn on LEDs, configure camera with chosen parameters, capture one test image, 
-    and optionally show it or wait 5 seconds.
-    """
-    # 1) Turn on IR or white LEDs, etc. (similar to your code)
-    GPIO.setwarnings(False)
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(26, GPIO.OUT)
-    GPIO.output(26, GPIO.HIGH)
-    
-    # Turn off any other color on NeoPixel
-    colorWipe(strip, Color(0, 0, 0, 0), 0)
-    
-    # Sleep some seconds if needed
-    time.sleep(1)
-    output = np.empty((3280, 2464), dtype=np.uint8)
-    # 2) Capture one image
-
-    for i in range(summation):
-        with picamera.PiCamera() as camera:
-            camera.color_effects = (128, 128)
-            camera.resolution = (3280, 2464)
-            camera.framerate = framerate
-            camera.shutter_speed = shutter_speed
-            camera.exposure_mode = 'off'
-            camera.iso = iso
-            camera.awb_mode = 'off'
-            camera.awb_gains = awb_gains
-        # Capture to the array
-        # Because it's grayscale, R=G=B. Pick one channel, e.g. R:
-            time.sleep(sleep_dur)  # Let the camera settle
-            camera.capture("temp_img.jpg")
-            # time.sleep(sleep_dur)  # Let the camera settle
-            # load the image with PIL and convert to grayscale numpy
-            gray_frame = np.array(Image.open("temp_img.jpg"))[:,:,0].squeeze().T
-            output += gray_frame
-
-        # 3) Turn off the LED
-    GPIO.output(26, GPIO.LOW)
-    GPIO.cleanup()  # Clean up GPIO settings
-    # 4) Average the images
-    # 5) Save the image
-    output = output
-    # print(output.shape)
-    output = Image.fromarray(output.T[:,200:-200], mode='L')  # 'L' = 8-bit grayscale
-    output.save(filename)
-    os.remove("temp_img.jpg")
-
-
-
-def open_camera_settings(master):
-    cam_win = tk.Toplevel(master)
-    cam_win.title("Camera Settings")
-    width, height = 450, 600
-    cam_win.configure(bg="white")
-    cam_win.update_idletasks()  # ensure geometry is computed
-    screen_width = cam_win.winfo_screenwidth()
-    screen_height = cam_win.winfo_screenheight()
-    # Compute x,y to center the window
-    x = (screen_width - width) // 2
-    y = (screen_height - height) // 2
-    cam_win.geometry(f"{width}x{height}+{x}+{0}")
-
- 
-    # -------- 3) FRAMERATE [1..30] -------
-    tk.Label(cam_win, text="Framerate [fps]", bg="white").pack(anchor="w", pady=(0,0), padx=(10,10))
-    framerate_var = tk.DoubleVar(value=0.1)
-    tk.Scale(cam_win, from_=0.1, to=1, resolution=0.01,
-             orient="horizontal", variable=framerate_var).pack(fill="x")
-
-    # -------- 4) SHUTTER SPEED [µs] ------
-    tk.Label(cam_win, text="Shutter Speed [µs, 100..6000000]", bg="white").pack(anchor="w", pady=(0,0), padx=(10,10))
-    shutter_var = tk.IntVar(value=10000000)
-    tk.Scale(cam_win, from_=100, to=6000000, resolution=100,  # step = 100 µs
-             orient="horizontal", variable=shutter_var).pack(fill="x")
-
-    # -------- 5) ISO [100..800] ----------
-    tk.Label(cam_win, text="ISO [100..1500]", bg="white").pack(anchor="w", pady=(0,0))
-    iso_var = tk.IntVar(value=1500)
-    tk.Scale(cam_win, from_=100, to=1500, resolution=200,
-             orient="horizontal", variable=iso_var).pack(fill="x")
-
-    # -------- 6) AWB GAINS [0..8] --------
-    tk.Label(cam_win, text="AWB Gains (Red,Blue) [0..8.0]", bg="white").pack(anchor="w", pady=(0,0))
-    awb_rb_var = tk.DoubleVar(value=8)
-    # awb_b_var = tk.DoubleVar(value=1.0)
-    tk.Scale(cam_win, from_=0.0, to=8.0, resolution=0.1,
-             orient="horizontal", variable=awb_rb_var).pack(fill="x")
-    # tk.Scale(cam_win, from_=0.0, to=8.0, resolution=0.1,
-    #          orient="horizontal", variable=awb_b_var).pack(fill="x")
-
-    # -------- 7) SLEEP DURATION [s] ------
-    tk.Label(cam_win, text="Processing Duration [s]", bg="white").pack(anchor="w", pady=(0,0))
-    sleep_var = tk.DoubleVar(value=10.0)
-    tk.Scale(cam_win, from_=1.0, to=30.0, resolution=1.0,
-             orient="horizontal", variable=sleep_var).pack(fill="x")
-    
-      # -------- 7) SLEEP DURATION [s] ------
-    tk.Label(cam_win, text="Summation ", bg="white").pack(anchor="w", pady=(0,0))
-    summation_var = tk.DoubleVar(value=1)
-    tk.Scale(cam_win, from_=1.0, to=10, resolution=1.0,
-             orient="horizontal", variable=summation_var).pack(fill="x")
-
-    def show_test_image_popup(image_path, duration=5):
-        """
-        Create a small Toplevel to display the captured image for 'duration' seconds.
-        Uses Pillow (PIL) to open the image if installed.
-        """
-
-
-        popup = tk.Toplevel()
-        popup.title("Test Image")
-        popup.geometry("400x300")  # Adjust if you want
-
-        # Load image with PIL, resize to fit?
-        img = Image.open(image_path)
-        new_width = img.width //10
-        new_height = img.height //10
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        # .thumbnail or .resize as needed
-        # e.g. img.thumbnail((400, 300))
-        photo = ImageTk.PhotoImage(img)
-        label = tk.Label(popup, image=photo)
-        label.image = photo  # keep a reference
-        label.pack()
-
-        # Close after duration seconds (non-blocking)
-        def close_after_delay():
-            time.sleep(duration)
-            if popup.winfo_exists():
-                popup.destroy()
-        threading.Thread(target=close_after_delay).start()
-
-
-    # Finally, two buttons at bottom:
-    def test_parameters():
-        """Capture one test image using the chosen parameters."""
-        # 1. Gather all current slider values
-
-        fps = framerate_var.get()
-        shut = shutter_var.get()
-        iso_ = iso_var.get()
-        awb_rb = awb_rb_var.get()
-        sleep_dur = sleep_var.get()
-        summation = int(summation_var.get())
-        # 2. Call a function that does: 
-        #    - Turn on LEDs via GPIO
-        #    - set camera parameters
-        #    - capture 1 image
-        #    - optional: show or preview the image for 5s
-        capture_img(
-            framerate=fps,
-            shutter_speed=shut,
-            iso=iso_,
-            awb_gains=(awb_rb, awb_rb),
-            sleep_dur=sleep_dur,
-            summation=summation,
-            filename="test_image.jpg"
-        )
-        show_test_image_popup("test_image.jpg", 5)
-        os.remove("test_image.jpg")
-
-
-    def apply_parameters():
-        """Save the selected parameters to imaging_setting.json and close the window."""
-        settings_dict = {
-            "framerate": framerate_var.get(),
-            "shutter_speed": shutter_var.get(),
-            "iso": iso_var.get(),
-            "awb_gains": (awb_rb_var.get(), awb_rb_var.get()),
-            "sleep_duration": sleep_var.get(),
-            "summation": summation_var.get()
-        }
-        # Save to JSON
-        with open(r"/home/pi/Camera/RaPiD-boxes-software/GUI/imaging_setting.json", "w") as f:
-            json.dump(settings_dict, f, indent=2)
-        
-        # Close the Toplevel after saving
-        cam_win.destroy()
-
-    # Buttons
-    btn_frame = tk.Frame(cam_win, bg="white")
-    btn_frame.pack(pady=15)
-    tk.Button(btn_frame, text="Test image", command=test_parameters).pack(side="left", padx=10)
-    tk.Button(btn_frame, text="Apply parameters", command=apply_parameters).pack(side="left", padx=10)
-
 
 
 def open_username(username_dict):
@@ -496,6 +526,8 @@ def launch():
         f.write(f"light={[int(color[0]), int(color[1]), int(color[2]), int(color[3])]}\r\n")
         f.write(f"location='{os.getcwd()}'\r\n")
         f.write(f"main_process_PID={os.getpid()}\r\n")
+        # TODO: add also dynamically updated current round number, last image acquired time,
+        # name and location of the experiment folder so if the process crashes we automatically continue from there
         f.close()
 
 
@@ -532,10 +564,12 @@ def launch():
 # kill the process group
         
         # subprocess.call('python3 /home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py >>/home/pi/Camera/RaPiD-boxes-software/GUI/output.txt 2>&1 &', shell=True)
-        
-        orig_folder = users_folders()
-        meta_data_file_create()
+        # users_folders('/mnt/Shared/Users')
+        users_folders()
         meta_data_file_create("/home/pi/Camera/RaPiD-boxes-software/GUI/meta_data.py")
+        # Launching synchro process:
+        # subprocess.Popen(["/usr/bin/bash","/home/pi/Camera/RaPiD-boxes-software/GUI/synchronizer.sh"])
+        # subprocess.Popen(['bash', '/home/pi/Camera/RaPiD-boxes-software/GUI/synchronizer.sh'])
         # create a process group
         e = subprocess.Popen(['python3', '/home/pi/Camera/RaPiD-boxes-software/GUI/experiment_status.py'], preexec_fn=os.setsid)
         time.sleep(3)
@@ -551,23 +585,11 @@ def launch():
         bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec)
         # final white photo
         init_photo(0, 0, 0, 10, 'final_photo')
-        # Backuping photos to remote server:
-        try:
-            remote_folder = users_folders('/mnt/Shared/Users')
-            shutil.copy2(orig_folder, remote_folder)
-            f = open('meta_data.py', "a")
-            f.write(f"backup_succesfull=True\r\n")
-            f.close()
-        except:
-            f = open('meta_data.py', "a")
-            f.write(f"backup_succesfull=False\r\n")
-            f.close()    
-
-        
         # unfishing()
         # Mass suicide
         os.killpg(os.getpgid(e.pid), signal.SIGTERM)
         os.killpg(os.getpgid(c.pid), signal.SIGTERM)
+        # os.killpg(os.getpgid(synchronizer.pid), signal.SIGTERM)
         # open_popup(window)
         subprocess.call('sudo reboot', shell=True)
         sys.exit()
@@ -575,30 +597,33 @@ def launch():
 
 
 
-def initial_ill(prelight_decision, sleep_time=600):
-    if prelight_decision == 1:
-        for i in range(36):
-            colorWipe(strip, Color(30, 30, 30, 30), strip_length=[22, 64], step=2)
-            time.sleep(sleep_time)
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
-    else:
-        colorWipe(strip, Color(0, 0, 0, 0), 0)
+# def initial_ill(prelight_decision, sleep_time=600):
+#     if prelight_decision == 1:
+#         for i in range(36):
+#             colorWipe(strip, Color(50, 50, 50, 50), strip_length=[22, 64])
+#             time.sleep(sleep_time)
+#         colorWipe(strip, Color(0, 0, 0, 0), 0)
+#     else:
+#         colorWipe(strip, Color(0, 0, 0, 0), 0)
 
 
-def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
-    """Updated color Wipe.
-    Wipe color across display a pixel at a time"""
-    for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
-        strip.setPixelColor(i, palette)
-        strip.show()
-        time.sleep(wait_ms / 1000.0)
+# def colorWipe(strip, palette, wait_ms=50, strip_length=[0, 64], step=1):
+#     """Updated color Wipe.
+#     Wipe color across display a pixel at a time"""
+#     for i in range(strip_length[0],strip_length[1], step):   # range of illuminated LEDs is defined
+#         strip.setPixelColor(i, palette)
+#         strip.show()
+#         time.sleep(wait_ms / 1000.0)
 
 
 def users_folders(address = "/home/pi/camera/Experiments"):
     ''' creating experiment and user folder'''
     folder_name = str(datetime.date.today()).replace('-', '.') + '_CH1_' + '_' + username['experiment name']
     user_name = username['user name']
-    os.chdir(address)
+    try:
+        os.chdir(address)
+    except:
+        return None
 
     if os.path.isdir("{}".format(user_name)):
         os.chdir("{}".format(user_name))
@@ -629,45 +654,68 @@ def init_photo(r, g, b, w, text):
         camera.iso = 100
         time.sleep(5)
         camera.capture('{}.jpg'.format(text))
+
     # Switching off LED strip
     colorWipe(strip, Color(0, 0, 0, 0), 0)
 
-def read_the_settings(settings_path = r"/home/pi/Camera/RaPiD-boxes-software/GUI/imaging_setting.json"):
-    ''' Reading the settings from the settings file '''
-    with open(settings_path, "r") as f:
-        data = json.load(f)
-        # Assign to variables
-    framerate = data["framerate"]
-    shutter_speed = data["shutter_speed"]
-    iso = data["iso"]
-    awb_r, awb_b = data["awb_gains"]  # This unpacks the two values in awb_gains
-    sleep_duration = data["sleep_duration"]
-    summation = int(data["summation"])
-    return framerate, shutter_speed, iso, [awb_r, awb_b], sleep_duration, summation
-
+framerate=0.1
+shutter_speed = 6000000
+iso=1000
+sleep_time = 8
+fr=8
 
 def ah_cycle(pic_num, apical_decision, period_sec):
     """ Running an apical hook stage/dark stage """
-    GPIO.setmode(GPIO.BCM)
-    #GPIO.setup(23, GPIO.OUT)  # IR left
+    GPIO.setmode(GPIO.BCM) # init new IR_LED object here
+   # GPIO.setup(23, GPIO.OUT)  # IR left
     GPIO.setup(26, GPIO.OUT)  # IR right
     colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off light (just to be sure)
     # the cycle itself
-    framerate, shutter_speed, iso, awb_gains, sleep_dur, summation = read_the_settings()
     for i in range(pic_num):
         start_time = timeit.default_timer()  # when making of picture starts
         if int(apical_decision) == 1:  # by this, we disarm the whole cycle
-            time.sleep(5)
-            capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_cycle_{}h_dark.jpg".format(i, i*round(period_sec/3600, 2)))
+           # GPIO.output(23, GPIO.HIGH)
+            GPIO.output(26, GPIO.HIGH)
+            with picamera.PiCamera() as camera:
+                camera.color_effects = (128, 128)  # b/w mode
+                camera.resolution = (3280, 2464)
+                camera.framerate = framerate
+                camera.shutter_speed = shutter_speed  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.exposure_mode = 'off'  # turning off of autoexposure
+                camera.iso = iso
+                # Give the camera a good long time to measure AWB
+                # (you may wish to use fixed AWB instead)
+                camera.awb_mode = 'off'
+                camera.awb_gains = (fr, fr)
+                time.sleep(sleep_time)
+                img_name = "./{}_cycle_{}h_dark.jpg".format(i, round(i*period_sec/3600, 2))
+                camera.capture(img_name)
+
+            #GPIO.output(23, GPIO.LOW)
+            GPIO.output(26, GPIO.LOW)
         # Making image of current state, while dark stage is ongoing
         else:
             # Image of current plant look
-           # GPIO.output(23, GPIO.HIGH)
-            time.sleep(5)
-            capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./current_look_{}(dark_stage).jpg".format(i))
+            #GPIO.output(23, GPIO.HIGH)
+            GPIO.output(26, GPIO.HIGH)
+            with picamera.PiCamera() as camera:
+                camera.color_effects = (128, 128)  # b/w mode
+                camera.resolution = (3280, 2464)
+                camera.framerate = framerate
+                camera.shutter_speed = shutter_speed  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.exposure_mode = 'off'  # turning off autoexposure
+                camera.iso = iso
+                # Give the camera a good long time to measure AWB
+                # (you may wish to use fixed AWB instead)
+                camera.awb_mode = 'off'
+                camera.awb_gains = (fr, fr)
+                time.sleep(sleep_time)
+                img_name = "./current_look_{}(dark_stage).jpg".format(i)
+                camera.capture(img_name)
+           # GPIO.output(23, GPIO.LOW)
+            GPIO.output(26, GPIO.LOW)
+            # current photo should be only one
             exists = os.path.isfile("./current_look_{}(dark_stage).jpg".format(i-1))
-            if exists:
-                os.remove("./current_look_{}(dark_stage).jpg".format(i-1))
         elapsed = timeit.default_timer() - start_time
         time.sleep(float(period_sec) - elapsed)
     GPIO.cleanup()
@@ -676,46 +724,42 @@ def ah_cycle(pic_num, apical_decision, period_sec):
 def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period_sec):
     ''' Running a phototropic stage'''
     GPIO.setmode(GPIO.BCM)
-  #  GPIO.setup(23, GPIO.OUT)  # IR left
+    #GPIO.setup(23, GPIO.OUT)  # IR left
     GPIO.setup(26, GPIO.OUT)  # IR right
-    framerate, shutter_speed, iso, awb_gains, sleep_dur, summation = read_the_settings()
+
     # that will release us from constant deleting of already existing folders
-    light_start_time = timeit.default_timer()
     if total_hours_light != 0 or light_decision != 0:
         for i in range(pic_num_blue):
-            elapsed_in_cycle = timeit.default_timer() - light_start_time
             start_time = timeit.default_timer()  # when making of picture starts
             colorWipe(strip, Color(0, 0, 0, 0), 0)  # switch off the light
-   #         GPIO.output(23, GPIO.HIGH)
-            time.sleep(5)
-            if light_decision == 1 and (elapsed_in_cycle/3600)%24 >8:     #short day dark
-                capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(sh_d)night.jpg".format(i, color))
-                # we switch the light off
-                colorWipe(strip, Color(0, 0, 0, 0), 0)  
-            elif light_decision == 1 and (elapsed_in_cycle/3600)%24 <8: #short day light
-                capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(sh_d)day.jpg".format(i, color))
+           # GPIO.output(23, GPIO.HIGH)
+            GPIO.output(26, GPIO.HIGH)
+            with picamera.PiCamera() as camera:
+                camera.color_effects = (128, 128)  # b/w mode
+                camera.resolution = (3280, 2464)
+                camera.framerate = framerate
+                camera.shutter_speed = shutter_speed  # exposure length, can be ajusted (max 6000000 - 6 sec)
+                camera.exposure_mode = 'off'  # turning off of autoexposure
+                camera.iso = iso
+                # Give the camera a good long time to measure AWB
+                # (you may wish to use fixed AWB instead)
+                camera.awb_mode = 'off'
+                camera.awb_gains = (fr, fr)
+                time.sleep(sleep_time)
+                img_name = "./{}_{}_irradiated.jpg".format(i, color)
+                camera.capture(img_name)
+            if light_decision == 1:
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[0, 21])
+            elif light_decision == 2:
                 colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
-            elif light_decision == 2 and (elapsed_in_cycle/3600)%24 >16: #long day dark
-                capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(l_d)night.jpg".format(i, color))
-                colorWipe(strip, Color(0, 0, 0, 0), 0)
-            elif light_decision == 2 and (elapsed_in_cycle/3600)%24 <16: #long day light
-                capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(l_d)day.jpg".format(i, color))
            # GPIO.output(23, GPIO.LOW)
-            # GPIO.output(26, GPIO.LOW)
+            GPIO.output(26, GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
             elapsed = timeit.default_timer() - start_time
             time.sleep(float(period_sec) - elapsed)
         colorWipe(strip, Color(0, 0, 0, 0), 0)
     GPIO.cleanup()
 
-
-def unfishing(distortion=-0.067):
-    for file in os.listdir():
-        f = os.path.join(os.getcwd(), file)
-        if f[-3:] == 'jpg':
-            imgobj = imageio.imread(f)
-            output_img = fish(imgobj, distortion)
-            imageio.imwrite(str(file[:-4] + '_processed.png'), output_img, format='png')
 
 def open_popup(parent):
     # Create a popup window
@@ -725,8 +769,8 @@ def open_popup(parent):
     # Remove the outer frame of the popup window
     popup.overrideredirect(True)
     # Get the screen width and height in pixels
-    screen_width = window.winfo_screenwidth()
-    screen_height = window.winfo_screenheight()
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
     # Calculate the position of the popup window to be at the center of the screen
     position_x = (screen_width - 800) // 2
     position_y = (screen_height - 480) // 2
@@ -759,7 +803,7 @@ username = {'experiment name': '', 'user name': ''}  # global variable
 ### This creates the main window of an application
 window = tk.Tk()
 SIGNATURE = socket.getfqdn() + " " + get_ip()
-window.title("RaPiDBox v 3.1" + "  (" + SIGNATURE + ")")
+window.title("RaPiDBox v 3.6 (CH1)" + "  (" + SIGNATURE + ")")
 window.geometry("800x450")
 window.configure(background='white')
 
@@ -769,14 +813,11 @@ f = font.Font(size=14, family="Arial", weight="bold")
 # # ### Navigation buttons
 gridframe = tk.Frame(window)
 gridframe.grid(row=1, column=0, columnspan=4,  ipady=0, ipadx=0, sticky='e')
-close_butt = tk.Button(gridframe, text='Close',width = 10, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
-user_name = tk.Button(gridframe, text='User',width = 10, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
-exp_name = tk.Button(gridframe, text='Folder',width = 10, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
-focus = tk.Button(gridframe, text='Live',width = 10, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
-settings = tk.Button(gridframe, text='Service',width = 10, font = f, height=2, bg='white', command=lambda: open_camera_settings(window)).pack(side=tk.LEFT)
-launch_button = tk.Button(gridframe, text='Launch',width = 10, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
-
-
+close_butt = tk.Button(gridframe, text='Close',width = 13, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
+user_name = tk.Button(gridframe, text='User',width = 13, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
+exp_name = tk.Button(gridframe, text='Folder',width = 13, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
+focus = tk.Button(gridframe, text='Live',width = 13, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
+launch_button = tk.Button(gridframe, text='Launch',width = 13, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
 
 
 ### Checkboxes ###
@@ -794,11 +835,11 @@ c2.grid(row=3, column=0, ipadx=25, ipady=15, columnspan=2)
 c2.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
 # Create two Radiobutton widgets with different values
-c3 = tk.Radiobutton(window, text='Short day', width=13, variable=light_choice, value=1)
+c3 = tk.Radiobutton(window, text='Lateral light', width=13, variable=light_choice, value=1)
 c3.grid(row=4, column=0, ipady=15, columnspan=1)
 c3.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
-c4 = tk.Radiobutton(window, text='Long day', width=13, variable=light_choice, value=2)
+c4 = tk.Radiobutton(window, text='Upright light', width=13, variable=light_choice, value=2)
 c4.grid(row=4, column=1, ipady=15)
 c4.config(font=("Arial", 16, 'bold'), bg='white', anchor='w')
 
@@ -827,7 +868,7 @@ w2.config(font=("Arial", 12, 'bold'), bg='white')
 
 # Frequency of imaging
 freq_label = "Interval between images (minutes):"
-w3 = tk.Scale(window, from_=3, to=240, width=26, tickinterval=30, label=freq_label, variable=freq_value,
+w3 = tk.Scale(window, from_=10, to=240, width=26, tickinterval=30, label=freq_label, variable=freq_value,
               orient='horizontal')
 w3.set(20)
 w3.grid(row=5, columnspan=2, column=2, rowspan=1, ipadx=144, ipady=1, sticky='w')
