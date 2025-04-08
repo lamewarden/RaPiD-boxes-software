@@ -81,10 +81,13 @@ def color_switcher():
     color_var[2] = blue_choice.get()
 
 
-def streaming(timer=20000):
+def streaming(timer=20000, mode = 'normal'):
     colorWipe(strip, Color(0, 0, 0, 0), 0)
     colorWipe(strip, Color(50, 50, 50, 50), strip_length=[0, 44], step=3)
-    subprocess.call("raspistill -t {}".format(timer), shell=True)
+    if mode == 'normal':
+        subprocess.call("raspistill -t {}".format(timer), shell=True)
+    elif mode == 'zoom':
+        subprocess.call("raspistill -t {} -roi 0.35,0.35,0.35,0.35".format(timer), shell=True)
     # camera = picamera.PiCamera()
     # camera.resolution = '1280 x 720'
     # camera.start_preview()
@@ -138,7 +141,7 @@ def capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,f
     # 5) Save the image
     output = output
     # print(output.shape)
-    output = Image.fromarray(output.T[:,200:-200], mode='L')  # 'L' = 8-bit grayscale
+    output = Image.fromarray(output.T[200:-200,500:-400], mode='L')  # 'L' = 8-bit grayscale
     output.save(filename)
     os.remove("temp_img.jpg")
 
@@ -694,12 +697,13 @@ def bending_cycle(color, total_hours_light, light_decision, pic_num_blue, period
                 colorWipe(strip, Color(0, 0, 0, 0), 0)  
             elif light_decision == 1 and (elapsed_in_cycle/3600)%24 <8: #short day light
                 capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(sh_d)day.jpg".format(i, color))
-                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[22, 64])
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[18, 64])
             elif light_decision == 2 and (elapsed_in_cycle/3600)%24 >16: #long day dark
                 capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(l_d)night.jpg".format(i, color))
                 colorWipe(strip, Color(0, 0, 0, 0), 0)
             elif light_decision == 2 and (elapsed_in_cycle/3600)%24 <16: #long day light
                 capture_img(framerate, shutter_speed, iso, awb_gains, sleep_dur, summation,filename = "./{}_{}_(l_d)day.jpg".format(i, color))
+                colorWipe(strip, Color(int(color[0]),int(color[1]), int(color[2]), int(color[3])), strip_length=[18, 64])
            # GPIO.output(23, GPIO.LOW)
             # GPIO.output(26, GPIO.LOW)
             # adjustment of total time(cause it tends to run forward for ~45 sec per cycle
@@ -769,12 +773,13 @@ f = font.Font(size=14, family="Arial", weight="bold")
 # # ### Navigation buttons
 gridframe = tk.Frame(window)
 gridframe.grid(row=1, column=0, columnspan=4,  ipady=0, ipadx=0, sticky='e')
-close_butt = tk.Button(gridframe, text='Close',width = 10, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
-user_name = tk.Button(gridframe, text='User',width = 10, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
-exp_name = tk.Button(gridframe, text='Folder',width = 10, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
-focus = tk.Button(gridframe, text='Live',width = 10, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
-settings = tk.Button(gridframe, text='Service',width = 10, font = f, height=2, bg='white', command=lambda: open_camera_settings(window)).pack(side=tk.LEFT)
-launch_button = tk.Button(gridframe, text='Launch',width = 10, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
+close_butt = tk.Button(gridframe, text='Close',width = 9, font = f, height=2, bg='white', command=window.destroy).pack(side=tk.LEFT)
+user_name = tk.Button(gridframe, text='User',width = 9, font = f, height=2, bg='white', command=lambda: open_username('user name')).pack(side=tk.LEFT)
+exp_name = tk.Button(gridframe, text='Folder',width = 9, font = f, height=2, bg='white', command=lambda: open_username('experiment name')).pack(side=tk.LEFT)
+focus = tk.Button(gridframe, text='Live',width = 7, font = f, height=2, bg='white', command=streaming).pack(side=tk.LEFT)
+focus = tk.Button(gridframe, text='Live(2x)',width = 7, font = f, height=2, bg='white', command=lambda: streaming(mode='zoom')).pack(side=tk.LEFT)
+settings = tk.Button(gridframe, text='Service',width = 9, font = f, height=2, bg='white', command=lambda: open_camera_settings(window)).pack(side=tk.LEFT)
+launch_button = tk.Button(gridframe, text='Launch',width = 9, font = f, height=2, bg='white', command=launch).pack(side=tk.LEFT)
 
 
 

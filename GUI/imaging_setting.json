@@ -1,11 +1,11 @@
 {
   "framerate": 0.1,
   "shutter_speed": 6000000,
-  "iso": 1000,
+  "iso": 1600,
   "awb_gains": [
     8.0,
     8.0
   ],
   "sleep_duration": 10.0,
-  "summation": 3.0
+  "summation": 2.0
 }

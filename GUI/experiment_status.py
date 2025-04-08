@@ -100,11 +100,11 @@ string = ""
 if prelight_decision == 1:
     string += f"PreLight 6h"
 if apical_decision == 1:
-    string += f" Ap.hook {round(apical_hours,1)}h \r\n"
+    string += f" Dark stage {round(apical_hours,1)}h \r\n"
 if light_decision == 1:
-    string += f" Lat.light {round(phototropic_hours, 1)}h"
+    string += f" Short Day {round(phototropic_hours, 1)}h"
 if light_decision == 2:
-    string += f" Up.light {round(phototropic_hours, 1)}h"
+    string += f" Long Day {round(phototropic_hours, 1)}h"
 
 
 ap_h_info = tk.Label(pr_win, text=string)
