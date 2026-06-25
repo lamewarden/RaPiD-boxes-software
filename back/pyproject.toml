@@ -1,0 +1,45 @@
+[project]
+name = "rapidboxes"
+version = "0.1.0"
+description = "RaPiD-boxes plant live-imaging chamber controller (Pi 4/5, Bookworm)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Ivan Kashkan", email = "kashkan.van@gmail.com" }]
+
+# Platform-independent core. The Raspberry-Pi-only hardware libraries
+# (picamera2, lgpio, gpiozero, adafruit-circuitpython-neopixel-spi, adafruit-blinka)
+# are installed from apt / on-device only and imported lazily, so the whole stack
+# runs on a laptop in SIMULATION mode for development.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pillow>=10.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27", "pytest-asyncio>=0.23"]
+# Installed on the Raspberry Pi only (see deploy/install.sh). picamera2 and lgpio
+# come from apt; these are the pip-installable hardware libs.
+pi = [
+    "gpiozero>=2.0",
+    "adafruit-circuitpython-neopixel-spi>=1.0",
+    "adafruit-blinka>=8.0",
+]
+
+[project.scripts]
+rapidboxes = "rapidboxes.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rapidboxes*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.eggs/
+build/
+
+# Node / front-end
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Runtime data (experiments, settings, logs)
+rapidboxes/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

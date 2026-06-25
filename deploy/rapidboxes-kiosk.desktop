@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RaPiD-boxes Kiosk
+Comment=Full-screen chamber control UI
+Exec=@KIOSK_SH@
+Terminal=false
+X-GNOME-Autostart-enabled=true

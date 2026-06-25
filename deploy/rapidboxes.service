@@ -1,0 +1,18 @@
+[Unit]
+Description=RaPiD-boxes plant imaging chamber controller
+After=network.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@BACK_DIR@
+EnvironmentFile=/etc/rapidboxes.env
+ExecStart=@VENV@/bin/python -m rapidboxes
+Restart=always
+RestartSec=3
+# Hardware (LEDs/IR/camera) is released cleanly on stop by the app's shutdown
+# handler; give it a moment before SIGKILL.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

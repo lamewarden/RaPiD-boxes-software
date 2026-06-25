@@ -1,0 +1,187 @@
+/** @import must precede all other statements */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /**
+   * Tailwind CSS theme
+   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
+   * A different format will require also updating the theme in tailwind.config.ts.
+  */
+  :root {
+    /* Plant Imaging App Color Scheme */
+    --background: 215 30% 11%;
+    --foreground: 0 0% 100%;
+
+    --card: 215 25% 17%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 215 25% 17%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 145 100% 33%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 25% 17%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 215 20% 35%;
+    --muted-foreground: 215 15% 60%;
+
+    --accent: 145 100% 33%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 20% 35%;
+    --input: 215 20% 35%;
+    --ring: 145 100% 33%;
+
+    --radius: 0.625rem;
+
+    /* Custom App Colors */
+    --app-bg-primary: 215 30% 11%;
+    --app-bg-secondary: 215 25% 17%;
+    --app-bg-tertiary: 215 20% 30%;
+    --app-border-primary: 215 20% 35%;
+    --app-border-secondary: 216 17% 40%;
+
+    --app-text-muted: 215 15% 55%;
+    --app-text-secondary: 215 15% 65%;
+
+    --app-green: 145 100% 33%;
+    --app-green-light: 145 95% 45%;
+    --app-green-bright: 149 97% 45%;
+
+    --app-orange: 30 100% 44%;
+    --app-orange-light: 30 100% 51%;
+    --app-orange-bright: 33 100% 51%;
+
+    --app-violet: 270 100% 64%;
+    --app-violet-light: 270 71% 73%;
+
+    --app-blue: 210 100% 58%;
+    --app-blue-light: 209 100% 65%;
+
+    --app-yellow: 47 100% 50%;
+    --app-yellow-dark: 44 93% 48%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 215 30% 11%;
+    --foreground: 0 0% 100%;
+
+    --card: 215 25% 17%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 215 25% 17%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 145 100% 33%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 25% 17%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 215 20% 35%;
+    --muted-foreground: 215 15% 60%;
+
+    --accent: 145 100% 33%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 20% 35%;
+    --input: 215 20% 35%;
+    --ring: 145 100% 33%;
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* Kiosk: fill the display, no document scroll/zoom; AutoScale fits the UI. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  pre,
+  code {
+    overflow-x: auto;
+    white-space: pre;
+  }
+}
+
+@layer components {
+  .app-range-slider::-webkit-slider-runnable-track {
+    height: 8px;
+    background: transparent;
+    border: none;
+  }
+
+  .app-range-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -2px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: var(--slider-thumb-color, #2b7fff);
+    box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.35);
+  }
+
+  .app-range-slider::-moz-range-track {
+    height: 8px;
+    background: transparent;
+    border: none;
+  }
+
+  .app-range-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: var(--slider-thumb-color, #2b7fff);
+    box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.35);
+  }
+}
