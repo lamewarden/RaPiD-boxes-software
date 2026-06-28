@@ -127,6 +127,8 @@ class ExperimentRunner:
     async def start(self, config: TropismConfig) -> StartResponse:
         if self.status.state in (ExperimentState.running, ExperimentState.paused, ExperimentState.finishing):
             return StartResponse(status="busy", experimentId=self.status.experimentId)
+        if not self._hw.camera_available:
+            return StartResponse(status="no_camera")
         exp = self._storage.create_experiment(config.username, config.experimentName)
         self._exp_dir = exp
         self._stop = False

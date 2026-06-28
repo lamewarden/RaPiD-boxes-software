@@ -155,8 +155,9 @@ class SystemInfo(BaseModel):
     simulation: bool
     diskFreeBytes: int
     diskTotalBytes: int
+    cameraAvailable: bool = True
 
 
 class StartResponse(BaseModel):
-    status: str  # "started" | "busy"
+    status: str  # "started" | "busy" | "no_camera"
     experimentId: Optional[str] = None

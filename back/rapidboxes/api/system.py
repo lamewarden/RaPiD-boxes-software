@@ -34,4 +34,5 @@ async def system(state: AppState = Depends(get_state)):
         simulation=state.config.simulation,
         diskFreeBytes=usage.free,
         diskTotalBytes=usage.total,
+        cameraAvailable=state.hw.camera_available,
     )

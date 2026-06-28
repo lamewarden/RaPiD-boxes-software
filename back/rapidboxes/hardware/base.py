@@ -36,6 +36,10 @@ def white(intensity: int) -> RGBW:
     return (0, 0, 0, v)
 
 
+class CameraUnavailableError(RuntimeError):
+    """Raised when no camera hardware is detected (e.g. ribbon unplugged)."""
+
+
 class CameraBackend(ABC):
     @abstractmethod
     def configure(self, settings: CameraSettings) -> None: ...
@@ -50,6 +54,27 @@ class CameraBackend(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
+
+
+class NullCamera(CameraBackend):
+    """Stand-in used when no camera is detected at startup.
+
+    Keeps the rest of the app (LEDs, IR, API, UI) usable; anything that
+    actually needs a frame gets a clear CameraUnavailableError instead of
+    crashing the process.
+    """
+
+    def configure(self, settings: CameraSettings) -> None:
+        pass
+
+    def capture_file(self, path: str) -> None:
+        raise CameraUnavailableError("no camera detected")
+
+    def capture_jpeg(self) -> bytes:
+        raise CameraUnavailableError("no camera detected")
+
+    def close(self) -> None:
+        pass
 
 
 class LedBackend(ABC):

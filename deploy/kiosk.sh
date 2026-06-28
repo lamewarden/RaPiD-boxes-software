@@ -24,6 +24,10 @@ FLAGS=(
   --no-first-run
   --check-for-update-interval=31536000
   --overscroll-history-navigation=0
+  # Skip the OS keyring (gnome-keyring) for credential storage: this is an
+  # autologin kiosk with no real login session to unlock it, so without this
+  # flag Chromium pops a "enter keyring password" dialog on every launch.
+  --password-store=basic
   "--app=$URL"
 )
 

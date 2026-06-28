@@ -3,10 +3,13 @@ import { Link } from "react-router-dom";
 import { X, User, Folder, Radio } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { getUsername, setUsername } from "@/lib/session";
+import { useSystemInfo } from "@/hooks/useSystemInfo";
 
 export default function TopNav() {
   const [editingUser, setEditingUser] = useState(false);
   const [username, setUser] = useState(getUsername());
+  const system = useSystemInfo();
+  const cameraAvailable = system?.cameraAvailable ?? true;
 
   const btn =
     "flex w-[199.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
@@ -30,14 +33,25 @@ export default function TopNav() {
         <span className="text-white text-center text-[13px] font-semibold leading-5">Folder</span>
       </Link>
 
-      <Link
-        to="/live"
-        state={{ from: window.location.pathname }}
-        className="flex w-[198.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-      >
-        <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
-      </Link>
+      {cameraAvailable ? (
+        <Link
+          to="/live"
+          state={{ from: window.location.pathname }}
+          className="flex w-[198.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+        >
+          <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
+          <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
+        </Link>
+      ) : (
+        <div
+          aria-disabled
+          title="No camera connected"
+          className="flex w-[198.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary opacity-50 cursor-not-allowed"
+        >
+          <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
+          <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
+        </div>
+      )}
 
       {editingUser && (
         <OnScreenKeyboard

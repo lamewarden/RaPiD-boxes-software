@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
+from ..hardware.base import CameraUnavailableError
 from .deps import AppState, get_state
 
 log = logging.getLogger("rapidboxes.preview")
@@ -41,5 +42,8 @@ async def preview_stream(state: AppState = Depends(get_state)):
 
 @router.get("/frame.jpg")
 async def preview_frame(state: AppState = Depends(get_state)):
-    frame = await state.hw.preview_frame()
+    try:
+        frame = await state.hw.preview_frame()
+    except CameraUnavailableError:
+        raise HTTPException(503, "camera not connected")
     return Response(frame, media_type="image/jpeg")

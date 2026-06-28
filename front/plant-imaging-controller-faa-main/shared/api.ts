@@ -48,7 +48,7 @@ export interface ExperimentStatus {
 }
 
 export interface StartResponse {
-  status: "started" | "busy";
+  status: "started" | "busy" | "no_camera";
   experimentId: string | null;
 }
 
@@ -73,6 +73,7 @@ export interface SystemInfo {
   simulation: boolean;
   diskFreeBytes: number;
   diskTotalBytes: number;
+  cameraAvailable: boolean;
 }
 
 export interface CameraSettings {

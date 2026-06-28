@@ -10,7 +10,7 @@ import logging
 import time
 
 from ..models import CameraSettings
-from .base import CameraBackend
+from .base import CameraBackend, CameraUnavailableError
 
 log = logging.getLogger("rapidboxes.camera")
 
@@ -20,7 +20,13 @@ class Picamera2Camera(CameraBackend):
         from picamera2 import Picamera2  # Pi-only
 
         self._Picamera2 = Picamera2
-        self._cam = Picamera2()
+        try:
+            self._cam = Picamera2()
+        except IndexError:
+            # picamera2 raises this when no sensor is detected on the CSI port
+            # (ribbon unplugged, camera not seated, or camera_auto_detect not
+            # yet applied since the last config.txt change).
+            raise CameraUnavailableError("no camera detected on CSI port") from None
         self._settings = CameraSettings()
         self._configured = False
 

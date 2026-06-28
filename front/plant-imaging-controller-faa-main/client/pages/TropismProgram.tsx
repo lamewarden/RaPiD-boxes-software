@@ -7,6 +7,7 @@ import ProgramTabs from "@/components/ProgramTabs";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
+import { useSystemInfo } from "@/hooks/useSystemInfo";
 import type { Spectrum } from "@shared/api";
 
 const DEFAULT_VALUES = {
@@ -34,9 +35,11 @@ export default function TropismProgram() {
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
+  const system = useSystemInfo();
+  const cameraAvailable = system?.cameraAvailable ?? true;
 
   const handleStart = async () => {
-    if (starting) return;
+    if (starting || !cameraAvailable) return;
     setStarting(true);
     try {
       const res = await api.startExperiment({
@@ -51,6 +54,11 @@ export default function TropismProgram() {
       });
       if (res.status === "busy") {
         toast.error("An experiment is already running.");
+        return;
+      }
+      if (res.status === "no_camera") {
+        toast.error("No camera connected.");
+        return;
       }
       navigate("/progress-tropism");
     } catch (e) {
@@ -481,12 +489,13 @@ export default function TropismProgram() {
         <div className="flex pb-2 items-start gap-2 self-stretch flex-shrink-0">
           <button
             onClick={handleStart}
-            disabled={starting}
-            className="flex py-2 px-0 justify-center items-center gap-3 flex-1 rounded-[10px] bg-app-green shadow-[0_10px_15px_-3px_rgba(13,84,43,0.2),0_4px_6px_-4px_rgba(13,84,43,0.2)] overflow-hidden hover:bg-app-green-light transition-colors disabled:opacity-60"
+            disabled={starting || !cameraAvailable}
+            title={cameraAvailable ? undefined : "No camera connected"}
+            className="flex py-2 px-0 justify-center items-center gap-3 flex-1 rounded-[10px] bg-app-green shadow-[0_10px_15px_-3px_rgba(13,84,43,0.2),0_4px_6px_-4px_rgba(13,84,43,0.2)] overflow-hidden hover:bg-app-green-light transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <Play className="w-[18px] h-[18px] text-white fill-white" strokeWidth={1.5} />
             <span className="text-white text-center text-[14px] font-black leading-5 tracking-[1.4px] uppercase">
-              {starting ? "Starting…" : "Start Experiment"}
+              {starting ? "Starting…" : !cameraAvailable ? "No Camera" : "Start Experiment"}
             </span>
           </button>
 

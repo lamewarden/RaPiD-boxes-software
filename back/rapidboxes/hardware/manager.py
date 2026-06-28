@@ -12,7 +12,15 @@ from typing import List
 
 from ..config import AppConfig
 from ..models import DeviceSettings
-from .base import CameraBackend, IrBackend, LedBackend, spectra_to_color, white
+from .base import (
+    CameraBackend,
+    CameraUnavailableError,
+    IrBackend,
+    LedBackend,
+    NullCamera,
+    spectra_to_color,
+    white,
+)
 
 log = logging.getLogger("rapidboxes.hw")
 
@@ -24,6 +32,7 @@ class HardwareManager:
         leds: LedBackend,
         ir: IrBackend,
         settings: DeviceSettings,
+        camera_available: bool = True,
     ):
         self._camera = camera
         self._leds = leds
@@ -31,6 +40,7 @@ class HardwareManager:
         self._settings = settings
         self._lock = asyncio.Lock()
         self.light_desc = "off"
+        self.camera_available = camera_available
 
         # Let the simulated camera annotate frames with the current light state.
         from .simulation import SimCamera
@@ -45,6 +55,8 @@ class HardwareManager:
 
     # --- lifecycle -------------------------------------------------------
     async def configure_camera(self) -> None:
+        if not self.camera_available:
+            return
         await self._run(self._camera.configure, self._settings.camera)
 
     async def shutdown(self) -> None:
@@ -99,6 +111,7 @@ class HardwareManager:
 
 def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManager:
     """Construct the manager with real (Pi) or simulated backends."""
+    camera_available = True
     if config.simulation:
         from .simulation import SimCamera, SimIr, SimLeds
 
@@ -112,7 +125,12 @@ def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManag
         from .leds import NeoPixelSpiLeds
 
         log.info("hardware: REAL device mode")
-        camera = Picamera2Camera()
+        try:
+            camera = Picamera2Camera()
+        except CameraUnavailableError:
+            log.warning("no camera detected; continuing without it (capture disabled)")
+            camera = NullCamera()
+            camera_available = False
         leds = NeoPixelSpiLeds(settings.leds)
         ir = GpioIr(settings.ir.pins)
-    return HardwareManager(camera, leds, ir, settings)
+    return HardwareManager(camera, leds, ir, settings, camera_available=camera_available)

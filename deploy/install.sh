@@ -31,7 +31,7 @@ echo "==> Installing system packages..."
 sudo apt-get update
 sudo apt-get install -y \
   python3-venv python3-picamera2 python3-lgpio \
-  chromium-browser nodejs npm curl
+  chromium nodejs npm curl
 
 echo "==> Enabling SPI + camera (and pinning core clock on Pi 4)..."
 CONFIG=/boot/firmware/config.txt
