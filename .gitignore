@@ -12,8 +12,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Runtime data (experiments, settings, logs)
-rapidboxes/
+# Runtime data (experiments, settings, logs) - lives under $HOME on the Pi,
+# never inside this repo; anchored to root so it doesn't shadow back/rapidboxes/
+/rapidboxes/
 *.log
 
 # OS / editor
