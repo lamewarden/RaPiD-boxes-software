@@ -1,18 +1,20 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { X, User, Folder, Radio } from "lucide-react";
+import { X, User, Folder, Radio, Camera } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
+import CameraSettingsMenu from "@/components/CameraSettingsMenu";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
 
 export default function TopNav() {
   const [editingUser, setEditingUser] = useState(false);
+  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
   const [username, setUser] = useState(getUsername());
   const system = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
 
   const btn =
-    "flex w-[199.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
+    "flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
 
   return (
     <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
@@ -37,7 +39,7 @@ export default function TopNav() {
         <Link
           to="/live"
           state={{ from: window.location.pathname }}
-          className="flex w-[198.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+          className={btn}
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
           <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
@@ -46,11 +48,23 @@ export default function TopNav() {
         <div
           aria-disabled
           title="No camera connected"
-          className="flex w-[198.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary opacity-50 cursor-not-allowed"
+          className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary opacity-50 cursor-not-allowed"
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
           <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
         </div>
+      )}
+
+      <button
+        className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+        onClick={() => setCameraSettingsOpen(true)}
+      >
+        <Camera className="w-[18px] h-[18px]" strokeWidth={1.5} />
+        <span className="text-white text-center text-[13px] font-semibold leading-5">Camera</span>
+      </button>
+
+      {cameraSettingsOpen && (
+        <CameraSettingsMenu onClose={() => setCameraSettingsOpen(false)} />
       )}
 
       {editingUser && (

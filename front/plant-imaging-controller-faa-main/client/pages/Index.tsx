@@ -4,7 +4,7 @@ import TopNav from "@/components/TopNav";
 
 export default function Index() {
   return (
-    <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto">
+    <div className="relative flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto">
       <TopNav />
       
       <div className="flex h-[415px] p-2 flex-col justify-center items-start gap-6 flex-shrink-0 self-stretch bg-app-bg-primary overflow-hidden">
@@ -39,6 +39,13 @@ export default function Index() {
           </div>
         </div>
       </div>
+
+      <img
+        src="/ueb-logo-white.svg"
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-2 left-1/2 h-[80px] w-auto -translate-x-1/2 select-none opacity-20"
+      />
     </div>
   );
 }
