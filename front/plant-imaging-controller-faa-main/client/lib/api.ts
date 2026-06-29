@@ -42,6 +42,7 @@ export const api = {
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   system: () => jsonFetch<SystemInfo>("/api/system"),
+  recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
 };
 
 /** Resolve the WebSocket URL for live status against the current origin. */

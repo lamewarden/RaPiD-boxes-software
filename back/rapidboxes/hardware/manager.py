@@ -78,6 +78,27 @@ class HardwareManager:
     async def preview_frame(self) -> bytes:
         return await self._run(self._camera.capture_jpeg)
 
+    async def recheck_camera(self) -> bool:
+        """Try to pick up a camera plugged in after startup.
+
+        picamera2/libcamera enumerate the CSI sensor once and don't notice a
+        hot-plugged camera on their own, so a fresh Picamera2() probe is the
+        only way to find out a camera showed up without restarting the
+        service. No-op (returns True) if one is already available.
+        """
+        if self.camera_available:
+            return True
+        from .camera import Picamera2Camera
+
+        try:
+            camera = await self._run(Picamera2Camera)
+        except CameraUnavailableError:
+            return False
+        self._camera = camera
+        self.camera_available = True
+        await self.configure_camera()
+        return True
+
     # --- IR --------------------------------------------------------------
     async def ir_on(self) -> None:
         await self._run(self._ir.on)
