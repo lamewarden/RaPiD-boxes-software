@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Awaitable, Callable, List, Optional, Set
 
+from .. import config_xml
 from ..models import (
+    CameraSettings,
     ExperimentPhase,
     ExperimentState,
     ExperimentStatus,
+    SavedExperimentConfig,
     StartResponse,
     TropismConfig,
 )
@@ -124,13 +127,27 @@ class ExperimentRunner:
     def current_experiment(self) -> Optional[ExperimentDir]:
         return self._exp_dir
 
-    async def start(self, config: TropismConfig) -> StartResponse:
+    async def start(
+        self, config: TropismConfig, camera: Optional[CameraSettings] = None
+    ) -> StartResponse:
         if self.status.state in (ExperimentState.running, ExperimentState.paused, ExperimentState.finishing):
             return StartResponse(status="busy", experimentId=self.status.experimentId)
         if not self._hw.camera_available:
             return StartResponse(status="no_camera")
         exp = self._storage.create_experiment(config.username, config.experimentName)
         self._exp_dir = exp
+        saved = SavedExperimentConfig(
+            preIlluminationEnabled=config.preIlluminationEnabled,
+            preIlluminationHours=config.preIlluminationHours,
+            darkPhaseEnabled=config.darkPhaseEnabled,
+            darkPhaseHours=config.darkPhaseHours,
+            lateralIlluminationHours=config.lateralIlluminationHours,
+            spectra=config.spectra,
+            intervalMinutes=config.intervalMinutes,
+            intensity=config.intensity,
+            camera=camera or CameraSettings(),
+        )
+        exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
         self._stop = False
         self._pause_event.set()
         self._clock = PausableClock(self._now)

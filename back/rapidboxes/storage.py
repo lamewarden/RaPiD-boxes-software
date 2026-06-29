@@ -53,6 +53,18 @@ class ExperimentDir:
         except Exception:
             return None
 
+    def write_config_xml(self, xml_bytes: bytes, experiment_name: str) -> None:
+        """Atomic write of the saved-config XML, named after the experiment."""
+        final = self.path / f"{_slug(experiment_name)}.xml"
+        tmp = final.with_suffix(".xml.tmp")
+        tmp.write_bytes(xml_bytes)
+        os.replace(tmp, final)
+
+    def read_config_xml(self) -> Optional[bytes]:
+        """Reads whatever single config xml is in the folder, if any."""
+        found = next(self.path.glob("*.xml"), None)
+        return found.read_bytes() if found else None
+
     # --- reading for the gallery ----------------------------------------
     def list_images(self) -> List[dict]:
         out = []

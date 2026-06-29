@@ -135,6 +135,24 @@ class DeviceSettings(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Saved/loaded experiment config (the per-experiment <name>.xml) — phases,
+# light and camera, deliberately excluding identity fields (name/username).
+# ---------------------------------------------------------------------------
+
+
+class SavedExperimentConfig(BaseModel):
+    preIlluminationEnabled: bool = False
+    preIlluminationHours: float = Field(default=6.0, ge=0, le=48)
+    darkPhaseEnabled: bool = True
+    darkPhaseHours: float = Field(default=90.0, ge=0, le=350)
+    lateralIlluminationHours: float = Field(default=20.0, ge=0, le=168)
+    spectra: List[Spectrum] = Field(default_factory=lambda: ["white"])
+    intervalMinutes: float = Field(default=20.0, ge=1, le=240)
+    intensity: int = Field(default=25, ge=0, le=100)
+    camera: CameraSettings = Field(default_factory=CameraSettings)
+
+
+# ---------------------------------------------------------------------------
 # Misc API payloads
 # ---------------------------------------------------------------------------
 

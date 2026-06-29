@@ -1,5 +1,5 @@
-import { useState, type CSSProperties } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, type CSSProperties } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Play, RotateCcw, Tag } from "lucide-react";
 import { toast } from "sonner";
 import TopNav from "@/components/TopNav";
@@ -8,7 +8,7 @@ import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
-import type { Spectrum } from "@shared/api";
+import type { SavedExperimentConfig, Spectrum } from "@shared/api";
 
 const DEFAULT_VALUES = {
   darkPhaseEnabled: false,
@@ -22,6 +22,7 @@ const DEFAULT_VALUES = {
 export default function TropismProgram() {
   const DARK_PHASE_COLOR = "#C27AFF";
   const navigate = useNavigate();
+  const location = useLocation();
   const [darkPhaseEnabled, setDarkPhaseEnabled] = useState(DEFAULT_VALUES.darkPhaseEnabled);
   const [darkPhase, setDarkPhase] = useState(DEFAULT_VALUES.darkPhase);
   const [lateralIllumination, setLateralIllumination] = useState(
@@ -32,12 +33,42 @@ export default function TropismProgram() {
   );
   const [interval, setInterval] = useState(DEFAULT_VALUES.interval);
   const [intensity, setIntensity] = useState(DEFAULT_VALUES.intensity);
+  // No UI control for pre-illumination yet; carried through silently so an
+  // imported config still round-trips it into the next api.startExperiment call.
+  const [preIlluminationEnabled, setPreIlluminationEnabled] = useState(false);
+  const [preIlluminationHours, setPreIlluminationHours] = useState(6);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
   const [checkingCamera, setCheckingCamera] = useState(false);
+
+  useEffect(() => {
+    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
+    if (!loaded) return;
+
+    setDarkPhaseEnabled(loaded.darkPhaseEnabled);
+    setDarkPhase(loaded.darkPhaseHours);
+    setLateralIllumination(loaded.lateralIlluminationHours);
+    setSelectedSpectra(new Set(loaded.spectra));
+    setInterval(loaded.intervalMinutes);
+    setIntensity(loaded.intensity);
+    setPreIlluminationEnabled(loaded.preIlluminationEnabled);
+    setPreIlluminationHours(loaded.preIlluminationHours);
+
+    api
+      .settings()
+      .then((current) => api.saveSettings({ ...current, camera: loaded.camera }))
+      .then(() => toast.success("Loaded previous experiment's settings, including camera."))
+      .catch((e) =>
+        toast.error(`Loaded phases/light, but could not apply camera settings: ${(e as Error).message}`)
+      );
+
+    // Clear the router state so a later remount (e.g. browser back) doesn't replay it.
+    navigate(location.pathname, { replace: true, state: {} });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const handleStart = async () => {
     if (starting) return;
@@ -63,6 +94,8 @@ export default function TropismProgram() {
       const res = await api.startExperiment({
         experimentName,
         username: getUsername(),
+        preIlluminationEnabled,
+        preIlluminationHours,
         darkPhaseEnabled,
         darkPhaseHours: darkPhase,
         lateralIlluminationHours: lateralIllumination,
@@ -103,6 +136,8 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
     setInterval(DEFAULT_VALUES.interval);
     setIntensity(DEFAULT_VALUES.intensity);
+    setPreIlluminationEnabled(false);
+    setPreIlluminationHours(6);
   };
 
   const getColorForValue = (value: number, max: number, colorScheme: string) => {

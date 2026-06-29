@@ -68,6 +68,11 @@ async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
     jpgs = list(Path(exp.path).glob("*.jpg"))
     assert len(jpgs) == 5
 
+    # Saved config XML written at start, named after the experiment.
+    xmls = list(Path(exp.path).glob("*.xml"))
+    assert len(xmls) == 1
+    assert xmls[0].name == "t.xml"
+
     # Hardware left safe: all LEDs black, IR off.
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)

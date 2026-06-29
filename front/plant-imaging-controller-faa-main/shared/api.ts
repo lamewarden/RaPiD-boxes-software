@@ -52,6 +52,15 @@ export interface StartResponse {
   experimentId: string | null;
 }
 
+export interface HistoryEntry {
+  id: string;
+  name: string | null;
+  username: string | null;
+  startedAt: string | null;
+  state: string | null;
+  imagesCaptured: number;
+}
+
 export interface ImageInfo {
   id: string;
   phase: string;
@@ -98,4 +107,17 @@ export interface DeviceSettings {
     spiHz: number;
   };
   ir: { pins: number[] };
+}
+
+/** The saved/loaded per-experiment <name>.xml: phases + light + camera, no identity fields. */
+export interface SavedExperimentConfig {
+  preIlluminationEnabled: boolean;
+  preIlluminationHours: number;
+  darkPhaseEnabled: boolean;
+  darkPhaseHours: number;
+  lateralIlluminationHours: number;
+  spectra: Spectrum[];
+  intervalMinutes: number;
+  intensity: number;
+  camera: CameraSettings;
 }
