@@ -1,121 +1,31 @@
-# Architecture
+# Frontend architecture
 
-## Overview
+The UI is a **single-page React app** served by the FastAPI backend in production.
 
-This repository has three runtime layers:
+```
+Browser (Chromium kiosk)
+    │
+    ├─ GET /              → index.html + static assets (Vite build)
+    ├─ GET /api/*         → FastAPI REST
+    ├─ GET /api/preview   → MJPEG live stream
+    └─ WS  /api/ws        → experiment status push
+```
 
-1. React SPA (`client/`)
-2. Express API (`server/index.ts`)
-3. Optional FastAPI process (`server/api/main.py`)
+## Layout
 
-In local frontend development, Vite runs on port `8080` and mounts Express as middleware so both SPA and `/api/*` are available from one origin.
+| Path | Component | Role |
+|------|-----------|------|
+| `client/pages/` | Route screens | Home, program config, progress, gallery, summary |
+| `client/components/` | Shared UI | TopNav, settings menus, parameter controls |
+| `client/hooks/` | Data hooks | WebSocket status, system info polling |
+| `client/lib/api.ts` | API client | Typed fetch wrapper |
+| `shared/api.ts` | Contract types | Mirrors backend Pydantic models |
 
-## Runtime Modes
+## Dev vs production
 
-## 1) Development Mode
+- **Dev**: Vite on `:8080` proxies `/api` to `localhost:8000` (`vite.config.ts`).
+- **Production**: `deploy/install.sh` runs `npm run build`; FastAPI serves `dist/spa/` at `/`.
 
-- Entry: `pnpm dev`
-- Config: `vite.config.ts`
-- Behavior:
-  - Vite serves the client
-  - `createServer()` from `server/index.ts` is attached to Vite middleware
-  - `/api/*` handled by Express in the same process
+## Screen scaling
 
-## 2) Production Node Mode
-
-- Build:
-  - `pnpm build:client` -> `dist/spa`
-  - `pnpm build:server` -> `dist/server`
-- Start:
-  - `pnpm start` -> `node dist/server/node-build.mjs`
-- Behavior:
-  - Express API from `createServer()`
-  - Static serving from `dist/spa`
-  - Catch-all route serves `index.html` for SPA routes
-  - Unknown `/api/*` and `/health` paths return 404 JSON
-
-## 3) Netlify Serverless Mode
-
-- Netlify function entry: `netlify/functions/api.ts`
-- Uses `serverless-http` to wrap `createServer()`
-- Netlify redirect in `netlify.toml` routes `/api/*` to `/.netlify/functions/api/:splat`
-- SPA publish directory: `dist/spa`
-
-## 4) Optional Python API Mode
-
-- Entry: `server/api/main.py`
-- Framework: FastAPI
-- Purpose:
-  - Demo orchestration endpoints for long-running program process simulation
-  - Independent from Express runtime
-
-## Client Architecture
-
-## Routing
-
-Defined in `client/App.tsx` using React Router 6:
-
-- `/` `Index`
-- `/growth` `GrowthProgram`
-- `/tropism` `TropismProgram`
-- `/live` `CameraLive`
-- `/progress-growth` `ProgressGrowth`
-- `/progress-tropism` `ProgressTropism`
-- `/summary` `ExperimentSummary`
-- `*` `NotFound`
-
-## UI Composition
-
-- `TopNav` provides shared top controls
-- `ProgramTabs` toggles between growth and tropism program pages
-- `ParameterControl` encapsulates a reusable numeric+slider control pattern
-- Tailwind tokens and app theme are defined in `client/global.css` and mapped in `tailwind.config.ts`
-
-## State Model
-
-- Program pages (`GrowthProgram`, `TropismProgram`) hold local form state in React state
-- Progress pages hold runtime timer state (`elapsed`, `isPaused`) locally
-- Cross-page handoff uses `navigate(..., { state })` for transient data
-
-## Server Architecture
-
-## Express Layer
-
-- Entry factory: `createServer()` in `server/index.ts`
-- Middleware:
-  - `cors()`
-  - JSON body parser
-  - URL-encoded parser
-- Routes:
-  - `GET /api/ping`
-  - `GET /api/demo`
-
-## Shared Types
-
-- `shared/api.ts` contains cross-runtime TypeScript interfaces (currently `DemoResponse`)
-- Aliases configured in Vite and TS:
-  - `@/*` -> `client/*`
-  - `@shared/*` -> `shared/*`
-
-## Build Pipeline
-
-## Client Build
-
-- Tool: Vite
-- Output: `dist/spa`
-
-## Server Build
-
-- Tool: Vite library build (`vite.config.server.ts`)
-- Entry: `server/node-build.ts`
-- Output: `dist/server/*.mjs`
-- Target: Node 22
-- Externalized modules include Node built-ins and `express`, `cors`
-
-## Known Boundaries and Decisions
-
-- The React app currently uses local component state, not a centralized store
-- Express endpoints are intentionally minimal in this template
-- FastAPI service is separate and does not proxy through Express by default
-- Netlify deployment path only wraps Express, not the Python API
-
+`AutoScale` wraps the router and scales the fixed 800×452 layout to any touchscreen resolution.

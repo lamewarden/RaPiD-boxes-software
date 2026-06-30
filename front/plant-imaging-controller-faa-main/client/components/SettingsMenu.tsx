@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Camera, Settings, X } from "lucide-react";
 import CameraSettingsMenu from "@/components/CameraSettingsMenu";
+import GeneralSettingsMenu from "@/components/GeneralSettingsMenu";
 
 type SettingsSection = "camera" | "general";
 
@@ -38,20 +39,7 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {section === "camera" ? (
-          <CameraSettingsMenu embedded />
-        ) : (
-          <div className="flex h-full items-center justify-center p-4">
-            <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-4 text-center text-app-text-secondary">
-              <div className="text-[12px] font-bold uppercase tracking-[0.8px] text-app-text-muted">
-                General Settings
-              </div>
-              <p className="mt-2 text-[12px] leading-[18px]">
-                This section is reserved for future system-wide settings.
-              </p>
-            </div>
-          </div>
-        )}
+        {section === "camera" ? <CameraSettingsMenu embedded /> : <GeneralSettingsMenu />}
       </div>
     </div>
   );

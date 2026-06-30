@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Play, RotateCcw, Tag } from "lucide-react";
+import { Play, RotateCcw, Tag, Camera, X } from "lucide-react";
 import { toast } from "sonner";
 import TopNav from "@/components/TopNav";
 import ProgramTabs from "@/components/ProgramTabs";
@@ -18,6 +18,7 @@ const INTENSITY_COLOR = "#F0B100";
 const INTERVAL_COLOR = "#51A2FF";
 
 const DEFAULT_VALUES = {
+  preIlluminationEnabled: false,
   dayLengthHours: 16,
   experimentLengthDays: 14,
   selectedSpectra: new Set(["white"]),
@@ -29,6 +30,9 @@ const DEFAULT_VALUES = {
 export default function GrowthProgram() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [preIlluminationEnabled, setPreIlluminationEnabled] = useState(
+    DEFAULT_VALUES.preIlluminationEnabled
+  );
   const [dayLengthHours, setDayLengthHours] = useState(DEFAULT_VALUES.dayLengthHours);
   const [experimentLengthDays, setExperimentLengthDays] = useState(
     DEFAULT_VALUES.experimentLengthDays
@@ -47,11 +51,14 @@ export default function GrowthProgram() {
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
   const [checkingCamera, setCheckingCamera] = useState(false);
+  const [takingPhoto, setTakingPhoto] = useState(false);
+  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
     if (!loaded || loaded.protocol !== "growth") return;
 
+    setPreIlluminationEnabled(loaded.preIlluminationEnabled);
     setDayLengthHours(loaded.dayLengthHours);
     setExperimentLengthDays(loaded.experimentLengthDays);
     setSelectedSpectra(new Set(loaded.spectra));
@@ -70,6 +77,28 @@ export default function GrowthProgram() {
     navigate(location.pathname, { replace: true, state: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  useEffect(() => {
+    return () => {
+      if (testPhotoUrl) URL.revokeObjectURL(testPhotoUrl);
+    };
+  }, [testPhotoUrl]);
+
+  const handleTestPhoto = async () => {
+    if (takingPhoto) return;
+    setTakingPhoto(true);
+    try {
+      const url = await api.testPhoto(photoIlluminationSource);
+      setTestPhotoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    } catch (e) {
+      toast.error(`Could not take test photo: ${(e as Error).message}`);
+    } finally {
+      setTakingPhoto(false);
+    }
+  };
 
   const handleStart = async () => {
     if (starting) return;
@@ -96,7 +125,7 @@ export default function GrowthProgram() {
         protocol: "growth",
         experimentName,
         username: getUsername(),
-        preIlluminationEnabled: false,
+        preIlluminationEnabled,
         dayLengthHours,
         experimentLengthDays,
         spectra: Array.from(selectedSpectra) as Spectrum[],
@@ -131,6 +160,7 @@ export default function GrowthProgram() {
   };
 
   const handleReset = () => {
+    setPreIlluminationEnabled(DEFAULT_VALUES.preIlluminationEnabled);
     setDayLengthHours(DEFAULT_VALUES.dayLengthHours);
     setExperimentLengthDays(DEFAULT_VALUES.experimentLengthDays);
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
@@ -212,8 +242,32 @@ export default function GrowthProgram() {
           </div>
 
           <div className="flex p-1.5 flex-col items-start gap-1 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary flex-shrink-0">
-            <div className="text-app-text-muted text-[8px] font-bold leading-[12px] tracking-[0.5px] uppercase">
-              Photo Illumination
+            <label className="flex w-full cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={preIlluminationEnabled}
+                onChange={(e) => setPreIlluminationEnabled(e.target.checked)}
+                className="h-4 w-4 cursor-pointer"
+              />
+              <span className="text-[10px] font-bold uppercase tracking-[0.5px] text-app-text-muted">
+                Pre-illumination (6h @ 50% white + baseline photo)
+              </span>
+            </label>
+          </div>
+
+          <div className="flex p-1.5 flex-col items-start gap-1 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary flex-shrink-0">
+            <div className="flex w-full items-center justify-between gap-2">
+              <div className="text-app-text-muted text-[8px] font-bold leading-[12px] tracking-[0.5px] uppercase">
+                Photo Illumination
+              </div>
+              <button
+                onClick={handleTestPhoto}
+                disabled={takingPhoto}
+                className="flex items-center gap-1 rounded-md border border-app-border-primary bg-app-bg-tertiary px-2 py-1 text-[10px] font-bold uppercase tracking-[0.5px] text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Camera className="h-3 w-3" strokeWidth={1.5} />
+                {takingPhoto ? "Capturing…" : "Test Photo"}
+              </button>
             </div>
             <div className="flex w-full items-start gap-1.5">
               {(["ir", "rgbw"] as const).map((source) => {
@@ -291,6 +345,26 @@ export default function GrowthProgram() {
             setEditingName(false);
           }}
         />
+      )}
+
+      {testPhotoUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/90 p-4"
+          onClick={() => setTestPhotoUrl(null)}
+        >
+          <button
+            onClick={() => setTestPhotoUrl(null)}
+            className="absolute right-4 top-4 rounded-md bg-app-bg-tertiary p-2 text-white transition-colors hover:bg-app-border-primary"
+          >
+            <X className="h-[20px] w-[20px]" strokeWidth={1.5} />
+          </button>
+          <img
+            src={testPhotoUrl}
+            alt="Night illumination test capture"
+            className="max-h-[88%] max-w-[92%] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

@@ -13,7 +13,9 @@ import { useSystemInfo } from "@/hooks/useSystemInfo";
 import type { SavedExperimentConfig, Spectrum } from "@shared/api";
 
 const DEFAULT_VALUES = {
-  darkPhaseEnabled: false,
+  preIlluminationEnabled: false,
+  preIlluminationHours: 6,
+  darkPhaseEnabled: true,
   darkPhase: 90,
   lateralIllumination: 4,
   selectedSpectra: new Set(["white"]),
@@ -21,10 +23,18 @@ const DEFAULT_VALUES = {
   intensity: 25,
 };
 
+const PRE_ILLUMINATION_COLOR = "#E5E7EB";
+
 export default function TropismProgram() {
   const DARK_PHASE_COLOR = "#C27AFF";
   const navigate = useNavigate();
   const location = useLocation();
+  const [preIlluminationEnabled, setPreIlluminationEnabled] = useState(
+    DEFAULT_VALUES.preIlluminationEnabled
+  );
+  const [preIlluminationHours, setPreIlluminationHours] = useState(
+    DEFAULT_VALUES.preIlluminationHours
+  );
   const [darkPhaseEnabled, setDarkPhaseEnabled] = useState(DEFAULT_VALUES.darkPhaseEnabled);
   const [darkPhase, setDarkPhase] = useState(DEFAULT_VALUES.darkPhase);
   const [lateralIllumination, setLateralIllumination] = useState(
@@ -46,6 +56,8 @@ export default function TropismProgram() {
     const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
     if (!loaded) return;
 
+    setPreIlluminationEnabled(loaded.preIlluminationEnabled);
+    setPreIlluminationHours(loaded.preIlluminationHours);
     setDarkPhaseEnabled(loaded.darkPhaseEnabled);
     setDarkPhase(loaded.darkPhaseHours);
     setLateralIllumination(loaded.lateralIlluminationHours);
@@ -91,6 +103,8 @@ export default function TropismProgram() {
         protocol: "tropism",
         experimentName,
         username: getUsername(),
+        preIlluminationEnabled,
+        preIlluminationHours,
         darkPhaseEnabled,
         darkPhaseHours: darkPhase,
         lateralIlluminationHours: lateralIllumination,
@@ -125,6 +139,8 @@ export default function TropismProgram() {
   };
 
   const handleReset = () => {
+    setPreIlluminationEnabled(DEFAULT_VALUES.preIlluminationEnabled);
+    setPreIlluminationHours(DEFAULT_VALUES.preIlluminationHours);
     setDarkPhaseEnabled(DEFAULT_VALUES.darkPhaseEnabled);
     setDarkPhase(DEFAULT_VALUES.darkPhase);
     setLateralIllumination(DEFAULT_VALUES.lateralIllumination);
@@ -168,7 +184,45 @@ export default function TropismProgram() {
       <div className="flex p-1.5 flex-col items-start gap-1.5 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
         <ProgramTabs />
 
-        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 overflow-hidden">
+        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 min-h-0 overflow-y-auto pr-0.5">
+
+        {/* Pre-illumination */}
+        <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">
+          <div className="flex h-[74px] p-2 flex-col justify-between items-start flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+            <div className="flex w-full pb-0.5 flex-col items-start">
+              <label className="flex items-center gap-2 cursor-pointer w-full">
+                <input
+                  type="checkbox"
+                  checked={preIlluminationEnabled}
+                  onChange={(e) => setPreIlluminationEnabled(e.target.checked)}
+                  className="w-4 h-4 cursor-pointer"
+                />
+                <div className="flex-1 text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
+                  Pre-illumination (white)
+                </div>
+              </label>
+            </div>
+            <div className={`flex w-full pt-0.5 items-center gap-2 ${preIlluminationEnabled ? "" : "opacity-45"}`}>
+              <div
+                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
+                style={{ color: PRE_ILLUMINATION_COLOR }}
+              >
+                {preIlluminationEnabled ? `${preIlluminationHours}h` : "off"}
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="48"
+                step="0.5"
+                value={preIlluminationHours}
+                onChange={(e) => setPreIlluminationHours(Number(e.target.value))}
+                disabled={!preIlluminationEnabled}
+                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
+                style={getSliderStyle(preIlluminationHours, 0, 48, PRE_ILLUMINATION_COLOR)}
+              />
+            </div>
+          </div>
+        </div>
 
         {/* Lateral Illumination and Dark Phase Row */}
         <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">

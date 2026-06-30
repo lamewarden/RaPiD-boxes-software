@@ -166,10 +166,10 @@ The import menu lists previous experiments from history.
 
 ### Settings menu
 
-The settings menu currently has two tabs:
+The settings menu has two tabs:
 
 - **Camera**: opens the full camera settings panel.
-- **General**: placeholder for future system-wide settings.
+- **General**: system info (hostname, version, disk space), LED strip segment editor, and IR pin display.
 
 The **X** button closes the settings menu.
 
@@ -212,6 +212,7 @@ The Growth screen configures day/night photoperiod experiments.
 
 Controls:
 
+- **Pre-illumination** checkbox: optional fixed 6h @ 50% white soak with baseline photo.
 - **Day Length**: sets the lit portion of the day, in hours.
 - **Experiment Length (Days)**: total run length in days.
 - **Day Spectrum**: chooses one or more visible spectra (`white`, `red`, `green`, `blue`).
@@ -220,6 +221,7 @@ Controls:
 - **Photo Illumination**:
   - **IR (Dark)** uses the IR boards for night captures.
   - **RGBW (White @10%, Top)** uses the top RGBW segment for night captures.
+- **Test Photo**: preview a night capture with the selected illumination source.
 - **Start Experiment**: validates camera availability and starts a Growth run.
 - **Experiment name** button (tag icon): opens the on-screen keyboard to edit the
   saved experiment name.
@@ -236,6 +238,7 @@ The Tropism screen configures apical-hook / bending experiments.
 
 Controls:
 
+- **Pre-illumination** checkbox: optional white-light soak before the dark phase (default off; hours configurable when enabled).
 - **Dark Phase** checkbox: enables or disables the dark apical-hook stage.
 - **Dark Phase** slider: sets dark-phase duration when enabled.
 - **Light Phase Length (h)**: sets the bending / lateral illumination phase duration.
@@ -272,6 +275,7 @@ Displayed information:
 - last captured image
 - elapsed time
 - captured image count vs planned image count
+- next capture countdown (when a capture is scheduled)
 - current phase label
 - current day counter on Growth runs
 

@@ -20,7 +20,7 @@ from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
-from .api import experiments, images, preview, settings as settings_api, system, ws
+from .api import experiments, health, images, preview, settings as settings_api, system, ws
 from .api.deps import AppState
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,7 +57,7 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    for module in (experiments, images, settings_api, system, preview):
+    for module in (experiments, images, settings_api, system, preview, health):
         app.include_router(module.router)
     app.include_router(ws.router)
 

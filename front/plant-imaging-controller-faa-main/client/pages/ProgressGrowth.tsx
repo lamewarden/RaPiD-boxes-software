@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { X, Pause, Play, Square } from "lucide-react";
+import { X, Pause, Play, Square, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+import { formatCountdown, formatElapsed } from "@/lib/progress";
 import type { ExperimentPhase } from "@shared/api";
 
 const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
@@ -12,14 +13,6 @@ const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
   night: "Night (dark)",
 };
 
-function formatTime(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
-
 export default function ProgressGrowth() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
@@ -27,6 +20,7 @@ export default function ProgressGrowth() {
 
   const isPaused = status?.state === "paused";
   const isActive = status?.state === "running" || status?.state === "paused";
+  const isError = status?.state === "error";
   const phaseLabel = status?.phase
     ? PHASE_LABEL[status.phase] ?? status.phase
     : isActive
@@ -35,6 +29,7 @@ export default function ProgressGrowth() {
   const elapsed = status?.elapsedSeconds ?? 0;
   const captured = status?.imagesCaptured ?? 0;
   const planned = status?.imagesPlanned ?? 0;
+  const nextCapture = formatCountdown(status?.nextCaptureInSeconds);
   const progressPct =
     status && status.totalSeconds > 0
       ? Math.min(100, (status.elapsedSeconds / status.totalSeconds) * 100)
@@ -99,6 +94,24 @@ export default function ProgressGrowth() {
           </span>
         </div>
 
+        {isError && (
+          <div className="flex items-start gap-2 rounded-lg border border-app-orange bg-app-orange/15 p-2.5 flex-shrink-0">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-app-orange" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[12px] font-bold text-app-orange-light">Experiment failed</p>
+              <p className="mt-0.5 text-[11px] text-app-text-secondary">
+                {status?.message ?? "An unexpected error occurred."}
+              </p>
+            </div>
+            <Link
+              to="/"
+              className="flex-shrink-0 rounded-md bg-app-bg-tertiary px-2 py-1 text-[10px] font-bold uppercase text-white"
+            >
+              Home
+            </Link>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div className="h-2 w-full rounded-full bg-app-bg-tertiary flex-shrink-0">
           <div className="h-2 rounded-full bg-app-green transition-all" style={{ width: `${progressPct}%` }} />
@@ -112,7 +125,11 @@ export default function ProgressGrowth() {
             ) : (
               <div className="text-center p-6">
                 <p className="text-app-text-muted text-sm">
-                  {isActive ? "Waiting for first image…" : status?.message || "No active experiment"}
+                  {isError
+                    ? status?.message || "Experiment ended with an error"
+                    : isActive
+                      ? "Waiting for first image…"
+                      : status?.message || "No active experiment"}
                 </p>
               </div>
             )}
@@ -121,7 +138,7 @@ export default function ProgressGrowth() {
           {/* Info panel */}
           <div className="flex flex-col gap-2 flex-shrink-0 w-36">
             <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-3 text-center">
-              <div className="text-2xl font-black text-app-green tabular-nums">{formatTime(elapsed)}</div>
+              <div className="text-2xl font-black text-app-green tabular-nums">{formatElapsed(elapsed)}</div>
               <p className="text-app-text-muted text-[10px] mt-1">Elapsed</p>
             </div>
 
@@ -133,10 +150,17 @@ export default function ProgressGrowth() {
               <p className="text-app-text-muted text-[10px]">Images</p>
             </div>
 
+            {nextCapture && isActive && (
+              <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-2 text-center">
+                <p className="text-[11px] font-semibold text-app-green">{nextCapture}</p>
+                <p className="text-app-text-muted text-[10px]">Next capture</p>
+              </div>
+            )}
+
             <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-2 text-center">
               <p className="text-[11px] font-semibold text-app-blue">{phaseLabel}</p>
               <p className="text-app-text-muted text-[10px]">
-                {isPaused ? "Paused" : status?.state === "done" ? "Finished" : "Phase"}
+                {isPaused ? "Paused" : isError ? "Error" : status?.state === "done" ? "Finished" : "Phase"}
               </p>
             </div>
 

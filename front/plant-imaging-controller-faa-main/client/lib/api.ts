@@ -51,6 +51,7 @@ export const api = {
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
+  health: () => jsonFetch<{ ok: boolean; version: string }>("/api/health"),
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
   closeKiosk: () => jsonFetch<{ status: string; kioskPids: number[] }>("/api/system/close-kiosk", { method: "POST" }),
