@@ -4,6 +4,17 @@
 set -u
 
 URL="http://localhost:${RAPIDBOXES_PORT:-8000}"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FRONT_DIR="$ROOT_DIR/front/plant-imaging-controller-faa-main"
+DIST_INDEX="$FRONT_DIR/dist/spa/index.html"
+LOCK_FILE="/tmp/rapidboxes-kiosk.lock"
+
+# Ensure only one kiosk launcher loop runs at a time in the user session.
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "kiosk launcher already running"
+  exit 0
+fi
 
 # Wait for the backend to be ready before opening the browser.
 for _ in $(seq 1 60); do
@@ -36,9 +47,39 @@ if [ "${WAYLAND_DISPLAY:-}" != "" ] || [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; 
   FLAGS=(--ozone-platform=wayland "${FLAGS[@]}")
 fi
 
-# Chromium is `chromium-browser` on some images, `chromium` on others.
-if command -v chromium-browser >/dev/null 2>&1; then
-  exec chromium-browser "${FLAGS[@]}"
-else
-  exec chromium "${FLAGS[@]}"
+# Decide which chromium command to use once.
+CHROMIUM_CMD="chromium"
+if [ -x /usr/lib/chromium/chromium ]; then
+  CHROMIUM_CMD="/usr/lib/chromium/chromium"
+elif command -v chromium-browser >/dev/null 2>&1; then
+  CHROMIUM_CMD="chromium-browser"
 fi
+
+needs_spa_build() {
+  if [ ! -f "$DIST_INDEX" ]; then
+    return 0
+  fi
+  find "$FRONT_DIR/client" "$FRONT_DIR/shared" \
+    "$FRONT_DIR/index.html" "$FRONT_DIR/vite.config.ts" \
+    -type f -newer "$DIST_INDEX" 2>/dev/null | head -n 1 | grep -q .
+}
+
+maybe_build_spa() {
+  if ! command -v npm >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -d "$FRONT_DIR" ]; then
+    return
+  fi
+  if needs_spa_build; then
+    echo "building updated SPA bundle..."
+    (cd "$FRONT_DIR" && npm run build)
+  fi
+}
+
+# Keep kiosk alive: if Chromium exits (crash/close/kill), restart it.
+while true; do
+  maybe_build_spa
+  "$CHROMIUM_CMD" "${FLAGS[@]}"
+  sleep 1
+done

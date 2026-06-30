@@ -53,6 +53,18 @@ export const api = {
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
+  closeKiosk: () => jsonFetch<{ status: string; kioskPids: number[] }>("/api/system/close-kiosk", { method: "POST" }),
+  testPhotoWithSettings: async (settings: CameraSettings): Promise<Blob> => {
+    const res = await fetch("/api/preview/test-photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+      throw new Error(`${res.status}: ${await errorDetail(res)}`);
+    }
+    return res.blob();
+  },
   /** Preview a Growth night-phase capture lit by IR or the fixed RGBW flash. Returns an object URL. */
   testPhoto: async (source: PhotoIlluminationSource, zoom: 1 | 2 = 1): Promise<string> => {
     const res = await fetch(`/api/preview/test-photo?source=${source}&zoom=${zoom}`);

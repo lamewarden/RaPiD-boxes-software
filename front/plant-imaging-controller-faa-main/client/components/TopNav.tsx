@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { X, User, Folder, Radio, Camera, Download } from "lucide-react";
+import { X, User, Folder, Radio, Camera, Download, House } from "lucide-react";
 import { toast } from "sonner";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import CameraSettingsMenu from "@/components/CameraSettingsMenu";
@@ -19,6 +19,7 @@ export default function TopNav() {
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
   const [checkingCamera, setCheckingCamera] = useState(false);
+  const [closingKiosk, setClosingKiosk] = useState(false);
 
   const handleLiveClick = async () => {
     if (checkingCamera) return;
@@ -45,11 +46,32 @@ export default function TopNav() {
     navigate("/tropism", { state: { loadedConfig: config } });
   };
 
+  const handleClose = async () => {
+    if (closingKiosk) return;
+    setClosingKiosk(true);
+    try {
+      await api.closeKiosk();
+      toast.success("Closing kiosk...");
+    } catch (e) {
+      toast.error(`Could not close kiosk: ${(e as Error).message}`);
+      navigate("/");
+    } finally {
+      setClosingKiosk(false);
+    }
+  };
+
   return (
     <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
-      <Link to="/" className={btn}>
+      <button className={btn} onClick={handleClose} disabled={closingKiosk}>
         <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Close</span>
+        <span className="text-white text-center text-[13px] font-semibold leading-5">
+          {closingKiosk ? "Closing..." : "Close"}
+        </span>
+      </button>
+
+      <Link to="/" className={btn}>
+        <House className="w-[18px] h-[18px]" strokeWidth={1.5} />
+        <span className="text-white text-center text-[13px] font-semibold leading-5">Home</span>
       </Link>
 
       <button className={btn} onClick={() => setImportOpen(true)}>

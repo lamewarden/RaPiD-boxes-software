@@ -101,7 +101,7 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
     if (takingPhoto) return;
     setTakingPhoto(true);
     try {
-      const blob = await api.testPhoto(camera);
+      const blob = await api.testPhotoWithSettings(camera);
       setTestPhotoUrl(URL.createObjectURL(blob));
       setTestZoom(zoom);
     } catch (e) {
