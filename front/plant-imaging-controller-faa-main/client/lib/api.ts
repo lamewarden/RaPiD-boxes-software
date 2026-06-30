@@ -43,6 +43,7 @@ export const api = {
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   system: () => jsonFetch<SystemInfo>("/api/system"),
+  recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
   /** Preview a Growth night-phase capture lit by IR or the fixed RGBW flash. Returns an object URL. */
   testPhoto: async (source: PhotoIlluminationSource, zoom: 1 | 2 = 1): Promise<string> => {
     const res = await fetch(`/api/preview/test-photo?source=${source}&zoom=${zoom}`);

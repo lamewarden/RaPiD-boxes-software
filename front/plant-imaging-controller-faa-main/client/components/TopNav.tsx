@@ -1,17 +1,39 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { X, User, Folder, Radio, Camera } from "lucide-react";
+import { toast } from "sonner";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import CameraSettingsMenu from "@/components/CameraSettingsMenu";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
+import { api } from "@/lib/api";
 
 export default function TopNav() {
+  const navigate = useNavigate();
   const [editingUser, setEditingUser] = useState(false);
   const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
   const [username, setUser] = useState(getUsername());
-  const system = useSystemInfo();
+  const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
+  const [checkingCamera, setCheckingCamera] = useState(false);
+
+  const handleLiveClick = async () => {
+    if (checkingCamera) return;
+    setCheckingCamera(true);
+    try {
+      const result = await api.recheckCamera();
+      setSystem(result);
+      if (result.cameraAvailable) {
+        navigate("/live", { state: { from: window.location.pathname } });
+      } else {
+        toast.error("No camera detected");
+      }
+    } catch (e) {
+      toast.error(`Could not check camera: ${(e as Error).message}`);
+    } finally {
+      setCheckingCamera(false);
+    }
+  };
 
   const btn =
     "flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
@@ -45,14 +67,16 @@ export default function TopNav() {
           <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
         </Link>
       ) : (
-        <div
-          aria-disabled
-          title="No camera connected"
-          className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary opacity-50 cursor-not-allowed"
+        <button
+          onClick={handleLiveClick}
+          title="No camera connected — tap to check again"
+          className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary opacity-50 hover:opacity-70 transition-opacity"
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
-        </div>
+          <span className="text-white text-center text-[13px] font-semibold leading-5">
+            {checkingCamera ? "Checking…" : "Live"}
+          </span>
+        </button>
       )}
 
       <button

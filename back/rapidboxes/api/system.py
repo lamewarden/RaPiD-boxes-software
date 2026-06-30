@@ -24,8 +24,7 @@ def _local_ip() -> str:
         return "127.0.0.1"
 
 
-@router.get("", response_model=SystemInfo)
-async def system(state: AppState = Depends(get_state)):
+def _info(state: AppState) -> SystemInfo:
     usage = shutil.disk_usage(state.config.storage_root)
     return SystemInfo(
         hostname=socket.gethostname(),
@@ -36,3 +35,15 @@ async def system(state: AppState = Depends(get_state)):
         diskTotalBytes=usage.total,
         cameraAvailable=state.hw.camera_available,
     )
+
+
+@router.get("", response_model=SystemInfo)
+async def system(state: AppState = Depends(get_state)):
+    return _info(state)
+
+
+@router.post("/recheck-camera", response_model=SystemInfo)
+async def recheck_camera(state: AppState = Depends(get_state)):
+    """Re-probe for a camera plugged in after the backend started."""
+    await state.hw.recheck_camera()
+    return _info(state)
