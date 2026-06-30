@@ -43,3 +43,25 @@ async def preview_stream(state: AppState = Depends(get_state)):
 async def preview_frame(state: AppState = Depends(get_state)):
     frame = await state.hw.preview_frame()
     return Response(frame, media_type="image/jpeg")
+
+
+@router.post("/test-photo")
+async def test_photo(state: AppState = Depends(get_state)):
+    """Capture a test photo with IR light automatically enabled.
+    
+    Sequence:
+      1. Turn on IR
+      2. Wait for camera settle time
+      3. Capture preview frame
+      4. Turn off IR
+      5. Return JPEG
+    """
+    try:
+        await state.hw.ir_on()
+        await asyncio.sleep(state.settings.camera.settleSeconds)
+        frame = await state.hw.preview_frame()
+        await state.hw.ir_off()
+        return Response(frame, media_type="image/jpeg")
+    except Exception:
+        await state.hw.ir_off()
+        raise
