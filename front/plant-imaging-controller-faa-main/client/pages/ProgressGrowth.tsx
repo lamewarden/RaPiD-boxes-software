@@ -5,9 +5,10 @@ import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import type { ExperimentPhase } from "@shared/api";
 
 const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
+  baseline: "Baseline photo",
   pre_illumination: "Pre-illumination",
-  dark: "Dark (apical hook)",
-  bending: "Bending (lateral light)",
+  day: "Day (lit)",
+  night: "Night (dark)",
 };
 
 function formatTime(seconds: number) {
@@ -18,7 +19,7 @@ function formatTime(seconds: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
-export default function ProgressTropism() {
+export default function ProgressGrowth() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
 
@@ -40,6 +41,10 @@ export default function ProgressTropism() {
     status?.experimentId && status?.lastImageId
       ? `/api/images/${status.experimentId}/${status.lastImageId}`
       : null;
+  const dayLabel =
+    status?.dayIndex != null && status?.totalDays != null
+      ? `Day ${status.dayIndex} / ${status.totalDays}`
+      : null;
 
   const togglePause = () => (isPaused ? api.resume() : api.pause()).catch(() => {});
 
@@ -51,7 +56,7 @@ export default function ProgressTropism() {
     }
     navigate("/summary", {
       state: {
-        programType: "tropism",
+        programType: "growth",
         elapsed,
         imagesCaptured: captured,
         phase: phaseLabel,
@@ -74,7 +79,7 @@ export default function ProgressTropism() {
 
       <div className="flex-1 flex flex-col w-full p-4 gap-3 overflow-hidden">
         <div className="flex items-center justify-between flex-shrink-0">
-          <h1 className="text-lg font-bold text-white">Tropism Program</h1>
+          <h1 className="text-lg font-bold text-white">Growth Program</h1>
           <span className={`text-xs font-semibold ${connected ? "text-app-green" : "text-app-orange"}`}>
             {connected ? "● live" : "○ reconnecting"}
           </span>
@@ -120,6 +125,13 @@ export default function ProgressTropism() {
                 {isPaused ? "Paused" : status?.state === "done" ? "Finished" : "Phase"}
               </p>
             </div>
+
+            {dayLabel && (
+              <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-2 text-center">
+                <p className="text-[11px] font-semibold text-app-green">{dayLabel}</p>
+                <p className="text-app-text-muted text-[10px]">Day</p>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1 mt-auto">
               <button

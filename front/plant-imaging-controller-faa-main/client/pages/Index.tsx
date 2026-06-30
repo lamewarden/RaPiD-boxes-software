@@ -17,16 +17,15 @@ export default function Index() {
 
         <div className="flex h-[60px] p-1 flex-col justify-center items-center flex-shrink-0 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
           <div className="flex w-full h-[50px] justify-center items-start gap-2 flex-shrink-0">
-            <div
-              aria-disabled
-              title="Growth program — coming soon"
-              className="flex h-[50px] py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded bg-app-bg-tertiary opacity-50 cursor-not-allowed shadow-lg"
+            <Link
+              to="/growth"
+              className="flex h-[50px] py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded bg-app-green hover:bg-app-green-light transition-colors shadow-lg"
             >
-              <Sprout className="w-4 h-4 text-app-text-secondary" strokeWidth={1.33} />
-              <span className="text-app-text-secondary text-center text-[14px] font-bold leading-5">
-                Growth (soon)
+              <Sprout className="w-4 h-4 text-white" strokeWidth={1.33} />
+              <span className="text-white text-center text-[14px] font-bold leading-5">
+                Growth Program
               </span>
-            </div>
+            </Link>
             <Link
               to="/tropism"
               className="flex h-[50px] py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded bg-app-orange hover:bg-app-orange-light transition-colors shadow-lg"

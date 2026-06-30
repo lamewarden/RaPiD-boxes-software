@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import TopNav from "@/components/TopNav";
 import ProgramTabs from "@/components/ProgramTabs";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
+import SpectrumPanel from "@/components/SpectrumPanel";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
@@ -43,6 +44,7 @@ export default function TropismProgram() {
     setStarting(true);
     try {
       const res = await api.startExperiment({
+        protocol: "tropism",
         experimentName,
         username: getUsername(),
         darkPhaseEnabled,
@@ -273,73 +275,7 @@ export default function TropismProgram() {
           </div>
         </div>
 
-        {/* Spectrum */}
-        <div className="flex p-2 flex-col items-start gap-1.5 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary flex-shrink-0">
-          <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase">
-            Spectrum (Optional)
-          </div>
-          <div className="flex w-full items-start gap-2 flex-wrap">
-            {["white", "red", "green", "blue"].map((spectrum) => {
-              const isSelected = selectedSpectra.has(spectrum);
-              const spectrumConfig = {
-                white: {
-                  bg: isSelected
-                    ? "bg-white shadow-[0_0_12px_0_rgba(255,255,255,0.4)]"
-                    : "bg-white/20",
-                  text: isSelected ? "text-[#101828]" : "text-white/60",
-                  border: isSelected ? "border-white/30" : "border-transparent",
-                },
-                red: {
-                  bg: isSelected
-                    ? "bg-[rgba(251,44,54,0.4)]"
-                    : "bg-[rgba(251,44,54,0.2)]",
-                  text: isSelected
-                    ? "text-[rgba(255,162,162,1)]"
-                    : "text-[rgba(255,162,162,0.6)]",
-                  border: isSelected ? "border-[rgba(255,162,162,0.5)]" : "border-transparent",
-                },
-                green: {
-                  bg: isSelected
-                    ? "bg-[rgba(0,201,80,0.4)]"
-                    : "bg-[rgba(0,201,80,0.2)]",
-                  text: isSelected
-                    ? "text-[rgba(123,241,168,1)]"
-                    : "text-[rgba(123,241,168,0.6)]",
-                  border: isSelected
-                    ? "border-[rgba(123,241,168,0.5)]"
-                    : "border-transparent",
-                },
-                blue: {
-                  bg: isSelected
-                    ? "bg-[rgba(43,127,255,0.4)]"
-                    : "bg-[rgba(43,127,255,0.2)]",
-                  text: isSelected
-                    ? "text-[rgba(142,197,255,1)]"
-                    : "text-[rgba(142,197,255,0.6)]",
-                  border: isSelected
-                    ? "border-[rgba(142,197,255,0.5)]"
-                    : "border-transparent",
-                },
-              };
-
-              const config = spectrumConfig[spectrum as keyof typeof spectrumConfig];
-
-              return (
-                <button
-                  key={spectrum}
-                  onClick={() => handleSpectrumToggle(spectrum)}
-                  className={`flex py-2 px-5 flex-col justify-center items-center rounded border transition-all cursor-pointer ${config.border} ${config.bg} flex-1 min-w-[60px]`}
-                >
-                  <div
-                    className={`text-center text-[10px] font-bold leading-[15px] uppercase ${config.text}`}
-                  >
-                    {spectrum}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <SpectrumPanel selected={selectedSpectra} onToggle={handleSpectrumToggle} />
 
         {/* Interval Between Images and Intensity - Row */}
         <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">

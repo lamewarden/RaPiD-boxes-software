@@ -70,11 +70,16 @@ class Picamera2Camera(CameraBackend):
         self._cam.capture_file(path)
         log.info("captured %s", path)
 
-    def capture_jpeg(self) -> bytes:
+    def capture_jpeg(self, zoom: int = 1) -> bytes:
         self._ensure()
         from PIL import Image  # available on-device too
 
         arr = self._cam.capture_array("main")
+        if zoom > 1:
+            h, w = arr.shape[:2]
+            cw, ch = w // zoom, h // zoom
+            x0, y0 = (w - cw) // 2, (h - ch) // 2
+            arr = arr[y0 : y0 + ch, x0 : x0 + cw]
         img = Image.fromarray(arr).convert("RGB")
         img.thumbnail((640, 360))
         buf = io.BytesIO()

@@ -6,21 +6,29 @@ export default function ProgramTabs() {
   const isGrowth = location.pathname === "/growth";
   const isTropism = location.pathname === "/tropism";
 
-  void isGrowth;
-
   return (
     <div className="flex p-1 flex-col items-start self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
       <div className="flex w-full justify-center items-start gap-2">
-        <div
-          aria-disabled
-          title="Growth program — coming soon"
-          className="flex py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded bg-app-bg-tertiary opacity-50 cursor-not-allowed"
+        <Link
+          to="/growth"
+          className={`flex py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded transition-colors ${
+            isGrowth
+              ? "bg-app-green hover:bg-app-green-light"
+              : "bg-app-bg-tertiary hover:bg-app-border-primary"
+          }`}
         >
-          <Sprout className="w-4 h-4 text-app-text-secondary" strokeWidth={1.33} />
-          <span className="text-center text-[14px] font-bold leading-5 text-app-text-secondary">
-            Growth (soon)
+          <Sprout
+            className={`w-4 h-4 ${isGrowth ? "text-white" : "text-app-text-secondary"}`}
+            strokeWidth={1.33}
+          />
+          <span
+            className={`text-center text-[14px] font-bold leading-5 ${
+              isGrowth ? "text-white" : "text-app-text-secondary"
+            }`}
+          >
+            Growth Program
           </span>
-        </div>
+        </Link>
         <Link
           to="/tropism"
           className={`flex py-1.5 px-0 justify-center items-center gap-2 flex-1 rounded transition-colors ${

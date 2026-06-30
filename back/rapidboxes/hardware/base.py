@@ -49,8 +49,12 @@ class CameraBackend(ABC):
         """Capture a full-resolution still to `path` (blocking)."""
 
     @abstractmethod
-    def capture_jpeg(self) -> bytes:
-        """Capture a single preview-resolution JPEG frame (blocking)."""
+    def capture_jpeg(self, zoom: int = 1) -> bytes:
+        """Capture a single preview-resolution JPEG frame (blocking).
+
+        zoom=2 center-crops to half width/height before the preview resize
+        (used by the Growth "Test Photo x2" button to check focus/framing).
+        """
 
     @abstractmethod
     def close(self) -> None: ...
@@ -70,7 +74,7 @@ class NullCamera(CameraBackend):
     def capture_file(self, path: str) -> None:
         raise CameraUnavailableError("no camera detected")
 
-    def capture_jpeg(self) -> bytes:
+    def capture_jpeg(self, zoom: int = 1) -> bytes:
         raise CameraUnavailableError("no camera detected")
 
     def close(self) -> None:

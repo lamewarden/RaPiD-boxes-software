@@ -1,11 +1,12 @@
 /** Thin typed client for the RaPiD-boxes FastAPI backend (same origin). */
 import type {
   DeviceSettings,
+  ExperimentConfig,
   ExperimentStatus,
   ImageListResponse,
+  PhotoIlluminationSource,
   StartResponse,
   SystemInfo,
-  TropismConfig,
 } from "@shared/api";
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -26,7 +27,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  startExperiment: (config: TropismConfig) =>
+  startExperiment: (config: ExperimentConfig) =>
     jsonFetch<StartResponse>("/api/experiments", {
       method: "POST",
       body: JSON.stringify(config),
@@ -42,6 +43,21 @@ export const api = {
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   system: () => jsonFetch<SystemInfo>("/api/system"),
+  /** Preview a Growth night-phase capture lit by IR or the fixed RGBW flash. Returns an object URL. */
+  testPhoto: async (source: PhotoIlluminationSource, zoom: 1 | 2 = 1): Promise<string> => {
+    const res = await fetch(`/api/preview/test-photo?source=${source}&zoom=${zoom}`);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        detail = (await res.json()).detail ?? detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
 };
 
 /** Resolve the WebSocket URL for live status against the current origin. */
