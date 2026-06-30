@@ -45,8 +45,6 @@ export default function GrowthProgram() {
     DEFAULT_VALUES.photoIlluminationSource
   );
   const [starting, setStarting] = useState(false);
-  const [testingPhoto, setTestingPhoto] = useState(false);
-  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
   const [system, setSystem] = useSystemInfo();
@@ -122,22 +120,6 @@ export default function GrowthProgram() {
     setPhotoIlluminationSource(DEFAULT_VALUES.photoIlluminationSource);
   };
 
-  const handleTestPhoto = async (zoom: 1 | 2) => {
-    if (testingPhoto) return;
-    setTestingPhoto(true);
-    try {
-      const url = await api.testPhoto(photoIlluminationSource, zoom);
-      setTestPhotoUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-    } catch (e) {
-      toast.error(`Test photo failed: ${(e as Error).message}`);
-    } finally {
-      setTestingPhoto(false);
-    }
-  };
-
   return (
     <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto overflow-hidden">
       <TopNav />
@@ -189,11 +171,41 @@ export default function GrowthProgram() {
             />
           </div>
 
-          <SpectrumPanel
-            label="Day Spectrum"
-            selected={selectedSpectra}
-            onToggle={handleSpectrumToggle}
-          />
+          <div className="flex justify-center items-stretch gap-2 self-stretch flex-shrink-0">
+            <SpectrumPanel
+              label="Day Spectrum"
+              selected={selectedSpectra}
+              onToggle={handleSpectrumToggle}
+              compact
+              className="flex-1"
+            />
+
+            <div className="flex p-1.5 flex-col items-start gap-1 self-stretch flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+              <div className="text-app-text-muted text-[8px] font-bold leading-[12px] tracking-[0.5px] uppercase">
+                Photo Illumination
+              </div>
+              <div className="flex w-full items-start gap-1.5">
+                {(["ir", "rgbw"] as const).map((source) => {
+                  const isSelected = photoIlluminationSource === source;
+                  return (
+                    <button
+                      key={source}
+                      onClick={() => setPhotoIlluminationSource(source)}
+                      className={`flex py-1 px-3 flex-col justify-center items-center rounded border transition-all cursor-pointer flex-1 ${
+                        isSelected
+                          ? "bg-[rgba(194,122,255,0.4)] border-[rgba(194,122,255,0.5)] text-white"
+                          : "bg-[rgba(194,122,255,0.15)] border-transparent text-white/60"
+                      }`}
+                    >
+                      <div className="text-center text-[9px] font-bold leading-[13px] uppercase">
+                        {source === "ir" ? "IR (Dark)" : "RGBW (White @10%, Top)"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
           {/* Day Intensity / Interval */}
           <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">
@@ -224,55 +236,6 @@ export default function GrowthProgram() {
             />
           </div>
 
-          {/* Night photo illumination + test photo */}
-          <div className="flex p-2 flex-col items-start gap-1.5 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary flex-shrink-0">
-            <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase">
-              Night Photo Illumination
-            </div>
-            <div className="flex w-full items-start gap-2">
-              {(["ir", "rgbw"] as const).map((source) => {
-                const isSelected = photoIlluminationSource === source;
-                return (
-                  <button
-                    key={source}
-                    onClick={() => setPhotoIlluminationSource(source)}
-                    className={`flex py-2 px-5 flex-col justify-center items-center rounded border transition-all cursor-pointer flex-1 ${
-                      isSelected
-                        ? "bg-[rgba(194,122,255,0.4)] border-[rgba(194,122,255,0.5)] text-white"
-                        : "bg-[rgba(194,122,255,0.15)] border-transparent text-white/60"
-                    }`}
-                  >
-                    <div className="text-center text-[10px] font-bold leading-[15px] uppercase">
-                      {source === "ir" ? "IR (Dark)" : "RGBW (White @10%, Top)"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex w-full items-center gap-2 pt-1">
-              <button
-                onClick={() => handleTestPhoto(1)}
-                disabled={testingPhoto}
-                className="flex-1 py-1.5 px-2 rounded border border-app-border-primary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors text-[10px] font-bold uppercase text-white disabled:opacity-50"
-              >
-                {testingPhoto ? "Capturing…" : "Test Photo"}
-              </button>
-              <button
-                onClick={() => handleTestPhoto(2)}
-                disabled={testingPhoto}
-                className="flex-1 py-1.5 px-2 rounded border border-app-border-primary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors text-[10px] font-bold uppercase text-white disabled:opacity-50"
-              >
-                {testingPhoto ? "Capturing…" : "Test Photo ×2"}
-              </button>
-              {testPhotoUrl && (
-                <img
-                  src={testPhotoUrl}
-                  alt="Test capture preview"
-                  className="h-[40px] w-[60px] object-cover rounded border border-app-border-primary flex-shrink-0"
-                />
-              )}
-            </div>
-          </div>
         </div>
 
         <div className="flex pb-2 items-start gap-2 self-stretch flex-shrink-0">
