@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Power } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import type { ImageInfo } from "@shared/api";
 
 export default function ExperimentSummary() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [restarting, setRestarting] = useState(false);
 
   const state = location.state as {
@@ -21,6 +22,12 @@ export default function ExperimentSummary() {
   const experimentId = state?.experimentId ?? null;
   const elapsed = state?.elapsed || 0;
   const imagesCaptured = state?.imagesCaptured || 0;
+
+  useEffect(() => {
+    if (!state) {
+      navigate("/", { replace: true });
+    }
+  }, [navigate, state]);
 
   const { data: system } = useQuery({
     queryKey: ["system"],
@@ -53,11 +60,66 @@ export default function ExperimentSummary() {
   const handleClose = async () => {
     if (restarting) return;
     setRestarting(true);
+
     try {
-      await api.restartService();
+      // Send restart request with timeout
+      const restartController = new AbortController();
+      const restartTimeout = setTimeout(() => restartController.abort(), 5000);
+
+      const restartRes = await fetch("/api/system/restart-service", {
+        method: "POST",
+        signal: restartController.signal,
+      });
+      clearTimeout(restartTimeout);
+
+      if (!restartRes.ok) {
+        throw new Error(`Restart failed: HTTP ${restartRes.status}`);
+      }
+
+      await restartRes.json();
       toast.success("Restarting service...");
+
+      // Now poll for service recovery
+      let success = false;
+      let attempt = 0;
+      let delay = 1500; // Start with 1.5s (service takes ~4s to fully start)
+
+      while (attempt < 15 && !success) {
+        attempt++;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+
+        try {
+          const pollController = new AbortController();
+          const pollTimeout = setTimeout(() => pollController.abort(), 2000);
+          const pollRes = await fetch("/api/system", {
+            signal: pollController.signal,
+            cache: "no-store",
+          });
+          clearTimeout(pollTimeout);
+
+          if (pollRes.ok) {
+            await pollRes.json();
+            success = true;
+          } else {
+            delay = Math.min(delay * 1.2, 3000);
+          }
+        } catch {
+          delay = Math.min(delay * 1.2, 3000);
+        }
+      }
+
+      if (success) {
+        setTimeout(() => {
+          window.location.replace("/");
+        }, 1000);
+      } else {
+        toast.error("Service took too long to restart. Please refresh manually.");
+        setRestarting(false);
+      }
     } catch (e) {
-      toast.error(`Could not restart service: ${(e as Error).message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[Close] Error during restart:", msg, e);
+      toast.error(`Restart failed: ${msg}`);
       setRestarting(false);
     }
   };

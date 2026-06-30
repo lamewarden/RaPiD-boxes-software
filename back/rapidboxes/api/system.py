@@ -101,5 +101,5 @@ async def restart_service(state: AppState = Depends(get_state)):
     Delay slightly so the HTTP response can be sent before termination.
     """
     loop = asyncio.get_running_loop()
-    loop.call_later(0.25, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    loop.call_later(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM))
     return {"status": "restarting"}
