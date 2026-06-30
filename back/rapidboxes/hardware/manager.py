@@ -75,8 +75,25 @@ class HardwareManager:
     async def capture(self, path: str) -> None:
         await self._run(self._camera.capture_file, path)
 
-    async def preview_frame(self) -> bytes:
-        return await self._run(self._camera.capture_jpeg)
+    async def preview_frame(self, zoom: int = 1) -> bytes:
+        return await self._run(self._camera.capture_jpeg, zoom)
+
+    async def test_capture(self, source: str, zoom: int = 1) -> bytes:
+        """One-off preview capture lit the same way a Growth night photo would be."""
+        from ..models import GROWTH_PHOTO_FLASH_INTENSITY
+
+        if source == "ir":
+            await self.ir_on()
+            try:
+                return await self.preview_frame(zoom)
+            finally:
+                await self.ir_off()
+        else:  # rgbw
+            await self.top_white(GROWTH_PHOTO_FLASH_INTENSITY)
+            try:
+                return await self.preview_frame(zoom)
+            finally:
+                await self.all_off()
 
     async def recheck_camera(self) -> bool:
         """Try to pick up a camera plugged in after startup.
@@ -114,6 +131,12 @@ class HardwareManager:
         seg = self._settings.leds.topSegment
         await self._run(self._leds.set_segment, seg[0], seg[1], white(intensity))
         self.light_desc = f"white@{intensity}%"
+
+    async def top(self, spectra: List[str], intensity: int) -> None:
+        seg = self._settings.leds.topSegment
+        color = spectra_to_color(spectra, intensity)
+        await self._run(self._leds.set_segment, seg[0], seg[1], color)
+        self.light_desc = f"{'+'.join(spectra)}@{intensity}% (top)"
 
     async def lateral(self, spectra: List[str], intensity: int) -> None:
         seg = self._settings.leds.lateralSegment

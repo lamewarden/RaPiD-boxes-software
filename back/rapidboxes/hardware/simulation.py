@@ -63,8 +63,15 @@ class SimCamera(CameraBackend):
         self._frame += 1
         log.info("sim capture -> %s", path)
 
-    def capture_jpeg(self) -> bytes:
-        img = self._render(640, 360)
+    def capture_jpeg(self, zoom: int = 1) -> bytes:
+        if zoom > 1:
+            full = self._render(640 * zoom, 360 * zoom)
+            w, h = full.size
+            cw, ch = 640, 360
+            x0, y0 = (w - cw) // 2, (h - ch) // 2
+            img = full.crop((x0, y0, x0 + cw, y0 + ch))
+        else:
+            img = self._render(640, 360)
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=70)
         return buf.getvalue()

@@ -6,14 +6,15 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import config_xml
-from ..models import ExperimentStatus, SavedExperimentConfig, StartResponse, TropismConfig
+from ..models import ExperimentConfig, ExperimentStatus, StartResponse
+from ..models import ExperimentConfig, ExperimentStatus, SavedExperimentConfig, StartResponse
 from .deps import AppState, get_state
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
 
 @router.post("", response_model=StartResponse)
-async def start_experiment(config: TropismConfig, state: AppState = Depends(get_state)):
+async def start_experiment(config: ExperimentConfig, state: AppState = Depends(get_state)):
     return await state.runner.start(config, state.settings.camera)
 
 

@@ -8,8 +8,10 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AutoScale from "@/components/AutoScale";
 import Index from "./pages/Index";
 import TropismProgram from "./pages/TropismProgram";
+import GrowthProgram from "./pages/GrowthProgram";
 import CameraLive from "./pages/CameraLive";
 import ProgressTropism from "./pages/ProgressTropism";
+import ProgressGrowth from "./pages/ProgressGrowth";
 import ExperimentSummary from "./pages/ExperimentSummary";
 import Gallery from "./pages/Gallery";
 import NotFound from "./pages/NotFound";
@@ -26,8 +28,10 @@ export const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/tropism" element={<TropismProgram />} />
+            <Route path="/growth" element={<GrowthProgram />} />
             <Route path="/live" element={<CameraLive />} />
             <Route path="/progress-tropism" element={<ProgressTropism />} />
+            <Route path="/progress-growth" element={<ProgressGrowth />} />
             <Route path="/summary" element={<ExperimentSummary />} />
             <Route path="/gallery" element={<Gallery />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Annotated, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -17,6 +17,11 @@ from pydantic import BaseModel, Field, model_validator
 Spectrum = str  # one of: "white" | "red" | "green" | "blue"
 VALID_SPECTRA = ("white", "red", "green", "blue")
 
+# Growth protocol: fixed, non-configurable pre-illumination + photo-flash values.
+GROWTH_PRE_ILLUMINATION_HOURS = 6.0
+GROWTH_PRE_ILLUMINATION_INTENSITY = 50
+GROWTH_PHOTO_FLASH_INTENSITY = 10
+
 
 class TropismConfig(BaseModel):
     """The Tropism protocol as exposed by the React UI.
@@ -25,6 +30,7 @@ class TropismConfig(BaseModel):
       pre-illumination (optional white soak) -> dark "apical hook" -> "bending".
     """
 
+    protocol: Literal["tropism"] = "tropism"
     experimentName: str = Field(default="experiment", min_length=1, max_length=80)
     username: str = Field(default="pi", min_length=1, max_length=40)
 
@@ -58,6 +64,49 @@ class TropismConfig(BaseModel):
         return self
 
 
+class GrowthConfig(BaseModel):
+    """The Growth (day/night photoperiod) protocol.
+
+    Optional fixed 6h/50% white pre-illumination (with one baseline photo
+    taken just before it starts) -> repeating top-down day/night cycle for
+    `experimentLengthDays` days. Always uses the top LED segment; never the
+    lateral/side segment (that's reserved for Tropism's unilateral bending).
+    """
+
+    protocol: Literal["growth"] = "growth"
+    experimentName: str = Field(default="experiment", min_length=1, max_length=80)
+    username: str = Field(default="pi", min_length=1, max_length=40)
+
+    # Fixed 6h @ 50% white soak; on/off only, not configurable.
+    preIlluminationEnabled: bool = False
+
+    # Day/night photoperiod cycle.
+    dayLengthHours: int = Field(default=16, ge=0, le=24)
+    experimentLengthDays: int = Field(default=14, ge=1, le=30)
+    spectra: List[Spectrum] = Field(default_factory=lambda: ["white"])
+    dayIntensity: int = Field(default=25, ge=0, le=100)
+
+    # Imaging cadence, uniform across day and night.
+    intervalMinutes: float = Field(default=30.0, ge=1, le=240)
+
+    # Light source used for captures taken during the night/dark portion.
+    photoIlluminationSource: str = Field(default="ir")  # "ir" | "rgbw"
+
+    @model_validator(mode="after")
+    def _check(self) -> "GrowthConfig":
+        if self.photoIlluminationSource not in ("ir", "rgbw"):
+            raise ValueError("photoIlluminationSource must be 'ir' or 'rgbw'")
+        bad = [s for s in self.spectra if s not in VALID_SPECTRA]
+        if bad:
+            raise ValueError(f"invalid spectra {bad}; allowed: {VALID_SPECTRA}")
+        if not self.spectra:
+            raise ValueError("day phase needs at least one spectrum colour")
+        return self
+
+
+ExperimentConfig = Annotated[Union[TropismConfig, GrowthConfig], Field(discriminator="protocol")]
+
+
 # ---------------------------------------------------------------------------
 # Experiment runtime status (GET /api/experiments/current and WS payload)
 # ---------------------------------------------------------------------------
@@ -76,6 +125,9 @@ class ExperimentPhase(str, Enum):
     pre_illumination = "pre_illumination"
     dark = "dark"
     bending = "bending"
+    baseline = "baseline"
+    day = "day"
+    night = "night"
 
 
 class ExperimentStatus(BaseModel):
@@ -94,7 +146,9 @@ class ExperimentStatus(BaseModel):
     nextCaptureInSeconds: Optional[float] = None
     lastImageId: Optional[str] = None
     message: Optional[str] = None
-    config: Optional[TropismConfig] = None
+    config: Optional[ExperimentConfig] = None
+    dayIndex: Optional[int] = None
+    totalDays: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
 from ..hardware.base import CameraUnavailableError
+from ..models import ExperimentState
 from .deps import AppState, get_state
 
 log = logging.getLogger("rapidboxes.preview")
@@ -44,6 +45,27 @@ async def preview_stream(state: AppState = Depends(get_state)):
 async def preview_frame(state: AppState = Depends(get_state)):
     try:
         frame = await state.hw.preview_frame()
+    except CameraUnavailableError:
+        raise HTTPException(503, "camera not connected")
+    return Response(frame, media_type="image/jpeg")
+
+
+@router.get("/test-photo")
+async def test_photo(source: str, zoom: int = 1, state: AppState = Depends(get_state)):
+    """Growth config screen: preview a capture lit by IR or a fixed-intensity
+    top-down RGBW flash, matching how a night-phase Growth photo would look."""
+    if state.runner.status.state in (
+        ExperimentState.running,
+        ExperimentState.paused,
+        ExperimentState.finishing,
+    ):
+        raise HTTPException(409, "an experiment is running")
+    if source not in ("ir", "rgbw"):
+        raise HTTPException(400, "source must be 'ir' or 'rgbw'")
+    if zoom not in (1, 2):
+        raise HTTPException(400, "zoom must be 1 or 2")
+    try:
+        frame = await state.hw.test_capture(source, zoom)
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
     return Response(frame, media_type="image/jpeg")

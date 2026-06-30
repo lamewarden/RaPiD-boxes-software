@@ -6,6 +6,7 @@
 export type Spectrum = "white" | "red" | "green" | "blue";
 
 export interface TropismConfig {
+  protocol: "tropism";
   experimentName: string;
   username: string;
   preIlluminationEnabled?: boolean;
@@ -18,6 +19,23 @@ export interface TropismConfig {
   intensity: number;
 }
 
+export type PhotoIlluminationSource = "ir" | "rgbw";
+
+export interface GrowthConfig {
+  protocol: "growth";
+  experimentName: string;
+  username: string;
+  preIlluminationEnabled: boolean;
+  dayLengthHours: number;
+  experimentLengthDays: number;
+  spectra: Spectrum[];
+  dayIntensity: number;
+  intervalMinutes: number;
+  photoIlluminationSource: PhotoIlluminationSource;
+}
+
+export type ExperimentConfig = TropismConfig | GrowthConfig;
+
 export type ExperimentState =
   | "idle"
   | "running"
@@ -26,7 +44,13 @@ export type ExperimentState =
   | "done"
   | "error";
 
-export type ExperimentPhase = "pre_illumination" | "dark" | "bending";
+export type ExperimentPhase =
+  | "pre_illumination"
+  | "dark"
+  | "bending"
+  | "baseline"
+  | "day"
+  | "night";
 
 export interface ExperimentStatus {
   state: ExperimentState;
@@ -44,7 +68,9 @@ export interface ExperimentStatus {
   nextCaptureInSeconds: number | null;
   lastImageId: string | null;
   message: string | null;
-  config: TropismConfig | null;
+  config: ExperimentConfig | null;
+  dayIndex: number | null;
+  totalDays: number | null;
 }
 
 export interface StartResponse {

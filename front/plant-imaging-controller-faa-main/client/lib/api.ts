@@ -2,13 +2,14 @@
 import type {
   CameraSettings,
   DeviceSettings,
+  ExperimentConfig,
   ExperimentStatus,
   HistoryEntry,
   ImageListResponse,
   SavedExperimentConfig,
+  PhotoIlluminationSource,
   StartResponse,
   SystemInfo,
-  TropismConfig,
 } from "@shared/api";
 
 async function errorDetail(res: Response): Promise<string> {
@@ -33,7 +34,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  startExperiment: (config: TropismConfig) =>
+  startExperiment: (config: ExperimentConfig) =>
     jsonFetch<StartResponse>("/api/experiments", {
       method: "POST",
       body: JSON.stringify(config),
@@ -52,16 +53,20 @@ export const api = {
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
-  testPhoto: async (settings: CameraSettings): Promise<Blob> => {
-    const res = await fetch("/api/preview/test-photo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
-    });
+  /** Preview a Growth night-phase capture lit by IR or the fixed RGBW flash. Returns an object URL. */
+  testPhoto: async (source: PhotoIlluminationSource, zoom: 1 | 2 = 1): Promise<string> => {
+    const res = await fetch(`/api/preview/test-photo?source=${source}&zoom=${zoom}`);
     if (!res.ok) {
-      throw new Error(`${res.status}: ${await errorDetail(res)}`);
+      let detail = res.statusText;
+      try {
+        detail = (await res.json()).detail ?? detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status}: ${detail}`);
     }
-    return res.blob();
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
   },
 };
 

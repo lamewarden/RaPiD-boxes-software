@@ -10,9 +10,15 @@ import pytest
 
 from rapidboxes.config import AppConfig
 from rapidboxes.engine.runner import ExperimentRunner
-from rapidboxes.hardware.base import BLACK
+from rapidboxes.hardware.base import BLACK, white
 from rapidboxes.hardware.manager import build_hardware
-from rapidboxes.models import DeviceSettings, ExperimentState, TropismConfig
+from rapidboxes.models import (
+    GROWTH_PHOTO_FLASH_INTENSITY,
+    DeviceSettings,
+    ExperimentState,
+    GrowthConfig,
+    TropismConfig,
+)
 from rapidboxes.storage import Storage
 
 
@@ -99,5 +105,65 @@ async def test_pause_resume_and_stop(tmp_path):
     await runner.stop()
     assert runner.status.state == ExperimentState.done
     assert runner.status.message == "stopped by user"
+    assert runner._hw._ir.state is False
+    assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_growth_protocol_baseline_pre_illumination_day_night_rgbw_flash(tmp_path):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+
+    # Spy on IR/LED calls so we can tell IR-lit vs RGBW-flash-lit captures apart.
+    ir_on_calls = []
+    led_calls = []
+    orig_ir_on = runner._hw._ir.on
+    orig_set_segment = runner._hw._leds.set_segment
+    runner._hw._ir.on = lambda: (ir_on_calls.append(True), orig_ir_on())[1]
+    runner._hw._leds.set_segment = lambda start, end, color: (
+        led_calls.append((start, end, color)),
+        orig_set_segment(start, end, color),
+    )[1]
+
+    config = GrowthConfig(
+        experimentName="g",
+        username="u",
+        preIlluminationEnabled=True,
+        dayLengthHours=1,            # 1h day @ 240min interval -> 1 capture
+        experimentLengthDays=1,
+        spectra=["white"],
+        dayIntensity=40,
+        intervalMinutes=240,         # max allowed; 23h night -> 6 captures
+        photoIlluminationSource="rgbw",
+    )
+
+    resp = await runner.start(config)
+    assert resp.status == "started"
+    await runner._task  # run to completion
+
+    assert runner.status.state == ExperimentState.done
+    # 1 baseline + 1 day capture + 6 night captures (ceil(23h*3600 / 240min*60))
+    assert runner.status.imagesPlanned == 8
+    assert runner.status.imagesCaptured == 8
+    # totalSeconds includes the fixed 6h pre-illumination soak, which itself takes 0 captures.
+    assert runner.status.totalSeconds == 6 * 3600 + 1 * 3600 + 23 * 3600
+    assert runner.status.dayIndex == 1
+    assert runner.status.totalDays == 1
+
+    exp = runner.current_experiment
+    files = sorted(p.name for p in Path(exp.path).glob("*.jpg"))
+    assert sum(f.startswith("baseline_") for f in files) == 1
+    assert sum(f.startswith("day_") for f in files) == 1
+    assert sum(f.startswith("night_") for f in files) == 6
+    assert not any(f.startswith("pre_illumination_") for f in files)
+
+    # Only the baseline capture (taken before any light is on) used IR; night
+    # captures used the fixed-intensity RGBW top flash instead.
+    assert len(ir_on_calls) == 1
+    flash_color = white(GROWTH_PHOTO_FLASH_INTENSITY)
+    flash_calls = [c for c in led_calls if c[2] == flash_color]
+    assert len(flash_calls) == 6
+
+    # Hardware left safe: all LEDs black, IR off.
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)
