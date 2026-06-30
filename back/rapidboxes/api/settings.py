@@ -20,5 +20,5 @@ async def put_settings(settings: DeviceSettings, state: AppState = Depends(get_s
     if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
         raise HTTPException(409, "cannot change settings while an experiment is running")
     save_device_settings(state.config.settings_path, settings)
-    state.rebuild_hardware(settings)
+    await state.rebuild_hardware(settings)
     return state.settings

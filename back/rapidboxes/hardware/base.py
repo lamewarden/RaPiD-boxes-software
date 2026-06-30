@@ -57,6 +57,12 @@ class CameraBackend(ABC):
         """
 
     @abstractmethod
+    def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
+        """Reconfigure with `settings` and capture one full-resolution JPEG
+        (blocking) — used by the Camera Settings "Test Photo" button to
+        preview in-progress, possibly-unsaved settings before committing."""
+
+    @abstractmethod
     def close(self) -> None: ...
 
 
@@ -75,6 +81,9 @@ class NullCamera(CameraBackend):
         raise CameraUnavailableError("no camera detected")
 
     def capture_jpeg(self, zoom: int = 1) -> bytes:
+        raise CameraUnavailableError("no camera detected")
+
+    def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
         raise CameraUnavailableError("no camera detected")
 
     def close(self) -> None:

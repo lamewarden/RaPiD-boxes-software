@@ -11,7 +11,7 @@ import logging
 from typing import List
 
 from ..config import AppConfig
-from ..models import DeviceSettings
+from ..models import CameraSettings, DeviceSettings
 from .base import (
     CameraBackend,
     CameraUnavailableError,
@@ -94,6 +94,9 @@ class HardwareManager:
                 return await self.preview_frame(zoom)
             finally:
                 await self.all_off()
+
+    async def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
+        return await self._run(self._camera.capture_test_jpeg, settings)
 
     async def recheck_camera(self) -> bool:
         """Try to pick up a camera plugged in after startup.

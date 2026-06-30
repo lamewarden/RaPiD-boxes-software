@@ -39,9 +39,8 @@ class Picamera2Camera(CameraBackend):
             "ExposureTime": int(s.exposureMicroseconds),
             "AnalogueGain": max(1.0, s.iso / 100.0),
             "ColourGains": (s.awbRedGain, s.awbBlueGain),
+            "Saturation": 0.0 if s.grayscale else 1.0,
         }
-        if s.grayscale:
-            ctrls["Saturation"] = 0.0
         return ctrls
 
     def configure(self, settings: CameraSettings) -> None:
@@ -84,6 +83,17 @@ class Picamera2Camera(CameraBackend):
         img.thumbnail((640, 360))
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=70)
+        return buf.getvalue()
+
+    def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
+        from PIL import Image  # available on-device too
+
+        self.configure(settings)
+        time.sleep(max(0.0, settings.settleSeconds))
+        arr = self._cam.capture_array("main")
+        img = Image.fromarray(arr).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=settings.jpegQuality)
         return buf.getvalue()
 
     def close(self) -> None:

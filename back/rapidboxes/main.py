@@ -84,7 +84,10 @@ def _mount_spa(app: FastAPI, config: AppConfig) -> None:
         candidate = spa / full_path
         if full_path and candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(index)
+        # index.html picks which hashed JS/CSS bundle loads; never let the
+        # browser cache it, or a kiosk relaunch can silently keep showing a
+        # stale build even right after a fresh deploy.
+        return FileResponse(index, headers={"Cache-Control": "no-store"})
 
     log.info("serving SPA from %s", spa)
 

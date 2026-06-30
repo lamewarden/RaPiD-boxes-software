@@ -20,11 +20,21 @@ class AppState:
     hw: HardwareManager
     runner: ExperimentRunner
 
-    def rebuild_hardware(self, settings: DeviceSettings) -> None:
-        """Swap in fresh hardware after a settings change (idle only)."""
+    async def rebuild_hardware(self, settings: DeviceSettings) -> None:
+        """Swap in fresh hardware after a settings change (idle only).
+
+        Must release the old camera/LEDs/IR first: picamera2 raises "Device or
+        resource busy" if a second Picamera2() is opened while the first is
+        still held. Also configures the new camera immediately, rather than
+        leaving it on Picamera2Camera's internal defaults until the next
+        experiment start — otherwise a Live preview taken before then would
+        silently ignore whatever was just saved (e.g. grayscale/color mode).
+        """
+        await self.hw.shutdown()
         self.settings = settings
         self.hw = build_hardware(self.config, settings)
         self.runner._hw = self.hw
+        await self.hw.configure_camera()
 
 
 def get_state(request: Request) -> AppState:

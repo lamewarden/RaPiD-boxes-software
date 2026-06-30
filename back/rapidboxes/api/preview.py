@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
 from ..hardware.base import CameraUnavailableError
-from ..models import ExperimentState
+from ..models import CameraSettings, ExperimentState
 from .deps import AppState, get_state
 
 log = logging.getLogger("rapidboxes.preview")
@@ -66,6 +66,18 @@ async def test_photo(source: str, zoom: int = 1, state: AppState = Depends(get_s
         raise HTTPException(400, "zoom must be 1 or 2")
     try:
         frame = await state.hw.test_capture(source, zoom)
+    except CameraUnavailableError:
+        raise HTTPException(503, "camera not connected")
+    return Response(frame, media_type="image/jpeg")
+
+
+@router.post("/test-photo")
+async def test_photo_with_settings(settings: CameraSettings, state: AppState = Depends(get_state)):
+    """Camera settings screen: one-shot capture with unsaved camera params."""
+    if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
+        raise HTTPException(409, "cannot take a test photo while an experiment is running")
+    try:
+        frame = await state.hw.capture_test_jpeg(settings)
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
     return Response(frame, media_type="image/jpeg")

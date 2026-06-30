@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, RotateCcw, X } from "lucide-react";
+import { Camera, Check, RotateCcw, X, ZoomIn } from "lucide-react";
 import { toast } from "sonner";
 import ParameterControl from "@/components/ParameterControl";
 import { api } from "@/lib/api";
@@ -71,6 +71,9 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [takingPhoto, setTakingPhoto] = useState(false);
+  const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
+  const [testZoom, setTestZoom] = useState<1 | 2>(1);
   const { status } = useExperimentStatus();
   const locked = status?.state === "running" || status?.state === "paused";
 
@@ -85,7 +88,28 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
       .finally(() => setLoading(false));
   }, []);
 
+  // Revoke the previous blob URL whenever it's replaced or the menu unmounts.
+  useEffect(() => {
+    return () => {
+      if (testPhotoUrl) URL.revokeObjectURL(testPhotoUrl);
+    };
+  }, [testPhotoUrl]);
+
   const patch = (p: Partial<CameraSettings>) => setCamera((c) => ({ ...c, ...p }));
+
+  const handleTestPhoto = async (zoom: 1 | 2) => {
+    if (takingPhoto) return;
+    setTakingPhoto(true);
+    try {
+      const blob = await api.testPhoto(camera);
+      setTestPhotoUrl(URL.createObjectURL(blob));
+      setTestZoom(zoom);
+    } catch (e) {
+      toast.error(`Could not take test photo: ${(e as Error).message}`);
+    } finally {
+      setTakingPhoto(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!deviceSettings) return;
@@ -259,6 +283,34 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
       </div>
 
       <div className="flex items-center gap-2 border-t border-app-border-primary bg-app-bg-secondary p-2">
+        <div className="flex overflow-hidden rounded-[10px] border border-app-border-primary">
+          <button
+            onClick={() => handleTestPhoto(1)}
+            disabled={loading || takingPhoto || locked}
+            title={locked ? "Cannot take a test photo while an experiment is running" : undefined}
+            className="flex items-center gap-2 bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Camera className="h-[16px] w-[16px]" strokeWidth={1.5} />
+            <span className="text-[12px] font-bold uppercase tracking-[1px]">
+              {takingPhoto ? "Capturing…" : "Test Photo"}
+            </span>
+          </button>
+          <div className="w-px bg-app-border-primary" />
+          <button
+            onClick={() => handleTestPhoto(2)}
+            disabled={loading || takingPhoto || locked}
+            title={
+              locked
+                ? "Cannot take a test photo while an experiment is running"
+                : "Take a test photo and view it zoomed in 2x"
+            }
+            className="flex items-center gap-1 bg-app-bg-tertiary px-3 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ZoomIn className="h-[14px] w-[14px]" strokeWidth={1.5} />
+            <span className="text-[12px] font-black uppercase tracking-[1px]">2x</span>
+          </button>
+        </div>
+
         <button
           onClick={() => setCamera(DEFAULT_CAMERA)}
           disabled={loading}
@@ -282,6 +334,37 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
           </span>
         </button>
       </div>
+
+      {testPhotoUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/90 p-4"
+          onClick={() => setTestPhotoUrl(null)}
+        >
+          <button
+            onClick={() => setTestPhotoUrl(null)}
+            className="absolute right-4 top-4 rounded-md bg-app-bg-tertiary p-2 text-white transition-colors hover:bg-app-border-primary"
+          >
+            <X className="h-[20px] w-[20px]" strokeWidth={1.5} />
+          </button>
+          {testZoom === 2 ? (
+            <div className="h-full w-full overflow-auto" onClick={(e) => e.stopPropagation()}>
+              <img
+                src={testPhotoUrl}
+                alt="Test capture, zoomed 2x"
+                className="mx-auto"
+                style={{ width: "200%", maxWidth: "none" }}
+              />
+            </div>
+          ) : (
+            <img
+              src={testPhotoUrl}
+              alt="Test capture"
+              className="max-h-[88%] max-w-[92%] rounded-lg object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

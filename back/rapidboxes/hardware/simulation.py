@@ -76,6 +76,14 @@ class SimCamera(CameraBackend):
         img.save(buf, "JPEG", quality=70)
         return buf.getvalue()
 
+    def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
+        self.configure(settings)
+        time.sleep(0.05)
+        img = self._render(settings.width, settings.height)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=settings.jpegQuality)
+        return buf.getvalue()
+
     def close(self) -> None:
         log.info("sim camera closed")
 
