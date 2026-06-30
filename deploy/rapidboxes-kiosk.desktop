@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=RaPiD-boxes Kiosk
+Exec=/bin/bash -lc '__APP_DIR__/deploy/kiosk.sh'
+Terminal=false
+X-GNOME-Autostart-enabled=true
