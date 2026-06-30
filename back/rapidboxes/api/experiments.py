@@ -6,7 +6,6 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import config_xml
-from ..models import ExperimentConfig, ExperimentStatus, StartResponse
 from ..models import ExperimentConfig, ExperimentStatus, SavedExperimentConfig, StartResponse
 from .deps import AppState, get_state
 

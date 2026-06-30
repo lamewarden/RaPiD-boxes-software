@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Play, RotateCcw, Tag } from "lucide-react";
 import { toast } from "sonner";
 import TopNav from "@/components/TopNav";
@@ -10,11 +10,11 @@ import SpectrumPanel from "@/components/SpectrumPanel";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
-import type { Spectrum } from "@shared/api";
+import type { SavedExperimentConfig, Spectrum } from "@shared/api";
 
 const DAY_COLOR = "#F0B100";
 const EXPERIMENT_LENGTH_COLOR = "#2B7FFF";
-const INTENSITY_COLOR = "#FF6900";
+const INTENSITY_COLOR = "#F0B100";
 const INTERVAL_COLOR = "#51A2FF";
 
 const DEFAULT_VALUES = {
@@ -28,6 +28,7 @@ const DEFAULT_VALUES = {
 
 export default function GrowthProgram() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [dayLengthHours, setDayLengthHours] = useState(DEFAULT_VALUES.dayLengthHours);
   const [experimentLengthDays, setExperimentLengthDays] = useState(
     DEFAULT_VALUES.experimentLengthDays
@@ -46,6 +47,29 @@ export default function GrowthProgram() {
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
   const [checkingCamera, setCheckingCamera] = useState(false);
+
+  useEffect(() => {
+    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
+    if (!loaded || loaded.protocol !== "growth") return;
+
+    setDayLengthHours(loaded.dayLengthHours);
+    setExperimentLengthDays(loaded.experimentLengthDays);
+    setSelectedSpectra(new Set(loaded.spectra));
+    setDayIntensity(loaded.dayIntensity);
+    setInterval(loaded.intervalMinutes);
+    setPhotoIlluminationSource(loaded.photoIlluminationSource);
+
+    api
+      .settings()
+      .then((current) => api.saveSettings({ ...current, camera: loaded.camera }))
+      .then(() => toast.success("Loaded previous experiment's settings, including camera."))
+      .catch((e) =>
+        toast.error(`Loaded phases/light, but could not apply camera settings: ${(e as Error).message}`)
+      );
+
+    navigate(location.pathname, { replace: true, state: {} });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const handleStart = async () => {
     if (starting) return;
@@ -113,6 +137,7 @@ export default function GrowthProgram() {
     setDayIntensity(DEFAULT_VALUES.dayIntensity);
     setInterval(DEFAULT_VALUES.interval);
     setPhotoIlluminationSource(DEFAULT_VALUES.photoIlluminationSource);
+    toast.success("Growth settings reset to defaults.");
   };
 
   return (
@@ -122,7 +147,7 @@ export default function GrowthProgram() {
       <div className="flex p-1.5 flex-col items-start gap-1.5 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
         <ProgramTabs />
 
-        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 overflow-hidden">
+        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 min-h-0 overflow-y-auto pr-0.5">
           {/* Day Length / Experiment Length */}
           <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">
             <ParameterControl
@@ -172,7 +197,7 @@ export default function GrowthProgram() {
               onDecrement={() => setInterval((v) => Math.max(1, v - 1))}
             />
             <ParameterControl
-              label="Day Intensity"
+              label="Light Intensity"
               value={`${dayIntensity}%`}
               valueColor={INTENSITY_COLOR}
               sliderColor={INTENSITY_COLOR}
@@ -197,13 +222,13 @@ export default function GrowthProgram() {
                   <button
                     key={source}
                     onClick={() => setPhotoIlluminationSource(source)}
-                    className={`flex py-1.5 px-4 flex-col justify-center items-center rounded border transition-all cursor-pointer flex-1 ${
+                    className={`flex py-2 px-5 flex-col justify-center items-center rounded border transition-all cursor-pointer flex-1 ${
                       isSelected
                         ? "bg-[rgba(194,122,255,0.4)] border-[rgba(194,122,255,0.5)] text-white"
                         : "bg-[rgba(194,122,255,0.15)] border-transparent text-white/60"
                     }`}
                   >
-                    <div className="text-center text-[9px] font-bold leading-[13px] uppercase">
+                    <div className="text-center text-[10px] font-bold leading-[15px] uppercase">
                       {source === "ir" ? "IR (Dark)" : "RGBW (White @10%, Top)"}
                     </div>
                   </button>
@@ -214,7 +239,7 @@ export default function GrowthProgram() {
 
         </div>
 
-        <div className="flex pb-1 items-start gap-1.5 self-stretch flex-shrink-0">
+        <div className="relative z-10 flex pb-1 items-start gap-1.5 self-stretch flex-shrink-0 bg-app-bg-primary">
           <button
             onClick={handleStart}
             disabled={starting || checkingCamera}

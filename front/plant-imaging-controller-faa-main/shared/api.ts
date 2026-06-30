@@ -106,6 +106,7 @@ export interface SystemInfo {
   ip: string;
   version: string;
   simulation: boolean;
+  storageRoot: string;
   diskFreeBytes: number;
   diskTotalBytes: number;
   cameraAvailable: boolean;
@@ -137,6 +138,7 @@ export interface DeviceSettings {
 
 /** The saved/loaded per-experiment <name>.xml: phases + light + camera, no identity fields. */
 export interface SavedExperimentConfig {
+  protocol: "tropism" | "growth";
   preIlluminationEnabled: boolean;
   preIlluminationHours: number;
   darkPhaseEnabled: boolean;
@@ -145,5 +147,9 @@ export interface SavedExperimentConfig {
   spectra: Spectrum[];
   intervalMinutes: number;
   intensity: number;
+  dayLengthHours: number;
+  experimentLengthDays: number;
+  dayIntensity: number;
+  photoIlluminationSource: PhotoIlluminationSource;
   camera: CameraSettings;
 }

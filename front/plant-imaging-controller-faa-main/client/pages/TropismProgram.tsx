@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import TopNav from "@/components/TopNav";
 import ProgramTabs from "@/components/ProgramTabs";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
+import ParameterControl from "@/components/ParameterControl";
 import SpectrumPanel from "@/components/SpectrumPanel";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
@@ -164,127 +165,90 @@ export default function TropismProgram() {
     <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto overflow-hidden">
       <TopNav />
 
-      <div className="flex p-2 flex-col items-start gap-2 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
+      <div className="flex p-1.5 flex-col items-start gap-1.5 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
         <ProgramTabs />
 
-        <div className="flex flex-col items-start gap-2 self-stretch flex-1 overflow-y-auto pr-1">
+        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 overflow-hidden">
 
         {/* Lateral Illumination and Dark Phase Row */}
-        <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">
+        <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">
           {/* Dark Phase Toggle */}
-          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
-            <label className="flex items-center gap-2 cursor-pointer w-full">
-              <input
-                type="checkbox"
-                checked={darkPhaseEnabled}
-                onChange={(e) => setDarkPhaseEnabled(e.target.checked)}
-                className="w-4 h-4 cursor-pointer"
-              />
-              <div className="flex-1">
-                <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase">
+          <div className="flex h-[74px] p-2 flex-col justify-between items-start flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+            <div className="flex w-full pb-0.5 flex-col items-start">
+              <label className="flex items-center gap-2 cursor-pointer w-full">
+                <input
+                  type="checkbox"
+                  checked={darkPhaseEnabled}
+                  onChange={(e) => setDarkPhaseEnabled(e.target.checked)}
+                  className="w-4 h-4 cursor-pointer"
+                />
+                <div className="flex-1 text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
                   Dark Phase
                 </div>
-              </div>
-            </label>
-            {darkPhaseEnabled && (
-              <div className="w-full flex items-center gap-2">
-                <div className="text-[17px] font-black leading-5 min-w-[50px] text-right" style={{ color: DARK_PHASE_COLOR }}>
-                  {darkPhase}h
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="200"
-                  value={darkPhase}
-                  onChange={(e) => setDarkPhase(Number(e.target.value))}
-                  className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-                  style={getSliderStyle(darkPhase, 0, 200, DARK_PHASE_COLOR)}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Lateral Illumination */}
-          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
-            <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
-              Lateral Illumination
+              </label>
             </div>
-            <div className="w-full flex items-center gap-2">
-              <div
-                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
-                style={{ color: getColorForValue(lateralIllumination, 24, "orange") }}
-              >
-                {lateralIllumination}h
+            <div className={`flex w-full pt-0.5 items-center gap-2 ${darkPhaseEnabled ? "" : "opacity-45"}`}>
+              <div className="text-[17px] font-black leading-5 min-w-[50px] text-right" style={{ color: DARK_PHASE_COLOR }}>
+                {darkPhaseEnabled ? `${darkPhase}h` : "off"}
               </div>
               <input
                 type="range"
                 min="0"
-                max="24"
-                value={lateralIllumination}
-                onChange={(e) => setLateralIllumination(Number(e.target.value))}
-                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-                style={getSliderStyle(lateralIllumination, 0, 24, "#FF6900")}
+                max="200"
+                value={darkPhase}
+                onChange={(e) => setDarkPhase(Number(e.target.value))}
+                disabled={!darkPhaseEnabled}
+                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
+                style={getSliderStyle(darkPhase, 0, 200, DARK_PHASE_COLOR)}
               />
             </div>
           </div>
+
+          {/* Light Phase Length */}
+          <ParameterControl
+            label="Light Phase Length (h)"
+            value={`${lateralIllumination}h`}
+            valueColor={getColorForValue(lateralIllumination, 24, "orange")}
+            sliderColor="#FF6900"
+            sliderValue={lateralIllumination}
+            sliderMin={0}
+            sliderMax={24}
+            onSliderChange={setLateralIllumination}
+          />
         </div>
 
         <SpectrumPanel label="Day Spectrum" selected={selectedSpectra} onToggle={handleSpectrumToggle} />
 
         {/* Interval Between Images and Intensity - Row */}
-        <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">
+        <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">
           {/* Interval Between Images - Left */}
-          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
-            <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
-              Interval Between Images (MIN)
-            </div>
-            <div className="w-full flex items-center gap-2">
-              <div
-                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
-                style={{ color: getColorForValue(interval, 120, "blue") }}
-              >
-                {interval}m
-              </div>
-              <input
-                type="range"
-                min="3"
-                max="120"
-                value={interval}
-                onChange={(e) => setInterval(Number(e.target.value))}
-                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-                style={getSliderStyle(interval, 3, 120, "#2B7FFF")}
-              />
-            </div>
-          </div>
+          <ParameterControl
+            label="Interval Between Images (MIN)"
+            value={`${interval}m`}
+            valueColor={getColorForValue(interval, 120, "blue")}
+            sliderColor="#2B7FFF"
+            sliderValue={interval}
+            sliderMin={3}
+            sliderMax={120}
+            onSliderChange={setInterval}
+          />
 
-          {/* Intensity - Right */}
-          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
-            <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
-              Intensity
-            </div>
-            <div className="w-full flex items-center gap-2">
-              <div
-                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
-                style={{ color: getColorForValue(intensity, 100, "yellow") }}
-              >
-                {intensity}%
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={intensity}
-                onChange={(e) => setIntensity(Number(e.target.value))}
-                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-                style={getSliderStyle(intensity, 0, 100, "#F0B100")}
-              />
-            </div>
-          </div>
+          {/* Light Intensity - Right */}
+          <ParameterControl
+            label="Light Intensity"
+            value={`${intensity}%`}
+            valueColor={getColorForValue(intensity, 100, "yellow")}
+            sliderColor="#F0B100"
+            sliderValue={intensity}
+            sliderMin={0}
+            sliderMax={100}
+            onSliderChange={setIntensity}
+          />
         </div>
 
         </div>
 
-        <div className="flex pb-2 items-start gap-2 self-stretch flex-shrink-0">
+        <div className="flex pb-1 items-start gap-1.5 self-stretch flex-shrink-0">
           <button
             onClick={handleStart}
             disabled={starting || checkingCamera}

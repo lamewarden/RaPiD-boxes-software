@@ -1,6 +1,7 @@
 """System info for the kiosk header."""
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -34,6 +35,7 @@ def _info(state: AppState) -> SystemInfo:
         ip=_local_ip(),
         version=__version__,
         simulation=state.config.simulation,
+        storageRoot=str(state.config.storage_root),
         diskFreeBytes=usage.free,
         diskTotalBytes=usage.total,
         cameraAvailable=state.hw.camera_available,
@@ -89,3 +91,15 @@ async def close_kiosk(state: AppState = Depends(get_state)):
             pass
 
     return {"status": "closing", "kioskPids": sorted(pids)}
+
+
+@router.post("/restart-service")
+async def restart_service(state: AppState = Depends(get_state)):
+    """Request a full backend restart via systemd.
+
+    The service unit uses Restart=always, so terminating this process is enough.
+    Delay slightly so the HTTP response can be sent before termination.
+    """
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.25, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    return {"status": "restarting"}

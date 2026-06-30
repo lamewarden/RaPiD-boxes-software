@@ -195,6 +195,7 @@ class DeviceSettings(BaseModel):
 
 
 class SavedExperimentConfig(BaseModel):
+    protocol: Literal["tropism", "growth"] = "tropism"
     preIlluminationEnabled: bool = False
     preIlluminationHours: float = Field(default=6.0, ge=0, le=48)
     darkPhaseEnabled: bool = True
@@ -203,6 +204,10 @@ class SavedExperimentConfig(BaseModel):
     spectra: List[Spectrum] = Field(default_factory=lambda: ["white"])
     intervalMinutes: float = Field(default=20.0, ge=1, le=240)
     intensity: int = Field(default=25, ge=0, le=100)
+    dayLengthHours: int = Field(default=16, ge=0, le=24)
+    experimentLengthDays: int = Field(default=14, ge=1, le=30)
+    dayIntensity: int = Field(default=25, ge=0, le=100)
+    photoIlluminationSource: str = Field(default="ir")
     camera: CameraSettings = Field(default_factory=CameraSettings)
 
 
@@ -225,6 +230,7 @@ class SystemInfo(BaseModel):
     ip: str
     version: str
     simulation: bool
+    storageRoot: str
     diskFreeBytes: int
     diskTotalBytes: int
     cameraAvailable: bool = True

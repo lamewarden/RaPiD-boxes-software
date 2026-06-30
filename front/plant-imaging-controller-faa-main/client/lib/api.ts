@@ -54,6 +54,7 @@ export const api = {
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
   closeKiosk: () => jsonFetch<{ status: string; kioskPids: number[] }>("/api/system/close-kiosk", { method: "POST" }),
+  restartService: () => jsonFetch<{ status: string }>("/api/system/restart-service", { method: "POST" }),
   testPhotoWithSettings: async (settings: CameraSettings): Promise<Blob> => {
     const res = await fetch("/api/preview/test-photo", {
       method: "POST",

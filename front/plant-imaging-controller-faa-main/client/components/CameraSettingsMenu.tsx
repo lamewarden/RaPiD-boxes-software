@@ -42,16 +42,16 @@ function SegmentedCard({
   footer?: string;
 }) {
   return (
-    <div className="flex h-[88px] flex-col justify-between gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
-      <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase">
+    <div className="flex h-[74px] flex-col justify-between gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
+      <div className="text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
         {label}
       </div>
-      <div className="flex gap-1.5">
+      <div className="flex h-8 gap-1.5">
         {options.map((o) => (
           <button
             key={o.key}
             onClick={o.onClick}
-            className={`flex-1 rounded-md py-1.5 text-[11px] font-bold transition-colors ${
+            className={`flex h-8 flex-1 items-center justify-center rounded-md px-2 text-[11px] font-bold transition-colors ${
               o.active
                 ? "bg-app-green text-white"
                 : "bg-app-bg-tertiary text-app-text-secondary hover:bg-app-border-primary"
@@ -61,12 +61,17 @@ function SegmentedCard({
           </button>
         ))}
       </div>
-      {footer && <div className="text-[10px] text-app-text-muted">{footer}</div>}
+      <div className="h-3 text-[10px] leading-3 text-app-text-muted">{footer ?? ""}</div>
     </div>
   );
 }
 
-export default function CameraSettingsMenu({ onClose }: { onClose: () => void }) {
+interface CameraSettingsMenuProps {
+  onClose?: () => void;
+  embedded?: boolean;
+}
+
+export default function CameraSettingsMenu({ onClose, embedded = false }: CameraSettingsMenuProps) {
   const [deviceSettings, setDeviceSettings] = useState<DeviceSettings | null>(null);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
   const [loading, setLoading] = useState(true);
@@ -126,19 +131,21 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-app-bg-primary">
-      <div className="flex items-center justify-between border-b border-app-border-primary bg-app-bg-secondary px-3 py-2">
-        <span className="text-[15px] font-bold uppercase tracking-wide text-white">
-          Camera Settings
-        </span>
-        <button
-          onClick={onClose}
-          className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
-        >
-          <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
-        </button>
-      </div>
+  const content = (
+    <>
+      {!embedded && (
+        <div className="flex items-center justify-between border-b border-app-border-primary bg-app-bg-secondary px-3 py-2">
+          <span className="text-[15px] font-bold uppercase tracking-wide text-white">
+            Camera Settings
+          </span>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
+          >
+            <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          </button>
+        </div>
+      )}
 
       {locked && (
         <div className="border-b border-app-border-primary bg-app-orange/20 px-3 py-1.5 text-[11px] font-semibold text-app-orange-light">
@@ -270,7 +277,7 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
               onDecrement={() => patch({ awbBlueGain: clamp(camera.awbBlueGain - 0.1, 0, 8) })}
             />
 
-            <div className="flex h-[88px] flex-col justify-center gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
+            <div className="flex h-[74px] flex-col justify-between gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
               <div className="text-[9px] font-bold uppercase tracking-[0.5px] text-app-text-muted">
                 Note
               </div>
@@ -365,6 +372,12 @@ export default function CameraSettingsMenu({ onClose }: { onClose: () => void })
           )}
         </div>
       )}
-    </div>
+    </>
   );
+
+  if (embedded) {
+    return <div className="flex h-full flex-col">{content}</div>;
+  }
+
+  return <div className="fixed inset-0 z-50 flex flex-col bg-app-bg-primary">{content}</div>;
 }

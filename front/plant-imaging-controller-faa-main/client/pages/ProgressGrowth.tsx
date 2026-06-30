@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { X, Pause, Play, Square } from "lucide-react";
 import { api } from "@/lib/api";
@@ -22,6 +23,7 @@ function formatTime(seconds: number) {
 export default function ProgressGrowth() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
+  const summaryOpened = useRef(false);
 
   const isPaused = status?.state === "paused";
   const isActive = status?.state === "running" || status?.state === "paused";
@@ -48,20 +50,32 @@ export default function ProgressGrowth() {
 
   const togglePause = () => (isPaused ? api.resume() : api.pause()).catch(() => {});
 
+  const openSummary = () => {
+    if (summaryOpened.current) return;
+    summaryOpened.current = true;
+    navigate("/summary", {
+      state: {
+        programType: "growth",
+        experimentId: status?.experimentId ?? null,
+        elapsed,
+        imagesCaptured: captured,
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (status?.state === "done") {
+      openSummary();
+    }
+  }, [status?.state]);
+
   const handleStop = async () => {
     try {
       await api.stop();
     } catch {
       /* ignore */
     }
-    navigate("/summary", {
-      state: {
-        programType: "growth",
-        elapsed,
-        imagesCaptured: captured,
-        phase: phaseLabel,
-      },
-    });
+    openSummary();
   };
 
   return (

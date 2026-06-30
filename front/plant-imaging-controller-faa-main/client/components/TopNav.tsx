@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { X, User, Folder, Radio, Camera, Download, House } from "lucide-react";
+import { X, User, Folder, Radio, Settings, Download } from "lucide-react";
 import { toast } from "sonner";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
-import CameraSettingsMenu from "@/components/CameraSettingsMenu";
+import SettingsMenu from "@/components/SettingsMenu";
 import ImportConfigMenu from "@/components/ImportConfigMenu";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
@@ -13,7 +13,7 @@ import type { SavedExperimentConfig } from "@shared/api";
 export default function TopNav() {
   const navigate = useNavigate();
   const [editingUser, setEditingUser] = useState(false);
-  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [username, setUser] = useState(getUsername());
   const [system, setSystem] = useSystemInfo();
@@ -40,10 +40,12 @@ export default function TopNav() {
   };
 
   const btn =
-    "flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
+    "flex flex-1 py-2 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors";
 
   const handleImportLoad = (config: SavedExperimentConfig) => {
-    navigate("/tropism", { state: { loadedConfig: config } });
+    navigate(config.protocol === "growth" ? "/growth" : "/tropism", {
+      state: { loadedConfig: config },
+    });
   };
 
   const handleClose = async () => {
@@ -54,25 +56,19 @@ export default function TopNav() {
       toast.success("Closing kiosk...");
     } catch (e) {
       toast.error(`Could not close kiosk: ${(e as Error).message}`);
-      navigate("/");
     } finally {
       setClosingKiosk(false);
     }
   };
 
   return (
-    <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
+    <div className="flex p-0.5 gap-1 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
       <button className={btn} onClick={handleClose} disabled={closingKiosk}>
         <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
         <span className="text-white text-center text-[13px] font-semibold leading-5">
           {closingKiosk ? "Closing..." : "Close"}
         </span>
       </button>
-
-      <Link to="/" className={btn}>
-        <House className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Home</span>
-      </Link>
 
       <button className={btn} onClick={() => setImportOpen(true)}>
         <Download className="w-[18px] h-[18px]" strokeWidth={1.5} />
@@ -88,7 +84,7 @@ export default function TopNav() {
 
       <Link to="/gallery" className={btn}>
         <Folder className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Folder</span>
+        <span className="text-white text-center text-[13px] font-semibold leading-5">Gallery</span>
       </Link>
 
       {cameraAvailable ? (
@@ -104,7 +100,7 @@ export default function TopNav() {
         <button
           onClick={handleLiveClick}
           title="No camera connected — tap to check again"
-          className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary opacity-50 hover:opacity-70 transition-opacity"
+          className="flex flex-1 py-2 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary opacity-50 hover:opacity-70 transition-opacity"
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
           <span className="text-white text-center text-[13px] font-semibold leading-5">
@@ -114,15 +110,15 @@ export default function TopNav() {
       )}
 
       <button
-        className="flex flex-1 py-1.5 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-        onClick={() => setCameraSettingsOpen(true)}
+        className="flex flex-1 py-2 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+        onClick={() => setSettingsOpen(true)}
       >
-        <Camera className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Camera</span>
+        <Settings className="w-[18px] h-[18px]" strokeWidth={1.5} />
+        <span className="text-white text-center text-[13px] font-semibold leading-5">Settings</span>
       </button>
 
-      {cameraSettingsOpen && (
-        <CameraSettingsMenu onClose={() => setCameraSettingsOpen(false)} />
+      {settingsOpen && (
+        <SettingsMenu onClose={() => setSettingsOpen(false)} />
       )}
 
       {importOpen && (

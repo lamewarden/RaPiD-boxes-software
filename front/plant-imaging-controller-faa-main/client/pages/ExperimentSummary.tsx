@@ -1,22 +1,47 @@
-import { useLocation, useNavigate } from "react-router-dom";
-import { Home } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { Power } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
+import type { ImageInfo } from "@shared/api";
 
 export default function ExperimentSummary() {
   const location = useLocation();
-  const navigate = useNavigate();
+  const [restarting, setRestarting] = useState(false);
 
   const state = location.state as {
     programType: "growth" | "tropism";
+    experimentId: string | null;
     elapsed: number;
     imagesCaptured: number;
-    phase: string;
   } | null;
 
-  // Fallback values if state is not provided
-  const programType = state?.programType || "growth";
+  const programType = state?.programType || "tropism";
+  const experimentId = state?.experimentId ?? null;
   const elapsed = state?.elapsed || 0;
   const imagesCaptured = state?.imagesCaptured || 0;
-  const phase = state?.phase || "Light";
+
+  const { data: system } = useQuery({
+    queryKey: ["system"],
+    queryFn: () => api.system(),
+  });
+
+  const { data: imageList, isLoading: imagesLoading } = useQuery({
+    queryKey: ["summary-images", experimentId],
+    queryFn: () => api.images(experimentId ?? undefined),
+  });
+
+  const images = imageList?.images ?? [];
+  const firstFrame: ImageInfo | null = images.length > 0 ? images[0] : null;
+  const lastFrame: ImageInfo | null = images.length > 0 ? images[images.length - 1] : null;
+  const effectiveCount = Math.max(imagesCaptured, images.length);
+
+  const storagePath = useMemo(() => {
+    if (!system?.storageRoot) return "Unknown";
+    if (!experimentId) return system.storageRoot;
+    return `${system.storageRoot}/${experimentId}`;
+  }, [system?.storageRoot, experimentId]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -25,68 +50,90 @@ export default function ExperimentSummary() {
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  const programName =
-    programType === "growth" ? "Growth Program" : "Tropism Program";
+  const handleClose = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await api.restartService();
+      toast.success("Restarting service...");
+    } catch (e) {
+      toast.error(`Could not restart service: ${(e as Error).message}`);
+      setRestarting(false);
+    }
+  };
+
+  const programName = programType === "growth" ? "Growth Measurement" : "Tropism Measurement";
 
   return (
-    <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto bg-app-bg-primary">
-      {/* Top nav */}
-      <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full">
-        <div className="text-white text-center text-[13px] font-semibold leading-5 flex-1 py-1.5">
-          Experiment Summary
+    <div className="flex w-[800px] h-[452px] flex-col mx-auto bg-app-bg-primary">
+      <div className="flex p-1 justify-center items-center self-stretch border-b border-app-border-primary bg-app-bg-secondary">
+        <div className="text-white text-center text-[14px] font-semibold leading-5 flex-1 py-1">
+          Measurement Finished
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col w-full p-6 gap-6 overflow-hidden justify-center items-center">
-        {/* Title */}
+      <div className="flex-1 flex flex-col w-full p-3 gap-2 overflow-hidden">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-white mb-2">
-            {programName}
-          </h1>
-          <p className="text-app-text-muted text-sm">Experiment Completed</p>
+          <h1 className="text-[18px] font-bold text-white">{programName} Completed</h1>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 gap-4 w-full max-w-md">
-          {/* Elapsed Time */}
-          <div className="bg-app-bg-secondary border-2 border-app-border-primary rounded-lg p-4 text-center">
-            <div className="text-app-text-muted text-xs font-bold uppercase mb-2">
-              Elapsed Time
-            </div>
-            <div className="text-2xl font-black text-app-green tabular-nums">
+        <div className="grid grid-cols-2 gap-2 flex-shrink-0">
+          <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2 text-center">
+            <div className="text-app-text-muted text-[10px] font-bold uppercase">Total Time</div>
+            <div className="text-[22px] font-black text-app-green tabular-nums leading-7">
               {formatTime(elapsed)}
             </div>
           </div>
+          <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2 text-center">
+            <div className="text-app-text-muted text-[10px] font-bold uppercase">Frames Captured</div>
+            <div className="text-[22px] font-black text-app-orange leading-7">{effectiveCount}</div>
+          </div>
+        </div>
 
-          {/* Images Captured */}
-          <div className="bg-app-bg-secondary border-2 border-app-border-primary rounded-lg p-4 text-center">
-            <div className="text-app-text-muted text-xs font-bold uppercase mb-2">
-              Images Captured
+        <div className="grid grid-cols-2 gap-2 flex-1 min-h-0">
+          <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary overflow-hidden flex flex-col min-h-0">
+            <div className="text-app-text-muted text-[10px] font-bold uppercase px-2 py-1 border-b border-app-border-primary">
+              First Frame
             </div>
-            <div className="text-2xl font-black text-app-orange">
-              {imagesCaptured}
+            <div className="flex-1 flex items-center justify-center bg-app-bg-tertiary min-h-0">
+              {firstFrame ? (
+                <img src={firstFrame.url} alt="First frame" className="h-full w-full object-contain" />
+              ) : (
+                <span className="text-app-text-muted text-[11px]">
+                  {imagesLoading ? "Loading..." : "No frame"}
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Phase */}
-          <div className="bg-app-bg-secondary border-2 border-app-border-primary rounded-lg p-4 text-center col-span-2">
-            <div className="text-app-text-muted text-xs font-bold uppercase mb-2">
-              Stopped In Phase
+          <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary overflow-hidden flex flex-col min-h-0">
+            <div className="text-app-text-muted text-[10px] font-bold uppercase px-2 py-1 border-b border-app-border-primary">
+              Last Frame
             </div>
-            <div className="text-xl font-bold text-app-blue">
-              {phase}
+            <div className="flex-1 flex items-center justify-center bg-app-bg-tertiary min-h-0">
+              {lastFrame ? (
+                <img src={lastFrame.url} alt="Last frame" className="h-full w-full object-contain" />
+              ) : (
+                <span className="text-app-text-muted text-[11px]">
+                  {imagesLoading ? "Loading..." : "No frame"}
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Action Button */}
+        <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary px-3 py-2 flex items-center gap-2">
+          <span className="text-app-text-muted text-[10px] font-bold uppercase">Stored At</span>
+          <span className="text-[11px] font-semibold text-app-text-secondary truncate">{storagePath}</span>
+        </div>
+
         <button
-          onClick={() => navigate("/")}
-          className="flex items-center justify-center gap-2 px-8 py-3 bg-app-green hover:bg-app-green-light text-white font-bold rounded-lg transition-colors mt-4"
+          onClick={handleClose}
+          disabled={restarting}
+          className="flex items-center justify-center gap-2 py-2 rounded-[10px] bg-app-green hover:bg-app-green-light text-white font-black uppercase tracking-[1.2px] transition-colors disabled:opacity-60"
         >
-          <Home className="w-5 h-5" />
-          <span>Return to Main Menu</span>
+          <Power className="w-4 h-4" strokeWidth={1.75} />
+          <span>{restarting ? "Restarting Service..." : "Close"}</span>
         </button>
       </div>
     </div>

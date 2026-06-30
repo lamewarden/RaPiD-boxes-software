@@ -164,6 +164,7 @@ class ExperimentRunner:
         self._exp_dir = exp
         if isinstance(config, TropismConfig):
             saved = SavedExperimentConfig(
+                protocol="tropism",
                 preIlluminationEnabled=config.preIlluminationEnabled,
                 preIlluminationHours=config.preIlluminationHours,
                 darkPhaseEnabled=config.darkPhaseEnabled,
@@ -172,6 +173,20 @@ class ExperimentRunner:
                 spectra=config.spectra,
                 intervalMinutes=config.intervalMinutes,
                 intensity=config.intensity,
+                camera=camera or CameraSettings(),
+            )
+            exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
+        else:
+            saved = SavedExperimentConfig(
+                protocol="growth",
+                preIlluminationEnabled=config.preIlluminationEnabled,
+                preIlluminationHours=GROWTH_PRE_ILLUMINATION_HOURS,
+                spectra=config.spectra,
+                intervalMinutes=config.intervalMinutes,
+                dayLengthHours=config.dayLengthHours,
+                experimentLengthDays=config.experimentLengthDays,
+                dayIntensity=config.dayIntensity,
+                photoIlluminationSource=config.photoIlluminationSource,
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)

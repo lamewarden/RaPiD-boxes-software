@@ -28,12 +28,12 @@ async def list_current(state: AppState = Depends(get_state)):
     return {"experimentId": exp.experiment_id, "images": exp.list_images()}
 
 
-@router.get("/{experiment_id}", response_model=list)
+@router.get("/{experiment_id}", response_model=dict)
 async def list_experiment(experiment_id: str, state: AppState = Depends(get_state)):
     exp = state.storage.get_experiment(experiment_id)
     if exp is None:
         raise HTTPException(404, "experiment not found")
-    return exp.list_images()
+    return {"experimentId": exp.experiment_id, "images": exp.list_images()}
 
 
 @router.get("/{experiment_id}/{image_id}")
