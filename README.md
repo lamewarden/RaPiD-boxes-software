@@ -55,6 +55,9 @@ sudo reboot
 the `rapidboxes` service + kiosk autostart. After reboot the touchscreen shows the
 app. Update later with `deploy/update.sh`; remove with `deploy/uninstall.sh`.
 
+For a clean SD-card install guide from a pristine Raspberry Pi OS image, see
+[INSTALL.md](INSTALL.md).
+
 ## Hardware wiring map
 
 The software assumes the following **default Raspberry Pi BCM pin mapping**.
