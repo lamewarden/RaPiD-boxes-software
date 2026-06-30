@@ -1,0 +1,18 @@
+[Unit]
+Description=RaPiD-boxes backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__APP_DIR__/back
+EnvironmentFile=-/etc/default/rapidboxes
+ExecStart=__APP_DIR__/back/.venv/bin/python -m rapidboxes
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

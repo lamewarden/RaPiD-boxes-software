@@ -7,6 +7,26 @@ This project is designed to show how plants move in response to gravity or light
 ## Contacts:
 For support, address Ivan Kashkan <kashkan.van@gmail.com>/<kashkan@ueb.cas.cz>
 
+## One-command deployment (Bookworm Pi)
+
+Fresh device setup can be fully automated (dependencies, service install, boot
+autostart, kiosk autostart).
+
+Run on the target Raspberry Pi:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lamewarden/RaPiD-boxes-software/main/bootstrap.sh | sudo bash
+```
+
+Installed helpers:
+
+- `deploy/install.sh` — full install/reinstall
+- `deploy/update.sh` — pull latest and restart service
+- `deploy/uninstall.sh` — remove service (`--purge` removes app directory too)
+
+After install, UI is served from `http://<pi-ip>:8000/` and the backend runs as
+a `systemd` service (`rapidboxes.service`) with automatic restart on boot.
+
 
 
 ## Content of the repository:
@@ -63,7 +83,6 @@ and set the screen brightness to minimum
 1. Locate RaPiD-boxes_software folder to `/home/pi/camera`;
 2. Make all `*.py` files in `RaPiD-boxes-software/GUI/` executable by `sudo chmod +x <filename>`;
 3. Run `intro_page.py` file as root (unfortunatelly some libraries require superuser rights).
-
 
 
 
