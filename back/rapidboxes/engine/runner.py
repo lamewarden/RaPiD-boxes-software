@@ -17,8 +17,6 @@ from .. import config_xml
 from ..models import (
     CameraSettings,
     GROWTH_PHOTO_FLASH_INTENSITY,
-    GROWTH_PRE_ILLUMINATION_HOURS,
-    GROWTH_PRE_ILLUMINATION_INTENSITY,
     ExperimentPhase,
     ExperimentState,
     ExperimentStatus,
@@ -81,10 +79,6 @@ def build_phases(config: Config) -> List[_Phase]:
 
 def _build_tropism_phases(config: TropismConfig) -> List[_Phase]:
     phases: List[_Phase] = []
-    if config.preIlluminationEnabled and config.preIlluminationHours > 0:
-        phases.append(
-            _Phase(ExperimentPhase.pre_illumination, config.preIlluminationHours * 3600, False, None)
-        )
     if config.darkPhaseEnabled and config.darkPhaseHours > 0:
         phases.append(_Phase(ExperimentPhase.dark, config.darkPhaseHours * 3600, True, "dark"))
     if config.lateralIlluminationHours > 0:
@@ -165,8 +159,6 @@ class ExperimentRunner:
         if isinstance(config, TropismConfig):
             saved = SavedExperimentConfig(
                 protocol="tropism",
-                preIlluminationEnabled=config.preIlluminationEnabled,
-                preIlluminationHours=config.preIlluminationHours,
                 darkPhaseEnabled=config.darkPhaseEnabled,
                 darkPhaseHours=config.darkPhaseHours,
                 lateralIlluminationHours=config.lateralIlluminationHours,
@@ -179,8 +171,6 @@ class ExperimentRunner:
         else:
             saved = SavedExperimentConfig(
                 protocol="growth",
-                preIlluminationEnabled=config.preIlluminationEnabled,
-                preIlluminationHours=GROWTH_PRE_ILLUMINATION_HOURS,
                 spectra=config.spectra,
                 intervalMinutes=config.intervalMinutes,
                 dayLengthHours=config.dayLengthHours,
@@ -249,14 +239,7 @@ class ExperimentRunner:
         interval_s = config.intervalMinutes * 60.0
         phases = build_phases(config)
         is_growth = isinstance(config, GrowthConfig)
-        pre_phase: Optional[_Phase] = None
-        if is_growth and config.preIlluminationEnabled:
-            pre_phase = _Phase(
-                ExperimentPhase.pre_illumination, GROWTH_PRE_ILLUMINATION_HOURS * 3600, False, None
-            )
-        self.status.totalSeconds = (pre_phase.duration_s if pre_phase else 0.0) + sum(
-            p.duration_s for p in phases
-        )
+        self.status.totalSeconds = sum(p.duration_s for p in phases)
         self.status.imagesPlanned = sum(
             planned_captures(p.duration_s, interval_s) for p in phases if p.capture
         )
@@ -267,8 +250,6 @@ class ExperimentRunner:
             if is_growth:
                 self.status.phase = ExperimentPhase.baseline
                 await self._capture(ExperimentPhase.baseline, "baseline", config, exp)
-            if pre_phase is not None and not self._stop:
-                await self._run_phase(pre_phase, interval_s, config, exp)
             for phase in phases:
                 if self._stop:
                     break
@@ -338,12 +319,7 @@ class ExperimentRunner:
         await self._hw.all_off()
 
     async def _enter_phase_lights(self, phase: _Phase, config: Config) -> None:
-        if phase.name == ExperimentPhase.pre_illumination:
-            intensity = (
-                GROWTH_PRE_ILLUMINATION_INTENSITY if isinstance(config, GrowthConfig) else config.intensity
-            )
-            await self._hw.top_white(intensity)
-        elif phase.name == ExperimentPhase.dark:
+        if phase.name == ExperimentPhase.dark:
             await self._hw.all_off()  # darkness; IR only fires during capture
         elif phase.name == ExperimentPhase.bending:
             await self._hw.lateral(config.spectra, config.intensity)
@@ -383,7 +359,7 @@ class ExperimentRunner:
                 finally:
                     await self._hw.all_off()
         else:
-            await self._hw.capture(str(path))  # "day" or pre-illumination: ambient light, no flash
+            await self._hw.capture(str(path))  # "day": ambient light, no flash
         self.status.imagesCaptured = idx + 1
         self.status.lastImageId = image_id
         self._write_metadata(exp)

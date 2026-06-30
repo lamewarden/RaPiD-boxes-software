@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
+import RunningExperimentButton from "@/components/RunningExperimentButton";
 
 export default function CameraLive() {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ export default function CameraLive() {
   return (
     <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto bg-app-bg-primary">
       {/* Top nav with close button */}
-      <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full">
+      <div className="flex p-0.5 justify-between items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full">
         <button
           onClick={handleClose}
           className="flex w-[199.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
@@ -23,6 +24,7 @@ export default function CameraLive() {
             Close
           </span>
         </button>
+        <RunningExperimentButton />
       </div>
 
       {/* Full-screen camera feed (MJPEG stream from the backend) */}

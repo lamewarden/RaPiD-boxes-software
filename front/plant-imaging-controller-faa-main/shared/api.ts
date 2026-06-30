@@ -9,8 +9,6 @@ export interface TropismConfig {
   protocol: "tropism";
   experimentName: string;
   username: string;
-  preIlluminationEnabled?: boolean;
-  preIlluminationHours?: number;
   darkPhaseEnabled: boolean;
   darkPhaseHours: number;
   lateralIlluminationHours: number;
@@ -25,7 +23,6 @@ export interface GrowthConfig {
   protocol: "growth";
   experimentName: string;
   username: string;
-  preIlluminationEnabled: boolean;
   dayLengthHours: number;
   experimentLengthDays: number;
   spectra: Spectrum[];
@@ -45,7 +42,6 @@ export type ExperimentState =
   | "error";
 
 export type ExperimentPhase =
-  | "pre_illumination"
   | "dark"
   | "bending"
   | "baseline"
@@ -139,8 +135,6 @@ export interface DeviceSettings {
 /** The saved/loaded per-experiment <name>.xml: phases + light + camera, no identity fields. */
 export interface SavedExperimentConfig {
   protocol: "tropism" | "growth";
-  preIlluminationEnabled: boolean;
-  preIlluminationHours: number;
   darkPhaseEnabled: boolean;
   darkPhaseHours: number;
   lateralIlluminationHours: number;

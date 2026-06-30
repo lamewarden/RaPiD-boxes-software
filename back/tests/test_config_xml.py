@@ -10,8 +10,6 @@ def test_round_trip_default():
 
 def test_round_trip_custom_values():
     original = SavedExperimentConfig(
-        preIlluminationEnabled=True,
-        preIlluminationHours=3.5,
         darkPhaseEnabled=False,
         darkPhaseHours=12.0,
         lateralIlluminationHours=8.0,
@@ -37,7 +35,6 @@ def test_round_trip_custom_values():
 def test_round_trip_growth_values():
     original = SavedExperimentConfig(
         protocol="growth",
-        preIlluminationEnabled=False,
         spectra=["white", "blue"],
         intervalMinutes=30.0,
         dayLengthHours=18,
@@ -58,3 +55,23 @@ def test_round_trip_growth_values():
     )
     restored = config_xml.parse(config_xml.serialize(original))
     assert restored == original
+
+
+def test_parse_growth_legacy_light_intensity_field():
+        xml_bytes = b"""<?xml version='1.0' encoding='utf-8'?>
+<experimentConfig version='2' protocol='growth'>
+    <phases>
+        <growth dayLengthHours='16' experimentLengthDays='14' photoIlluminationSource='rgbw' />
+    </phases>
+    <light intervalMinutes='30.0' intensity='35'>
+        <spectrum>white</spectrum>
+    </light>
+    <camera width='2304' height='1296' exposureMicroseconds='100000' iso='100' grayscale='true' awbRedGain='2.0' awbBlueGain='1.0' jpegQuality='92' settleSeconds='1.0' />
+</experimentConfig>
+"""
+
+        restored = config_xml.parse(xml_bytes)
+
+        assert restored.protocol == "growth"
+        assert restored.dayIntensity == 35
+        assert restored.photoIlluminationSource == "rgbw"

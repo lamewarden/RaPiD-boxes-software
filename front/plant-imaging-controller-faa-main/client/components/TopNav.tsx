@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import SettingsMenu from "@/components/SettingsMenu";
 import ImportConfigMenu from "@/components/ImportConfigMenu";
+import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
 import { api } from "@/lib/api";
@@ -116,6 +117,8 @@ export default function TopNav() {
         <Settings className="w-[18px] h-[18px]" strokeWidth={1.5} />
         <span className="text-white text-center text-[13px] font-semibold leading-5">Settings</span>
       </button>
+
+      <RunningExperimentButton className="flex-1" />
 
       {settingsOpen && (
         <SettingsMenu onClose={() => setSettingsOpen(false)} />

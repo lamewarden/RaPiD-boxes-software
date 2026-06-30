@@ -91,9 +91,8 @@ Important hardware notes:
 
 The Tropism workflow models the legacy three-stage protocol:
 
-1. optional white-light pre-illumination
-2. optional dark "apical hook" phase with IR-lit image capture
-3. bending phase with **lateral coloured light** between captures
+1. dark "apical hook" phase with IR-lit image capture
+2. bending phase with **lateral coloured light** between captures
 
 The user configures dark-phase duration, light-phase duration, spectra,
 interval between captures, and visible-light intensity.
@@ -102,7 +101,7 @@ interval between captures, and visible-light intensity.
 
 The Growth workflow runs a repeating **day/night photoperiod**:
 
-1. optional fixed pre-illumination toggle
+1. one baseline photo at the start of the run
 2. top-down day lighting for `dayLengthHours`
 3. dark / night period for the remainder of the day
 4. repeated over `experimentLengthDays`
@@ -212,7 +211,6 @@ The Growth screen configures day/night photoperiod experiments.
 
 Controls:
 
-- **Pre-illumination** checkbox: optional fixed 6h @ 50% white soak with baseline photo.
 - **Day Length**: sets the lit portion of the day, in hours.
 - **Experiment Length (Days)**: total run length in days.
 - **Day Spectrum**: chooses one or more visible spectra (`white`, `red`, `green`, `blue`).
@@ -238,7 +236,6 @@ The Tropism screen configures apical-hook / bending experiments.
 
 Controls:
 
-- **Pre-illumination** checkbox: optional white-light soak before the dark phase (default off; hours configurable when enabled).
 - **Dark Phase** checkbox: enables or disables the dark apical-hook stage.
 - **Dark Phase** slider: sets dark-phase duration when enabled.
 - **Light Phase Length (h)**: sets the bending / lateral illumination phase duration.

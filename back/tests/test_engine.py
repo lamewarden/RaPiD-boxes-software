@@ -110,7 +110,7 @@ async def test_pause_resume_and_stop(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_growth_protocol_baseline_pre_illumination_day_night_rgbw_flash(tmp_path):
+async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     ft = FakeTime()
     runner = _runner(tmp_path, ft)
 
@@ -128,7 +128,6 @@ async def test_growth_protocol_baseline_pre_illumination_day_night_rgbw_flash(tm
     config = GrowthConfig(
         experimentName="g",
         username="u",
-        preIlluminationEnabled=True,
         dayLengthHours=1,            # 1h day @ 240min interval -> 1 capture
         experimentLengthDays=1,
         spectra=["white"],
@@ -145,8 +144,7 @@ async def test_growth_protocol_baseline_pre_illumination_day_night_rgbw_flash(tm
     # 1 baseline + 1 day capture + 6 night captures (ceil(23h*3600 / 240min*60))
     assert runner.status.imagesPlanned == 8
     assert runner.status.imagesCaptured == 8
-    # totalSeconds includes the fixed 6h pre-illumination soak, which itself takes 0 captures.
-    assert runner.status.totalSeconds == 6 * 3600 + 1 * 3600 + 23 * 3600
+    assert runner.status.totalSeconds == 1 * 3600 + 23 * 3600
     assert runner.status.dayIndex == 1
     assert runner.status.totalDays == 1
 
@@ -155,7 +153,6 @@ async def test_growth_protocol_baseline_pre_illumination_day_night_rgbw_flash(tm
     assert sum(f.startswith("baseline_") for f in files) == 1
     assert sum(f.startswith("day_") for f in files) == 1
     assert sum(f.startswith("night_") for f in files) == 6
-    assert not any(f.startswith("pre_illumination_") for f in files)
 
     # Only the baseline capture (taken before any light is on) used IR; night
     # captures used the fixed-intensity RGBW top flash instead.

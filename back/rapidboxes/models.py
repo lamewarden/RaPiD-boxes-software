@@ -17,9 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 Spectrum = str  # one of: "white" | "red" | "green" | "blue"
 VALID_SPECTRA = ("white", "red", "green", "blue")
 
-# Growth protocol: fixed, non-configurable pre-illumination + photo-flash values.
-GROWTH_PRE_ILLUMINATION_HOURS = 6.0
-GROWTH_PRE_ILLUMINATION_INTENSITY = 50
+# Growth protocol: fixed photo-flash value for RGBW night captures.
 GROWTH_PHOTO_FLASH_INTENSITY = 10
 
 
@@ -27,16 +25,12 @@ class TropismConfig(BaseModel):
     """The Tropism protocol as exposed by the React UI.
 
     Maps to the legacy 3-stage protocol:
-      pre-illumination (optional white soak) -> dark "apical hook" -> "bending".
+            dark "apical hook" -> "bending".
     """
 
     protocol: Literal["tropism"] = "tropism"
     experimentName: str = Field(default="experiment", min_length=1, max_length=80)
     username: str = Field(default="pi", min_length=1, max_length=40)
-
-    # Optional white-light soak before the dark phase (legacy "6h pre-treatment").
-    preIlluminationEnabled: bool = False
-    preIlluminationHours: float = Field(default=6.0, ge=0, le=48)
 
     # Dark "apical hook" phase: IR-lit captures in darkness.
     darkPhaseEnabled: bool = True
@@ -67,8 +61,7 @@ class TropismConfig(BaseModel):
 class GrowthConfig(BaseModel):
     """The Growth (day/night photoperiod) protocol.
 
-    Optional fixed 6h/50% white pre-illumination (with one baseline photo
-    taken just before it starts) -> repeating top-down day/night cycle for
+    One baseline photo -> repeating top-down day/night cycle for
     `experimentLengthDays` days. Always uses the top LED segment; never the
     lateral/side segment (that's reserved for Tropism's unilateral bending).
     """
@@ -76,9 +69,6 @@ class GrowthConfig(BaseModel):
     protocol: Literal["growth"] = "growth"
     experimentName: str = Field(default="experiment", min_length=1, max_length=80)
     username: str = Field(default="pi", min_length=1, max_length=40)
-
-    # Fixed 6h @ 50% white soak; on/off only, not configurable.
-    preIlluminationEnabled: bool = False
 
     # Day/night photoperiod cycle.
     dayLengthHours: int = Field(default=16, ge=0, le=24)
@@ -122,7 +112,6 @@ class ExperimentState(str, Enum):
 
 
 class ExperimentPhase(str, Enum):
-    pre_illumination = "pre_illumination"
     dark = "dark"
     bending = "bending"
     baseline = "baseline"
@@ -196,8 +185,6 @@ class DeviceSettings(BaseModel):
 
 class SavedExperimentConfig(BaseModel):
     protocol: Literal["tropism", "growth"] = "tropism"
-    preIlluminationEnabled: bool = False
-    preIlluminationHours: float = Field(default=6.0, ge=0, le=48)
     darkPhaseEnabled: bool = True
     darkPhaseHours: float = Field(default=90.0, ge=0, le=350)
     lateralIlluminationHours: float = Field(default=20.0, ge=0, le=168)

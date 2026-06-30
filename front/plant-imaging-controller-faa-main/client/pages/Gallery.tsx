@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { api } from "@/lib/api";
 import type { ImageInfo } from "@shared/api";
 
@@ -17,13 +18,16 @@ export default function Gallery() {
   return (
     <div className="flex w-[800px] h-[452px] flex-col bg-app-bg-primary">
       <div className="flex p-0.5 justify-between items-center self-stretch border-b border-app-border-primary bg-app-bg-secondary">
-        <Link
-          to="/"
-          className="flex w-[160px] py-1.5 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-        >
-          <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-[13px] font-semibold">Close</span>
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            to="/"
+            className="flex w-[160px] py-1.5 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+          >
+            <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
+            <span className="text-white text-[13px] font-semibold">Close</span>
+          </Link>
+          <RunningExperimentButton />
+        </div>
         <span className="px-3 text-[13px] font-semibold text-app-text-secondary">
           {data?.experimentId ?? "No experiment"} · {images.length} images
         </span>

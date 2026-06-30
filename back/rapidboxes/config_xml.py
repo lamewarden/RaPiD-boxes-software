@@ -17,12 +17,6 @@ def serialize(config: SavedExperimentConfig) -> bytes:
     root = ET.Element("experimentConfig", version="2", protocol=config.protocol)
 
     phases = ET.SubElement(root, "phases")
-    ET.SubElement(
-        phases,
-        "preIllumination",
-        enabled=str(config.preIlluminationEnabled).lower(),
-        hours=str(config.preIlluminationHours),
-    )
 
     if config.protocol == "tropism":
         ET.SubElement(
@@ -73,7 +67,6 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
     protocol = root.get("protocol") or "tropism"
 
     phases = root.find("phases")
-    pre = phases.find("preIllumination")
     dark = phases.find("dark") if phases is not None else None
     bending = phases.find("bending") if phases is not None else None
     growth = phases.find("growth") if phases is not None else None
@@ -92,8 +85,6 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         settleSeconds=float(cam_el.get("settleSeconds")),
     )
 
-    pre_enabled = _BOOL.get(pre.get("enabled", "false"), False) if pre is not None else False
-    pre_hours = float(pre.get("hours", "6.0")) if pre is not None else 6.0
     spectra = [el.text for el in light.findall("spectrum") if el.text] if light is not None else ["white"]
     interval = float(light.get("intervalMinutes", "20.0")) if light is not None else 20.0
 
@@ -103,26 +94,24 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
             source = growth.get("photoIlluminationSource", "ir")
         return SavedExperimentConfig(
             protocol="growth",
-            preIlluminationEnabled=pre_enabled,
-            preIlluminationHours=pre_hours,
             spectra=spectra,
             intervalMinutes=interval,
             dayLengthHours=int(growth.get("dayLengthHours", "16")) if growth is not None else 16,
             experimentLengthDays=int(growth.get("experimentLengthDays", "14")) if growth is not None else 14,
-            dayIntensity=int(light.get("dayIntensity", "25")) if light is not None else 25,
+            dayIntensity=int(
+                light.get("dayIntensity") or light.get("intensity") or "25"
+            ) if light is not None else 25,
             photoIlluminationSource=source,
             camera=camera,
         )
 
     return SavedExperimentConfig(
         protocol="tropism",
-        preIlluminationEnabled=pre_enabled,
-        preIlluminationHours=pre_hours,
-        darkPhaseEnabled=_BOOL[dark.get("enabled")],
-        darkPhaseHours=float(dark.get("hours")),
-        lateralIlluminationHours=float(bending.get("hours")),
+        darkPhaseEnabled=_BOOL.get(dark.get("enabled", "true"), True) if dark is not None else True,
+        darkPhaseHours=float(dark.get("hours", "90.0")) if dark is not None else 90.0,
+        lateralIlluminationHours=float(bending.get("hours", "20.0")) if bending is not None else 20.0,
         spectra=spectra,
         intervalMinutes=interval,
-        intensity=int(light.get("intensity")),
+        intensity=int(light.get("intensity", "25")) if light is not None else 25,
         camera=camera,
     )
