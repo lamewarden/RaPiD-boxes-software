@@ -21,3 +21,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Local-only assistant notes
+CLAUDE.md
