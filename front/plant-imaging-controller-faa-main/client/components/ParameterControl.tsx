@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
 
 interface ParameterControlProps {
   label: string;
@@ -11,8 +10,8 @@ interface ParameterControlProps {
   sliderMax: number;
   sliderStep?: number;
   onSliderChange: (value: number) => void;
-  onIncrement: () => void;
-  onDecrement: () => void;
+  onIncrement?: () => void;
+  onDecrement?: () => void;
 }
 
 export default function ParameterControl({
@@ -25,8 +24,6 @@ export default function ParameterControl({
   sliderMax,
   sliderStep = 1,
   onSliderChange,
-  onIncrement,
-  onDecrement,
 }: ParameterControlProps) {
   const sliderPercent = ((sliderValue - sliderMin) / (sliderMax - sliderMin)) * 100;
   const sliderStyle = {
@@ -35,7 +32,7 @@ export default function ParameterControl({
   } as CSSProperties;
 
   return (
-    <div className="flex h-[88px] p-2 flex-col justify-between items-start flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+    <div className="flex h-[74px] p-2 flex-col justify-between items-start flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
       <div className="flex w-full pb-0.5 flex-col items-start">
         <div className="flex flex-col items-start self-stretch">
           <div className="self-stretch text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
@@ -43,33 +40,13 @@ export default function ParameterControl({
           </div>
         </div>
       </div>
-      
-      <div className="flex w-full justify-between items-center">
-        <button
-          onClick={onDecrement}
-          className="flex p-1 flex-col items-start rounded bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+      <div className="flex w-full pt-0.5 items-center gap-2">
+        <div
+          className="font-black text-[17px] leading-5 min-w-[50px] text-right"
+          style={{ color: valueColor }}
         >
-          <ChevronDown className="w-3.5 h-3.5 text-white" strokeWidth={1.17} />
-        </button>
-        
-        <div className="flex flex-col items-start">
-          <div
-            className={`font-black text-[19px] leading-5`}
-            style={{ color: valueColor }}
-          >
-            {value}
-          </div>
+          {value}
         </div>
-        
-        <button
-          onClick={onIncrement}
-          className="flex p-1 flex-col items-start rounded bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-        >
-          <ChevronUp className="w-3.5 h-3.5 text-white" strokeWidth={1.17} />
-        </button>
-      </div>
-
-      <div className="flex w-full pt-1 flex-col items-start">
         <input
           type="range"
           min={sliderMin}
@@ -77,7 +54,7 @@ export default function ParameterControl({
           step={sliderStep}
           value={sliderValue}
           onChange={(e) => onSliderChange(Number(e.target.value))}
-          className="app-range-slider w-full h-2 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+          className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
           style={sliderStyle}
         />
       </div>

@@ -34,10 +34,6 @@ export default function TropismProgram() {
   );
   const [interval, setInterval] = useState(DEFAULT_VALUES.interval);
   const [intensity, setIntensity] = useState(DEFAULT_VALUES.intensity);
-  // No UI control for pre-illumination yet; carried through silently so an
-  // imported config still round-trips it into the next api.startExperiment call.
-  const [preIlluminationEnabled, setPreIlluminationEnabled] = useState(false);
-  const [preIlluminationHours, setPreIlluminationHours] = useState(6);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -55,8 +51,6 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(loaded.spectra));
     setInterval(loaded.intervalMinutes);
     setIntensity(loaded.intensity);
-    setPreIlluminationEnabled(loaded.preIlluminationEnabled);
-    setPreIlluminationHours(loaded.preIlluminationHours);
 
     api
       .settings()
@@ -96,8 +90,6 @@ export default function TropismProgram() {
         protocol: "tropism",
         experimentName,
         username: getUsername(),
-        preIlluminationEnabled,
-        preIlluminationHours,
         darkPhaseEnabled,
         darkPhaseHours: darkPhase,
         lateralIlluminationHours: lateralIllumination,
@@ -138,8 +130,6 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
     setInterval(DEFAULT_VALUES.interval);
     setIntensity(DEFAULT_VALUES.intensity);
-    setPreIlluminationEnabled(false);
-    setPreIlluminationHours(6);
   };
 
   const getColorForValue = (value: number, max: number, colorScheme: string) => {
@@ -177,10 +167,12 @@ export default function TropismProgram() {
       <div className="flex p-2 flex-col items-start gap-2 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
         <ProgramTabs />
 
+        <div className="flex flex-col items-start gap-2 self-stretch flex-1 overflow-y-auto pr-1">
+
         {/* Lateral Illumination and Dark Phase Row */}
         <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">
           {/* Dark Phase Toggle */}
-          <div className="flex-1 h-[88px] flex flex-col p-2 items-start gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
             <label className="flex items-center gap-2 cursor-pointer w-full">
               <input
                 type="checkbox"
@@ -195,284 +187,101 @@ export default function TropismProgram() {
               </div>
             </label>
             {darkPhaseEnabled && (
-              <div className="w-full flex justify-between items-center">
-                <button
-                  onClick={() => setDarkPhase(Math.max(0, darkPhase - 1))}
-                  className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-                >
-                  <svg
-                    className="w-[14px] h-[14px]"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M3.5 5.25L7 8.75L10.5 5.25"
-                      stroke="white"
-                      strokeWidth="1.16667"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-                <div className="text-center flex-1">
-                  <div
-                    className="text-[19px] font-black"
-                    style={{ color: DARK_PHASE_COLOR }}
-                  >
-                    {darkPhase}h
-                  </div>
+              <div className="w-full flex items-center gap-2">
+                <div className="text-[17px] font-black leading-5 min-w-[50px] text-right" style={{ color: DARK_PHASE_COLOR }}>
+                  {darkPhase}h
                 </div>
-                <button
-                  onClick={() => setDarkPhase(Math.min(200, darkPhase + 1))}
-                  className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-                >
-                  <svg
-                    className="w-[14px] h-[14px]"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M10.5 8.75L7 5.25L3.5 8.75"
-                      stroke="white"
-                      strokeWidth="1.16667"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={darkPhase}
+                  onChange={(e) => setDarkPhase(Number(e.target.value))}
+                  className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+                  style={getSliderStyle(darkPhase, 0, 200, DARK_PHASE_COLOR)}
+                />
               </div>
-            )}
-            {darkPhaseEnabled && (
-              <input
-                type="range"
-                min="0"
-                max="200"
-                value={darkPhase}
-                onChange={(e) => setDarkPhase(Number(e.target.value))}
-                className="app-range-slider w-full h-2 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-                style={getSliderStyle(darkPhase, 0, 200, DARK_PHASE_COLOR)}
-              />
             )}
           </div>
 
           {/* Lateral Illumination */}
-          <div className="flex-1 h-[88px] flex flex-col p-2 items-start gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
             <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
               Lateral Illumination
             </div>
-            <div className="w-full flex justify-between items-center">
-              <button
-                onClick={() =>
-                  setLateralIllumination(Math.max(0, lateralIllumination - 1))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+            <div className="w-full flex items-center gap-2">
+              <div
+                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
+                style={{ color: getColorForValue(lateralIllumination, 24, "orange") }}
               >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M3.5 5.25L7 8.75L10.5 5.25"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-              <div className="text-center flex-1">
-                <div
-                  className="text-[19px] font-black"
-                  style={{
-                    color: getColorForValue(lateralIllumination, 24, "orange"),
-                  }}
-                >
-                  {lateralIllumination}h
-                </div>
+                {lateralIllumination}h
               </div>
-              <button
-                onClick={() =>
-                  setLateralIllumination(Math.min(24, lateralIllumination + 1))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-              >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M10.5 8.75L7 5.25L3.5 8.75"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+              <input
+                type="range"
+                min="0"
+                max="24"
+                value={lateralIllumination}
+                onChange={(e) => setLateralIllumination(Number(e.target.value))}
+                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+                style={getSliderStyle(lateralIllumination, 0, 24, "#FF6900")}
+              />
             </div>
-            <input
-              type="range"
-              min="0"
-              max="24"
-              value={lateralIllumination}
-              onChange={(e) => setLateralIllumination(Number(e.target.value))}
-              className="app-range-slider w-full h-2 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-              style={getSliderStyle(lateralIllumination, 0, 24, "#FF6900")}
-            />
           </div>
         </div>
 
-        <SpectrumPanel selected={selectedSpectra} onToggle={handleSpectrumToggle} />
+        <SpectrumPanel label="Day Spectrum" selected={selectedSpectra} onToggle={handleSpectrumToggle} />
 
         {/* Interval Between Images and Intensity - Row */}
         <div className="flex justify-center items-start gap-2 self-stretch flex-shrink-0">
           {/* Interval Between Images - Left */}
-          <div className="flex-1 h-[88px] flex flex-col p-2 items-start gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
             <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
               Interval Between Images (MIN)
             </div>
-            <div className="w-full flex justify-between items-center">
-              <button
-                onClick={() =>
-                  setInterval(Math.max(3, interval - 1))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+            <div className="w-full flex items-center gap-2">
+              <div
+                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
+                style={{ color: getColorForValue(interval, 120, "blue") }}
               >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M3.5 5.25L7 8.75L10.5 5.25"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-              <div className="text-center flex-1">
-                <div
-                  className="text-[19px] font-black"
-                  style={{
-                    color: getColorForValue(interval, 120, "blue"),
-                  }}
-                >
-                  {interval}m
-                </div>
+                {interval}m
               </div>
-              <button
-                onClick={() =>
-                  setInterval(Math.min(120, interval + 1))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-              >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M10.5 8.75L7 5.25L3.5 8.75"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+              <input
+                type="range"
+                min="3"
+                max="120"
+                value={interval}
+                onChange={(e) => setInterval(Number(e.target.value))}
+                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+                style={getSliderStyle(interval, 3, 120, "#2B7FFF")}
+              />
             </div>
-            {/* Slider Bar */}
-            <input
-              type="range"
-              min="3"
-              max="120"
-              value={interval}
-              onChange={(e) => setInterval(Number(e.target.value))}
-              className="app-range-slider w-full h-2 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-              style={getSliderStyle(interval, 3, 120, "#2B7FFF")}
-            />
           </div>
 
           {/* Intensity - Right */}
-          <div className="flex-1 h-[88px] flex flex-col p-2 items-start gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+          <div className="flex-1 h-[74px] flex flex-col p-2 items-start gap-1.5 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
             <div className="text-app-text-muted text-[9px] font-bold leading-[15px] tracking-[0.5px] uppercase w-full">
               Intensity
             </div>
-            <div className="w-full flex justify-between items-center">
-              <button
-                onClick={() =>
-                  setIntensity(Math.max(0, intensity - 5))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+            <div className="w-full flex items-center gap-2">
+              <div
+                className="text-[17px] font-black leading-5 min-w-[50px] text-right"
+                style={{ color: getColorForValue(intensity, 100, "yellow") }}
               >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M3.5 5.25L7 8.75L10.5 5.25"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-              <div className="text-center flex-1">
-                <div
-                  className="text-[19px] font-black"
-                  style={{
-                    color: getColorForValue(intensity, 100, "yellow"),
-                  }}
-                >
-                  {intensity}%
-                </div>
+                {intensity}%
               </div>
-              <button
-                onClick={() =>
-                  setIntensity(Math.min(100, intensity + 5))
-                }
-                className="flex p-1 flex-col items-start rounded border-transparent bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
-              >
-                <svg
-                  className="w-[14px] h-[14px]"
-                  viewBox="0 0 14 14"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M10.5 8.75L7 5.25L3.5 8.75"
-                    stroke="white"
-                    strokeWidth="1.16667"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={intensity}
+                onChange={(e) => setIntensity(Number(e.target.value))}
+                className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+                style={getSliderStyle(intensity, 0, 100, "#F0B100")}
+              />
             </div>
-            {/* Slider Bar */}
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={intensity}
-              onChange={(e) => setIntensity(Number(e.target.value))}
-              className="app-range-slider w-full h-2 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
-              style={getSliderStyle(intensity, 0, 100, "#F0B100")}
-            />
           </div>
+        </div>
+
         </div>
 
         <div className="flex pb-2 items-start gap-2 self-stretch flex-shrink-0">
