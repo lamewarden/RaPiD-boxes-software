@@ -56,9 +56,13 @@ class AppConfig(BaseSettings):
     # Live preview (MJPEG) target frame rate.
     preview_fps: float = 5.0
 
+    # Where structured JSONL logs (errors, experiment journal, system) are written.
+    log_root: Path = Path.home() / "rapidboxes" / "logs"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.log_root.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

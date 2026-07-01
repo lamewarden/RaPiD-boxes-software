@@ -10,6 +10,8 @@ import asyncio
 import logging
 from typing import List
 
+from ..logging import log_error, log_system
+
 from ..config import AppConfig
 from ..models import CameraSettings, DeviceSettings
 from .base import (
@@ -63,13 +65,15 @@ class HardwareManager:
         """Best-effort: turn everything off, then release devices. Never raises."""
         try:
             await self.all_off()
-        except Exception:
+        except Exception as exc:
             log.exception("all_off during shutdown failed")
+            log_error("hardware", "shutdown_all_off_failed", str(exc), exc=exc)
         for closer in (self._leds.close, self._ir.close, self._camera.close):
             try:
                 await self._run(closer)
-            except Exception:
+            except Exception as exc:
                 log.exception("device close failed")
+                log_error("hardware", "device_close_failed", str(exc), exc=exc, device=closer.__name__)
 
     # --- camera ----------------------------------------------------------
     async def capture(self, path: str) -> None:
@@ -163,6 +167,7 @@ def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManag
         from .simulation import SimCamera, SimIr, SimLeds
 
         log.info("hardware: SIMULATION mode")
+        log_system("hardware.mode", "simulation backends active")
         camera: CameraBackend = SimCamera()
         leds: LedBackend = SimLeds(settings.leds.pixelCount)
         ir: IrBackend = SimIr()
@@ -172,10 +177,18 @@ def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManag
         from .leds import NeoPixelSpiLeds
 
         log.info("hardware: REAL device mode")
+        log_system("hardware.mode", "real device backends active")
         try:
             camera = Picamera2Camera()
         except CameraUnavailableError:
             log.warning("no camera detected; continuing without it (capture disabled)")
+            log_error(
+                "hardware.camera",
+                "camera_unavailable",
+                "no camera detected at startup",
+                level="WARNING",
+                fsync=False,
+            )
             camera = NullCamera()
             camera_available = False
         leds = NeoPixelSpiLeds(settings.leds)

@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 
+from .logging import log_error
 from .models import CameraSettings, DeviceSettings
 
 log = logging.getLogger("rapidboxes.settings")
@@ -14,8 +15,9 @@ def load_device_settings(path: Path) -> DeviceSettings:
     if path.exists():
         try:
             return DeviceSettings.model_validate_json(path.read_text())
-        except Exception:
+        except Exception as exc:
             log.exception("invalid settings file %s; using defaults", path)
+            log_error("settings", "invalid_settings_file", str(exc), exc=exc, path=str(path))
     return DeviceSettings()
 
 

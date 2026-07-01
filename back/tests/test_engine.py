@@ -4,11 +4,13 @@ Drives a full two-phase experiment in milliseconds by injecting a fake time
 source + sleep, so we can assert capture counts, file output, and cleanup.
 """
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from rapidboxes.config import AppConfig
+from rapidboxes.logging import init_logging, shutdown_logging
 from rapidboxes.engine.runner import ExperimentRunner
 from rapidboxes.hardware.base import BLACK, white
 from rapidboxes.hardware.manager import build_hardware
@@ -34,13 +36,16 @@ class FakeTime:
         await asyncio.sleep(0)  # yield so listeners/captures run
 
 
-def _runner(tmp_path: Path, ft: FakeTime) -> ExperimentRunner:
+def _runner(tmp_path: Path, ft: FakeTime, *, with_logging: bool = False) -> ExperimentRunner:
     config = AppConfig(
         simulation=True,
         storage_root=tmp_path / "exp",
         settings_path=tmp_path / "settings.json",
+        log_root=tmp_path / "logs",
     )
     config.ensure_dirs()
+    if with_logging:
+        init_logging(config)
     hw = build_hardware(config, DeviceSettings())
     storage = Storage(config.storage_root)
     return ExperimentRunner(hw, storage, now=ft.now, sleep=ft.sleep, tick_seconds=10_000)
@@ -164,3 +169,30 @@ async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     # Hardware left safe: all LEDs black, IR off.
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_experiment_journal_records_steps(tmp_path):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft, with_logging=True)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=0,
+        intervalMinutes=1.0,
+    )
+    await runner.start(config)
+    await runner._task
+    shutdown_logging()
+
+    journal_path = tmp_path / "logs" / "experiment.jsonl"
+    lines = [json.loads(line) for line in journal_path.read_text().splitlines()]
+    step_ids = [r["step_id"] for r in lines]
+    assert "experiment.start" in step_ids
+    assert "experiment.configure_camera" in step_ids
+    assert "experiment.finalize" in step_ids
+    finalize = [r for r in lines if r["step_id"] == "experiment.finalize"][-1]
+    assert finalize["status"] == "done"
+    assert any(r["step_id"].startswith("phase.dark.capture.") for r in lines)
