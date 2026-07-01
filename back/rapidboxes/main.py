@@ -10,7 +10,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,29 +18,31 @@ from fastapi.staticfiles import StaticFiles
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
+from .logging import init_logging, log_error, shutdown_logging
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
 from .api import experiments, health, images, preview, settings as settings_api, system, ws
 from .api.deps import AppState
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("rapidboxes")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config: AppConfig = app.state._config
+    run_id = init_logging(config)
     device_settings = load_device_settings_for_new_session(config.settings_path)
     storage = Storage(config.storage_root)
     hw = build_hardware(config, device_settings)
     runner = ExperimentRunner(hw, storage)
     runner.recover()
     app.state.app = AppState(config, device_settings, storage, hw, runner)
-    log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
+    log.info("RaPiD-boxes started (run_id=%s, simulation=%s, storage=%s)", run_id, config.simulation, config.storage_root)
     try:
         yield
     finally:
         await runner.shutdown()
+        shutdown_logging()
         log.info("RaPiD-boxes stopped; hardware released")
 
 
@@ -56,6 +58,33 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def log_http_errors(request: Request, call_next):
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if request.url.path.startswith("/api"):
+                log_error(
+                    "api",
+                    "unhandled_exception",
+                    str(exc),
+                    exc=exc,
+                    path=request.url.path,
+                    method=request.method,
+                )
+            raise
+        if response.status_code >= 500 and request.url.path.startswith("/api"):
+            log_error(
+                "api",
+                "http_error",
+                f"HTTP {response.status_code}",
+                level="ERROR",
+                path=request.url.path,
+                method=request.method,
+                status_code=response.status_code,
+            )
+        return response
 
     for module in (experiments, images, settings_api, system, preview, health):
         app.include_router(module.router)

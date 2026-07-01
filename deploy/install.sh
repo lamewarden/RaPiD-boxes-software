@@ -66,7 +66,10 @@ RAPIDBOXES_PORT=$PORT
 RAPIDBOXES_SPA_DIR=$FRONT_DIR/dist/spa
 RAPIDBOXES_STORAGE_ROOT=$HOME_DIR/rapidboxes/experiments
 RAPIDBOXES_SETTINGS_PATH=$HOME_DIR/rapidboxes/settings.json
+RAPIDBOXES_LOG_ROOT=$HOME_DIR/rapidboxes/logs
 EOF
+
+mkdir -p "$HOME_DIR/rapidboxes/logs"
 
 echo "==> Installing systemd service..."
 sed -e "s|@USER@|$RUN_USER|g" \
@@ -88,6 +91,8 @@ cat <<EOF
 ==> Done.
     Backend:  systemctl status rapidboxes      (http://localhost:$PORT)
     Logs:     journalctl -u rapidboxes -f
+              tail -f $HOME_DIR/rapidboxes/logs/errors.jsonl
+              tail -f $HOME_DIR/rapidboxes/logs/experiment.jsonl
     Reboot to apply SPI/camera/group changes and launch the kiosk:
         sudo reboot
 EOF
