@@ -82,6 +82,12 @@ export const api = {
     const blob = await res.blob();
     return URL.createObjectURL(blob);
   },
+  /** Live-view assist light: RGBW fill (10,10,10,10), IR boards high, or off. */
+  setLiveBacklight: (mode: "off" | "white" | "ir") =>
+    jsonFetch<{ mode: "off" | "white" | "ir" }>("/api/preview/backlight", {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    }),
 };
 
 /** Resolve the WebSocket URL for live status against the current origin. */

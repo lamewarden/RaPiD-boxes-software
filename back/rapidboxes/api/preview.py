@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..hardware.base import CameraUnavailableError
 from ..models import CameraSettings, ExperimentState
@@ -15,6 +17,25 @@ log = logging.getLogger("rapidboxes.preview")
 router = APIRouter(prefix="/api/preview", tags=["preview"])
 
 _BOUNDARY = "frame"
+
+
+class LiveBacklightRequest(BaseModel):
+    mode: Literal["off", "white", "ir"] = Field(
+        description="Live assist light: off, RGBW fill (10,10,10,10), or IR boards high"
+    )
+
+
+class LiveBacklightResponse(BaseModel):
+    mode: Literal["off", "white", "ir"]
+
+
+def _busy_if_experiment(state: AppState) -> None:
+    if state.runner.status.state in (
+        ExperimentState.running,
+        ExperimentState.paused,
+        ExperimentState.finishing,
+    ):
+        raise HTTPException(409, "an experiment is running")
 
 
 async def _mjpeg(state: AppState):
@@ -31,6 +52,12 @@ async def _mjpeg(state: AppState):
         raise
     except Exception:
         log.exception("preview stream error")
+    finally:
+        # Live closed / stream dropped — kill any assist backlight we armed.
+        try:
+            await state.hw.clear_live_backlight()
+        except Exception:
+            log.exception("clear_live_backlight after preview failed")
 
 
 @router.get("")
@@ -39,6 +66,16 @@ async def preview_stream(state: AppState = Depends(get_state)):
         _mjpeg(state),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY}",
     )
+
+
+@router.post("/backlight", response_model=LiveBacklightResponse)
+async def set_live_backlight(
+    body: LiveBacklightRequest, state: AppState = Depends(get_state)
+):
+    """Arm/disarm Live-view assist lights. Cleared automatically when Live ends."""
+    _busy_if_experiment(state)
+    mode = await state.hw.set_live_backlight(body.mode)
+    return LiveBacklightResponse(mode=mode)
 
 
 @router.get("/frame.jpg")

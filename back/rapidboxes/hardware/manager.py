@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List
+from typing import List, Literal, Optional
 
 from ..config import AppConfig
 from ..models import CameraSettings, DeviceSettings
@@ -18,11 +18,16 @@ from .base import (
     IrBackend,
     LedBackend,
     NullCamera,
+    RGBW,
     spectra_to_color,
     white,
 )
 
 log = logging.getLogger("rapidboxes.hw")
+
+# Fixed dim fill for Live "White backlight" (R,G,B,W). All channels = 10.
+LIVE_WHITE_BACKLIGHT: RGBW = (10, 10, 10, 10)
+LiveBacklightMode = Literal["off", "white", "ir"]
 
 
 class HardwareManager:
@@ -41,6 +46,7 @@ class HardwareManager:
         self._lock = asyncio.Lock()
         self.light_desc = "off"
         self.camera_available = camera_available
+        self._live_backlight: Optional[Literal["white", "ir"]] = None
 
         # Let the simulated camera annotate frames with the current light state.
         from .simulation import SimCamera
@@ -154,6 +160,30 @@ class HardwareManager:
     async def all_off(self) -> None:
         await self.leds_off()
         await self.ir_off()
+        self._live_backlight = None
+
+    async def set_live_backlight(self, mode: LiveBacklightMode) -> LiveBacklightMode:
+        """Live-view assist lights. Mutually exclusive white fill vs IR boards."""
+        if mode == "off":
+            await self.clear_live_backlight()
+            return "off"
+        if mode == "white":
+            await self.ir_off()
+            await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT)
+            self._live_backlight = "white"
+            self.light_desc = "live-white"
+            return "white"
+        # ir
+        await self.leds_off()
+        await self.ir_on()
+        self._live_backlight = "ir"
+        return "ir"
+
+    async def clear_live_backlight(self) -> None:
+        """Turn off Live assist lights if any were armed; no-op otherwise."""
+        if self._live_backlight is None:
+            return
+        await self.all_off()
 
 
 def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManager:

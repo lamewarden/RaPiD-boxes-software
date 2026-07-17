@@ -99,3 +99,35 @@ async def test_cannot_change_settings_while_running(client: AsyncClient, app_con
     assert res.status_code == 409
 
     await client.post("/api/experiments/current/stop")
+
+
+@pytest.mark.asyncio
+async def test_live_backlight_round_trip(client: AsyncClient):
+    res = await client.post("/api/preview/backlight", json={"mode": "white"})
+    assert res.status_code == 200
+    assert res.json()["mode"] == "white"
+
+    res = await client.post("/api/preview/backlight", json={"mode": "ir"})
+    assert res.status_code == 200
+    assert res.json()["mode"] == "ir"
+
+    res = await client.post("/api/preview/backlight", json={"mode": "off"})
+    assert res.status_code == 200
+    assert res.json()["mode"] == "off"
+
+
+@pytest.mark.asyncio
+async def test_live_backlight_blocked_while_running(client: AsyncClient):
+    config = TropismConfig(
+        experimentName="backlight-lock",
+        darkPhaseEnabled=True,
+        darkPhaseHours=0.05,
+        lateralIlluminationHours=0,
+        intervalMinutes=1,
+    )
+    await client.post("/api/experiments", json=config.model_dump())
+
+    res = await client.post("/api/preview/backlight", json={"mode": "white"})
+    assert res.status_code == 409
+
+    await client.post("/api/experiments/current/stop")
