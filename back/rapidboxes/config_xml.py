@@ -52,6 +52,8 @@ def serialize(config: SavedExperimentConfig) -> bytes:
         height=str(cam.height),
         exposureMicroseconds=str(cam.exposureMicroseconds),
         iso=str(cam.iso),
+        autofocusEnabled=str(cam.autofocusEnabled).lower(),
+        focusDistance=str(cam.focusDistance),
         grayscale=str(cam.grayscale).lower(),
         awbRedGain=str(cam.awbRedGain),
         awbBlueGain=str(cam.awbBlueGain),
@@ -72,17 +74,23 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
     growth = phases.find("growth") if phases is not None else None
     light = root.find("light")
     cam_el = root.find("camera")
+    defaults = CameraSettings()
 
     camera = CameraSettings(
-        width=int(cam_el.get("width")),
-        height=int(cam_el.get("height")),
-        exposureMicroseconds=int(cam_el.get("exposureMicroseconds")),
-        iso=int(cam_el.get("iso")),
-        grayscale=_BOOL[cam_el.get("grayscale")],
-        awbRedGain=float(cam_el.get("awbRedGain")),
-        awbBlueGain=float(cam_el.get("awbBlueGain")),
-        jpegQuality=int(cam_el.get("jpegQuality")),
-        settleSeconds=float(cam_el.get("settleSeconds")),
+        width=int(cam_el.get("width", str(defaults.width))),
+        height=int(cam_el.get("height", str(defaults.height))),
+        exposureMicroseconds=int(cam_el.get("exposureMicroseconds", str(defaults.exposureMicroseconds))),
+        iso=int(cam_el.get("iso", str(defaults.iso))),
+        autofocusEnabled=_BOOL.get(
+            cam_el.get("autofocusEnabled", str(defaults.autofocusEnabled).lower()),
+            defaults.autofocusEnabled,
+        ),
+        focusDistance=float(cam_el.get("focusDistance", str(defaults.focusDistance))),
+        grayscale=_BOOL.get(cam_el.get("grayscale", str(defaults.grayscale).lower()), defaults.grayscale),
+        awbRedGain=float(cam_el.get("awbRedGain", str(defaults.awbRedGain))),
+        awbBlueGain=float(cam_el.get("awbBlueGain", str(defaults.awbBlueGain))),
+        jpegQuality=int(cam_el.get("jpegQuality", str(defaults.jpegQuality))),
+        settleSeconds=float(cam_el.get("settleSeconds", str(defaults.settleSeconds))),
     )
 
     spectra = [el.text for el in light.findall("spectrum") if el.text] if light is not None else ["white"]

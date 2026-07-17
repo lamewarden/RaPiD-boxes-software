@@ -55,11 +55,22 @@ async def test_settings_round_trip(client: AsyncClient):
     assert res.status_code == 200
     defaults = res.json()
     assert defaults["camera"]["width"] == 2304
+    assert defaults["camera"]["autofocusEnabled"] is True
 
-    updated = {**defaults, "leds": {**defaults["leds"], "pixelCount": 80}}
+    updated = {
+        **defaults,
+        "camera": {
+            **defaults["camera"],
+            "autofocusEnabled": False,
+            "focusDistance": 4.5,
+        },
+        "leds": {**defaults["leds"], "pixelCount": 80},
+    }
     res = await client.put("/api/settings", json=updated)
     assert res.status_code == 200
     assert res.json()["leds"]["pixelCount"] == 80
+    assert res.json()["camera"]["autofocusEnabled"] is False
+    assert res.json()["camera"]["focusDistance"] == 4.5
 
 
 @pytest.mark.asyncio

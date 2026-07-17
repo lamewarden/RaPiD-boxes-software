@@ -17,6 +17,8 @@ const DEFAULT_CAMERA: CameraSettings = {
   height: 1296,
   exposureMicroseconds: 100_000,
   iso: 100,
+  autofocusEnabled: true,
+  focusDistance: 0.0,
   grayscale: true,
   awbRedGain: 2.0,
   awbBlueGain: 1.0,
@@ -81,6 +83,7 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
   const [testZoom, setTestZoom] = useState<1 | 2>(1);
   const { status } = useExperimentStatus();
   const locked = status?.state === "running" || status?.state === "paused";
+  const manualFocusDisabled = camera.autofocusEnabled;
 
   useEffect(() => {
     api
@@ -235,6 +238,40 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               onDecrement={() => patch({ iso: clamp(camera.iso - 50, 50, 1600) })}
             />
 
+            <SegmentedCard
+              label="Focus Mode"
+              footer={camera.autofocusEnabled ? "Continuous autofocus" : "Manual lens position"}
+              options={[
+                {
+                  key: "auto",
+                  label: "Autofocus",
+                  active: camera.autofocusEnabled,
+                  onClick: () => patch({ autofocusEnabled: true }),
+                },
+                {
+                  key: "manual",
+                  label: "Manual",
+                  active: !camera.autofocusEnabled,
+                  onClick: () => patch({ autofocusEnabled: false }),
+                },
+              ]}
+            />
+
+            <ParameterControl
+              label="Focus Distance"
+              value={camera.autofocusEnabled ? "AUTO" : camera.focusDistance.toFixed(1)}
+              valueColor={camera.autofocusEnabled ? "#9CA3AF" : "#10B981"}
+              sliderColor="#10B981"
+              sliderValue={camera.focusDistance}
+              sliderMin={0}
+              sliderMax={32}
+              sliderStep={0.1}
+              disabled={manualFocusDisabled}
+              onSliderChange={(v) => patch({ focusDistance: v })}
+              onIncrement={() => patch({ focusDistance: clamp(camera.focusDistance + 0.1, 0, 32) })}
+              onDecrement={() => patch({ focusDistance: clamp(camera.focusDistance - 0.1, 0, 32) })}
+            />
+
             <ParameterControl
               label="Settle Time"
               value={`${camera.settleSeconds.toFixed(1)}s`}
@@ -282,7 +319,7 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
                 Note
               </div>
               <p className="text-[10px] leading-[13px] text-app-text-secondary">
-                Camera settings always reset to default at the start of a new session.
+                Autofocus uses continuous tracking. In manual mode, focus distance 0.0 means infinity.
               </p>
             </div>
           </div>

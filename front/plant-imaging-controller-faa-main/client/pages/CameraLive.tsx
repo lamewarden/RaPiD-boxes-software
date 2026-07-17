@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
@@ -6,6 +7,15 @@ export default function CameraLive() {
   const navigate = useNavigate();
   const location = useLocation();
   const previousPage = location.state?.from || "/";
+  const [frameSrc, setFrameSrc] = useState("");
+
+  useEffect(() => {
+    const updateFrame = () => setFrameSrc(`/api/preview/frame.jpg?ts=${Date.now()}`);
+
+    updateFrame();
+    const timer = window.setInterval(updateFrame, 250);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleClose = () => {
     navigate(previousPage);
@@ -27,10 +37,10 @@ export default function CameraLive() {
         <RunningExperimentButton />
       </div>
 
-      {/* Full-screen camera feed (MJPEG stream from the backend) */}
+      {/* Full-screen camera feed; polled snapshots are more reliable across browsers than raw MJPEG. */}
       <div className="flex-1 flex items-center justify-center w-full p-2">
         <img
-          src="/api/preview"
+          src={frameSrc}
           alt="Live camera feed"
           className="h-full w-full rounded-lg border-2 border-app-border-primary bg-black object-contain"
         />

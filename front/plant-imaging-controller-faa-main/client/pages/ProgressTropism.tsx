@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { X, Pause, Play, Square } from "lucide-react";
 import { api } from "@/lib/api";
+import { restartAppToHome } from "@/lib/restartApp";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import type { ExperimentPhase } from "@shared/api";
 
@@ -22,6 +23,7 @@ export default function ProgressTropism() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
   const summaryOpened = useRef(false);
+  const [restarting, setRestarting] = useState(false);
 
   const isPaused = status?.state === "paused";
   const isActive = status?.state === "running" || status?.state === "paused";
@@ -72,17 +74,25 @@ export default function ProgressTropism() {
     openSummary();
   };
 
+  const handleClose = async () => {
+    if (restarting) return;
+    await restartAppToHome(setRestarting);
+  };
+
   return (
     <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto bg-app-bg-primary">
       {/* Top nav */}
       <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full">
-        <Link
-          to="/"
+        <button
+          onClick={handleClose}
+          disabled={restarting}
           className="flex w-[199.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
         >
           <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-center text-[13px] font-semibold leading-5">Close</span>
-        </Link>
+          <span className="text-white text-center text-[13px] font-semibold leading-5">
+            {restarting ? "Restarting..." : "Close"}
+          </span>
+        </button>
       </div>
 
       <div className="flex-1 flex flex-col w-full p-4 gap-3 overflow-hidden">

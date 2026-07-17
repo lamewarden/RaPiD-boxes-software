@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Power } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { restartAppToHome } from "@/lib/restartApp";
 import type { ImageInfo } from "@shared/api";
 
 export default function ExperimentSummary() {
@@ -59,69 +59,7 @@ export default function ExperimentSummary() {
 
   const handleClose = async () => {
     if (restarting) return;
-    setRestarting(true);
-
-    try {
-      // Send restart request with timeout
-      const restartController = new AbortController();
-      const restartTimeout = setTimeout(() => restartController.abort(), 5000);
-
-      const restartRes = await fetch("/api/system/restart-service", {
-        method: "POST",
-        signal: restartController.signal,
-      });
-      clearTimeout(restartTimeout);
-
-      if (!restartRes.ok) {
-        throw new Error(`Restart failed: HTTP ${restartRes.status}`);
-      }
-
-      await restartRes.json();
-      toast.success("Restarting service...");
-
-      // Now poll for service recovery
-      let success = false;
-      let attempt = 0;
-      let delay = 1500; // Start with 1.5s (service takes ~4s to fully start)
-
-      while (attempt < 15 && !success) {
-        attempt++;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-
-        try {
-          const pollController = new AbortController();
-          const pollTimeout = setTimeout(() => pollController.abort(), 2000);
-          const pollRes = await fetch("/api/system", {
-            signal: pollController.signal,
-            cache: "no-store",
-          });
-          clearTimeout(pollTimeout);
-
-          if (pollRes.ok) {
-            await pollRes.json();
-            success = true;
-          } else {
-            delay = Math.min(delay * 1.2, 3000);
-          }
-        } catch {
-          delay = Math.min(delay * 1.2, 3000);
-        }
-      }
-
-      if (success) {
-        setTimeout(() => {
-          window.location.replace("/");
-        }, 1000);
-      } else {
-        toast.error("Service took too long to restart. Please refresh manually.");
-        setRestarting(false);
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[Close] Error during restart:", msg, e);
-      toast.error(`Restart failed: ${msg}`);
-      setRestarting(false);
-    }
+    await restartAppToHome(setRestarting);
   };
 
   const programName = programType === "growth" ? "Growth Measurement" : "Tropism Measurement";

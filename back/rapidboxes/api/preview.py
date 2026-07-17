@@ -38,6 +38,10 @@ async def preview_stream(state: AppState = Depends(get_state)):
     return StreamingResponse(
         _mjpeg(state),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY}",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
     )
 
 
@@ -47,7 +51,14 @@ async def preview_frame(state: AppState = Depends(get_state)):
         frame = await state.hw.preview_frame()
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
-    return Response(frame, media_type="image/jpeg")
+    return Response(
+        frame,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/test-photo")

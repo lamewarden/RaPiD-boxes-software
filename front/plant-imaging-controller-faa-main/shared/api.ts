@@ -113,6 +113,8 @@ export interface CameraSettings {
   height: number;
   exposureMicroseconds: number;
   iso: number;
+  autofocusEnabled: boolean;
+  focusDistance: number;
   grayscale: boolean;
   awbRedGain: number;
   awbBlueGain: number;
