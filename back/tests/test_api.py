@@ -131,3 +131,34 @@ async def test_live_backlight_blocked_while_running(client: AsyncClient):
     assert res.status_code == 409
 
     await client.post("/api/experiments/current/stop")
+
+
+@pytest.mark.asyncio
+async def test_camera_settings_test_photo_lights_by_grayscale():
+    """Camera Settings test photo: IR when grayscale, RGBW (10,10,10,10) when colour."""
+    from rapidboxes.hardware.manager import LIVE_WHITE_BACKLIGHT, HardwareManager
+    from rapidboxes.hardware.simulation import SimCamera, SimIr, SimLeds
+    from rapidboxes.models import CameraSettings, DeviceSettings
+
+    ir = SimIr()
+    leds = SimLeds(10)
+    cam = SimCamera()
+    seen: dict = {}
+
+    def probe(settings: CameraSettings) -> bytes:
+        seen["ir"] = ir.state
+        seen["pixel"] = leds.pixels[0]
+        return SimCamera.capture_test_jpeg(cam, settings)
+
+    cam.capture_test_jpeg = probe  # type: ignore[method-assign]
+    hw = HardwareManager(cam, leds, ir, DeviceSettings())
+
+    await hw.capture_test_jpeg(CameraSettings(grayscale=True, settleSeconds=0))
+    assert seen["ir"] is True
+    assert ir.state is False
+
+    await hw.capture_test_jpeg(CameraSettings(grayscale=False, settleSeconds=0))
+    assert seen["ir"] is False
+    assert seen["pixel"] == LIVE_WHITE_BACKLIGHT
+    assert ir.state is False
+    assert leds.pixels[0] == (0, 0, 0, 0)

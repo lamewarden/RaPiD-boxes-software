@@ -110,7 +110,11 @@ async def test_photo(source: str, zoom: int = 1, state: AppState = Depends(get_s
 
 @router.post("/test-photo")
 async def test_photo_with_settings(settings: CameraSettings, state: AppState = Depends(get_state)):
-    """Camera settings screen: one-shot capture with unsaved camera params."""
+    """Camera settings screen: one-shot capture with unsaved camera params.
+
+    Illumination follows colour mode: IR boards if grayscale, else RGBW fill
+    (10,10,10,10). Same for Test Photo and 2x (zoom is display-only).
+    """
     if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
         raise HTTPException(409, "cannot take a test photo while an experiment is running")
     try:
@@ -118,3 +122,4 @@ async def test_photo_with_settings(settings: CameraSettings, state: AppState = D
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
     return Response(frame, media_type="image/jpeg")
+

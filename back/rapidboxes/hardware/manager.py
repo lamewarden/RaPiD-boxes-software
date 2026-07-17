@@ -102,7 +102,20 @@ class HardwareManager:
                 await self.all_off()
 
     async def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
-        return await self._run(self._camera.capture_test_jpeg, settings)
+        """Camera Settings test photo: IR if grayscale, else RGBW fill (10,10,10,10)."""
+        if settings.grayscale:
+            await self.ir_on()
+            try:
+                return await self._run(self._camera.capture_test_jpeg, settings)
+            finally:
+                await self.ir_off()
+        await self.ir_off()
+        await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT)
+        try:
+            return await self._run(self._camera.capture_test_jpeg, settings)
+        finally:
+            await self.all_off()
+
 
     async def recheck_camera(self) -> bool:
         """Try to pick up a camera plugged in after startup.

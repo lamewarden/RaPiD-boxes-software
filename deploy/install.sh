@@ -61,7 +61,7 @@ echo "==> Building the UI bundle..."
 echo "==> Writing /etc/rapidboxes.env..."
 sudo tee /etc/rapidboxes.env >/dev/null <<EOF
 RAPIDBOXES_SIMULATION=0
-RAPIDBOXES_HOST=127.0.0.1
+RAPIDBOXES_HOST=0.0.0.0
 RAPIDBOXES_PORT=$PORT
 RAPIDBOXES_SPA_DIR=$FRONT_DIR/dist/spa
 RAPIDBOXES_STORAGE_ROOT=$HOME_DIR/rapidboxes/experiments
