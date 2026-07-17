@@ -150,6 +150,8 @@ class CameraSettings(BaseModel):
     height: int = Field(default=1296, ge=240, le=2592)
     exposureMicroseconds: int = Field(default=100_000, ge=100, le=10_000_000)
     iso: int = Field(default=100, ge=50, le=1600)
+    autofocusEnabled: bool = True
+    focusDistance: float = Field(default=0.0, ge=0.0, le=32.0)
     grayscale: bool = True
     awbRedGain: float = Field(default=2.0, ge=0.0, le=8.0)
     awbBlueGain: float = Field(default=1.0, ge=0.0, le=8.0)

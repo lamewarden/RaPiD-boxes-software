@@ -21,6 +21,8 @@ def test_round_trip_custom_values():
             height=648,
             exposureMicroseconds=250_000,
             iso=400,
+            autofocusEnabled=False,
+            focusDistance=4.5,
             grayscale=False,
             awbRedGain=1.5,
             awbBlueGain=2.5,
@@ -46,6 +48,8 @@ def test_round_trip_growth_values():
             height=1296,
             exposureMicroseconds=120_000,
             iso=200,
+            autofocusEnabled=True,
+            focusDistance=0.0,
             grayscale=True,
             awbRedGain=2.0,
             awbBlueGain=1.0,
@@ -75,3 +79,5 @@ def test_parse_growth_legacy_light_intensity_field():
         assert restored.protocol == "growth"
         assert restored.dayIntensity == 35
         assert restored.photoIlluminationSource == "rgbw"
+        assert restored.camera.autofocusEnabled is True
+        assert restored.camera.focusDistance == 0.0

@@ -17,8 +17,10 @@ log = logging.getLogger("rapidboxes.camera")
 
 class Picamera2Camera(CameraBackend):
     def __init__(self):
+        from libcamera import controls as libcamera_controls
         from picamera2 import Picamera2  # Pi-only
 
+        self._libcamera_controls = libcamera_controls
         self._Picamera2 = Picamera2
         try:
             self._cam = Picamera2()
@@ -41,6 +43,11 @@ class Picamera2Camera(CameraBackend):
             "ColourGains": (s.awbRedGain, s.awbBlueGain),
             "Saturation": 0.0 if s.grayscale else 1.0,
         }
+        if s.autofocusEnabled:
+            ctrls["AfMode"] = self._libcamera_controls.AfModeEnum.Continuous
+        else:
+            ctrls["AfMode"] = self._libcamera_controls.AfModeEnum.Manual
+            ctrls["LensPosition"] = float(s.focusDistance)
         return ctrls
 
     def configure(self, settings: CameraSettings) -> None:
@@ -56,7 +63,12 @@ class Picamera2Camera(CameraBackend):
         self._cam.start()
         self._cam.set_controls(self._controls())
         self._configured = True
-        log.info("camera configured %dx%d", s.width, s.height)
+        log.info(
+            "camera configured %dx%d (%s)",
+            s.width,
+            s.height,
+            "autofocus" if s.autofocusEnabled else f"manual focus {s.focusDistance:.1f}",
+        )
 
     def _ensure(self) -> None:
         if not self._configured:

@@ -105,6 +105,20 @@ class LedBackend(ABC):
     def close(self) -> None: ...
 
 
+class NullLeds(LedBackend):
+    def fill(self, color: RGBW) -> None:
+        pass
+
+    def set_segment(self, start: int, end: int, color: RGBW) -> None:
+        pass
+
+    def off(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 class IrBackend(ABC):
     @abstractmethod
     def on(self) -> None: ...
@@ -114,3 +128,14 @@ class IrBackend(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
+
+
+class NullIr(IrBackend):
+    def on(self) -> None:
+        pass
+
+    def off(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass

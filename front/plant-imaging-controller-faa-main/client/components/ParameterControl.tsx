@@ -9,6 +9,7 @@ interface ParameterControlProps {
   sliderMin: number;
   sliderMax: number;
   sliderStep?: number;
+  disabled?: boolean;
   onSliderChange: (value: number) => void;
   onIncrement?: () => void;
   onDecrement?: () => void;
@@ -23,6 +24,7 @@ export default function ParameterControl({
   sliderMin,
   sliderMax,
   sliderStep = 1,
+  disabled = false,
   onSliderChange,
 }: ParameterControlProps) {
   const sliderPercent = ((sliderValue - sliderMin) / (sliderMax - sliderMin)) * 100;
@@ -32,7 +34,11 @@ export default function ParameterControl({
   } as CSSProperties;
 
   return (
-    <div className="flex h-[74px] p-2 flex-col justify-between items-start flex-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+    <div
+      className={`flex h-[74px] flex-1 flex-col items-start justify-between rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2 ${
+        disabled ? "opacity-60" : ""
+      }`}
+    >
       <div className="flex w-full pb-0.5 flex-col items-start">
         <div className="flex flex-col items-start self-stretch">
           <div className="self-stretch text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
@@ -53,8 +59,11 @@ export default function ParameterControl({
           max={sliderMax}
           step={sliderStep}
           value={sliderValue}
+          disabled={disabled}
           onChange={(e) => onSliderChange(Number(e.target.value))}
-          className="app-range-slider flex-1 bg-app-bg-tertiary rounded-lg appearance-none cursor-pointer"
+          className={`app-range-slider flex-1 appearance-none rounded-lg bg-app-bg-tertiary ${
+            disabled ? "cursor-not-allowed" : "cursor-pointer"
+          }`}
           style={sliderStyle}
         />
       </div>

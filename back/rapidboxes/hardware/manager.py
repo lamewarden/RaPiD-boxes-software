@@ -18,6 +18,8 @@ from .base import (
     IrBackend,
     LedBackend,
     NullCamera,
+    NullIr,
+    NullLeds,
     RGBW,
     spectra_to_color,
     white,
@@ -221,6 +223,14 @@ def build_hardware(config: AppConfig, settings: DeviceSettings) -> HardwareManag
             log.warning("no camera detected; continuing without it (capture disabled)")
             camera = NullCamera()
             camera_available = False
-        leds = NeoPixelSpiLeds(settings.leds)
-        ir = GpioIr(settings.ir.pins)
+        try:
+            leds = NeoPixelSpiLeds(settings.leds)
+        except Exception as exc:
+            log.warning("visible LEDs unavailable; continuing without them: %s", exc)
+            leds = NullLeds()
+        try:
+            ir = GpioIr(settings.ir.pins)
+        except Exception as exc:
+            log.warning("IR outputs unavailable; continuing without them: %s", exc)
+            ir = NullIr()
     return HardwareManager(camera, leds, ir, settings, camera_available=camera_available)
