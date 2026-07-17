@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Power } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { ImageInfo } from "@shared/api";
 
 export default function ExperimentSummary() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [restarting, setRestarting] = useState(false);
 
   const state = location.state as {
     programType: "growth" | "tropism";
@@ -57,71 +55,11 @@ export default function ExperimentSummary() {
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  const handleClose = async () => {
-    if (restarting) return;
-    setRestarting(true);
-
-    try {
-      // Send restart request with timeout
-      const restartController = new AbortController();
-      const restartTimeout = setTimeout(() => restartController.abort(), 5000);
-
-      const restartRes = await fetch("/api/system/restart-service", {
-        method: "POST",
-        signal: restartController.signal,
-      });
-      clearTimeout(restartTimeout);
-
-      if (!restartRes.ok) {
-        throw new Error(`Restart failed: HTTP ${restartRes.status}`);
-      }
-
-      await restartRes.json();
-      toast.success("Restarting service...");
-
-      // Now poll for service recovery
-      let success = false;
-      let attempt = 0;
-      let delay = 1500; // Start with 1.5s (service takes ~4s to fully start)
-
-      while (attempt < 15 && !success) {
-        attempt++;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-
-        try {
-          const pollController = new AbortController();
-          const pollTimeout = setTimeout(() => pollController.abort(), 2000);
-          const pollRes = await fetch("/api/system", {
-            signal: pollController.signal,
-            cache: "no-store",
-          });
-          clearTimeout(pollTimeout);
-
-          if (pollRes.ok) {
-            await pollRes.json();
-            success = true;
-          } else {
-            delay = Math.min(delay * 1.2, 3000);
-          }
-        } catch {
-          delay = Math.min(delay * 1.2, 3000);
-        }
-      }
-
-      if (success) {
-        setTimeout(() => {
-          window.location.replace("/");
-        }, 1000);
-      } else {
-        toast.error("Service took too long to restart. Please refresh manually.");
-        setRestarting(false);
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[Close] Error during restart:", msg, e);
-      toast.error(`Restart failed: ${msg}`);
-      setRestarting(false);
-    }
+  const handleClose = () => {
+    // Do NOT restart the backend here. Killing uvicorn while the kiosk holds
+    // WebSocket / MJPEG connections hangs the UI on "Restarting…" forever.
+    // Experiment is already stopped; just return to a clean home screen.
+    window.location.replace("http://localhost:8000/");
   };
 
   const programName = programType === "growth" ? "Growth Measurement" : "Tropism Measurement";
@@ -191,11 +129,10 @@ export default function ExperimentSummary() {
 
         <button
           onClick={handleClose}
-          disabled={restarting}
-          className="flex items-center justify-center gap-2 py-2 rounded-[10px] bg-app-green hover:bg-app-green-light text-white font-black uppercase tracking-[1.2px] transition-colors disabled:opacity-60"
+          className="flex items-center justify-center gap-2 py-2 rounded-[10px] bg-app-green hover:bg-app-green-light text-white font-black uppercase tracking-[1.2px] transition-colors"
         >
           <Power className="w-4 h-4" strokeWidth={1.75} />
-          <span>{restarting ? "Restarting Service..." : "Close"}</span>
+          <span>Close</span>
         </button>
       </div>
     </div>

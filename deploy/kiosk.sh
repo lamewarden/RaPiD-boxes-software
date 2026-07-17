@@ -39,6 +39,10 @@ FLAGS=(
   # autologin kiosk with no real login session to unlock it, so without this
   # flag Chromium pops a "enter keyring password" dialog on every launch.
   --password-store=basic
+  # Auto-allow camera/mic permission prompts for the local app (no touch dialog).
+  --use-fake-ui-for-media-stream
+  --autoplay-policy=no-user-gesture-required
+  "--unsafely-treat-insecure-origin-as-secure=$URL"
   "--app=$URL"
 )
 

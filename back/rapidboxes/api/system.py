@@ -97,9 +97,21 @@ async def close_kiosk(state: AppState = Depends(get_state)):
 async def restart_service(state: AppState = Depends(get_state)):
     """Request a full backend restart via systemd.
 
-    The service unit uses Restart=always, so terminating this process is enough.
-    Delay slightly so the HTTP response can be sent before termination.
+    The service unit uses Restart=always, so killing this process is enough.
+    Delay briefly so the HTTP response can flush, then SIGKILL immediately.
+
+    Do not use SIGTERM here: uvicorn graceful shutdown waits on open kiosk
+    WebSockets and MJPEG preview streams, which leaves the UI hung on
+    "restarting" for a long time even when Restart=always is set.
     """
+    pid = os.getpid()
     loop = asyncio.get_running_loop()
-    loop.call_later(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM))
+
+    def _kill() -> None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    loop.call_later(0.25, _kill)
     return {"status": "restarting"}

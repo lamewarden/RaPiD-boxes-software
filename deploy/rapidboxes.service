@@ -9,10 +9,11 @@ WorkingDirectory=@BACK_DIR@
 EnvironmentFile=/etc/rapidboxes.env
 ExecStart=@VENV@/bin/python -m rapidboxes
 Restart=always
-RestartSec=3
-# Hardware (LEDs/IR/camera) is released cleanly on stop by the app's shutdown
-# handler; give it a moment before SIGKILL.
-TimeoutStopSec=15
+RestartSec=1
+# Hard-kill promptly: graceful stop can hang on open WebSockets / MJPEG.
+TimeoutStopSec=5
+KillMode=control-group
+KillSignal=SIGKILL
 
 [Install]
 WantedBy=multi-user.target
