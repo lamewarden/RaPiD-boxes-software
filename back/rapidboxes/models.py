@@ -17,8 +17,12 @@ from pydantic import BaseModel, Field, model_validator
 Spectrum = str  # one of: "white" | "red" | "green" | "blue"
 VALID_SPECTRA = ("white", "red", "green", "blue")
 
-# Growth protocol: fixed photo-flash value for RGBW night captures.
-GROWTH_PHOTO_FLASH_INTENSITY = 10
+# Illumination source for any capture taken in darkness (Tropism dark phase,
+# Growth baseline, Growth night) — a device setting, not a per-experiment one.
+PhotoIlluminationSource = Literal["ir", "rgbw"]
+
+# Fixed photo-flash intensity for RGBW-lit dark/baseline/night captures.
+PHOTO_FLASH_INTENSITY = 10
 
 
 class TropismConfig(BaseModel):
@@ -79,13 +83,8 @@ class GrowthConfig(BaseModel):
     # Imaging cadence, uniform across day and night.
     intervalMinutes: float = Field(default=30.0, ge=1, le=240)
 
-    # Light source used for captures taken during the night/dark portion.
-    photoIlluminationSource: str = Field(default="ir")  # "ir" | "rgbw"
-
     @model_validator(mode="after")
     def _check(self) -> "GrowthConfig":
-        if self.photoIlluminationSource not in ("ir", "rgbw"):
-            raise ValueError("photoIlluminationSource must be 'ir' or 'rgbw'")
         bad = [s for s in self.spectra if s not in VALID_SPECTRA]
         if bad:
             raise ValueError(f"invalid spectra {bad}; allowed: {VALID_SPECTRA}")
@@ -166,6 +165,9 @@ class LedSettings(BaseModel):
     topSegment: Tuple[int, int] = (22, 64)
     lateralSegment: Tuple[int, int] = (0, 21)
     spiHz: int = Field(default=6_400_000, ge=2_000_000, le=10_000_000)
+    # Fire every Nth pixel within a lit segment (1 = every pixel, 5 = every 5th).
+    # Counted from the start of each segment; skipped pixels are driven off.
+    stride: int = Field(default=1, ge=1, le=5)
 
 
 class IrSettings(BaseModel):
@@ -177,6 +179,9 @@ class DeviceSettings(BaseModel):
     camera: CameraSettings = Field(default_factory=CameraSettings)
     leds: LedSettings = Field(default_factory=LedSettings)
     ir: IrSettings = Field(default_factory=IrSettings)
+    # Illumination source for dark/baseline/night captures, shared by both
+    # protocols. Persisted like camera/leds/ir; applies to every next run.
+    photoIlluminationSource: PhotoIlluminationSource = "ir"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +201,10 @@ class SavedExperimentConfig(BaseModel):
     dayLengthHours: int = Field(default=16, ge=0, le=24)
     experimentLengthDays: int = Field(default=14, ge=1, le=30)
     dayIntensity: int = Field(default=25, ge=0, le=100)
-    photoIlluminationSource: str = Field(default="ir")
+    # Illumination settings as they stood when this run started (historical
+    # record; also pushed back into current DeviceSettings on Import, like camera).
+    photoIlluminationSource: PhotoIlluminationSource = "ir"
+    leds: LedSettings = Field(default_factory=LedSettings)
     camera: CameraSettings = Field(default_factory=CameraSettings)
 
 

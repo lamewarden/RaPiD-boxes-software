@@ -7,7 +7,6 @@ import type {
   HistoryEntry,
   ImageListResponse,
   SavedExperimentConfig,
-  PhotoIlluminationSource,
   StartResponse,
   SystemInfo,
 } from "@shared/api";
@@ -66,21 +65,6 @@ export const api = {
       throw new Error(`${res.status}: ${await errorDetail(res)}`);
     }
     return res.blob();
-  },
-  /** Preview a Growth night-phase capture lit by IR or the fixed RGBW flash. Returns an object URL. */
-  testPhoto: async (source: PhotoIlluminationSource, zoom: 1 | 2 = 1): Promise<string> => {
-    const res = await fetch(`/api/preview/test-photo?source=${source}&zoom=${zoom}`);
-    if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        detail = (await res.json()).detail ?? detail;
-      } catch {
-        /* ignore */
-      }
-      throw new Error(`${res.status}: ${detail}`);
-    }
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
   },
   /** Live-view assist light: RGBW fill (10,10,10,10), IR boards high, or off. */
   setLiveBacklight: (mode: "off" | "white" | "ir") =>

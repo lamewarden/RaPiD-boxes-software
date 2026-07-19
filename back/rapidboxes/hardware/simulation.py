@@ -92,16 +92,18 @@ class SimLeds(LedBackend):
     def __init__(self, pixel_count: int = 70):
         self.pixels = [BLACK] * pixel_count
 
-    def fill(self, color: RGBW) -> None:
-        self.pixels = [color] * len(self.pixels)
-        log.info("sim leds fill %s", color)
+    def fill(self, color: RGBW, stride: int = 1) -> None:
+        stride = max(1, stride)
+        self.pixels = [color if i % stride == 0 else BLACK for i in range(len(self.pixels))]
+        log.info("sim leds fill %s stride=%d", color, stride)
 
-    def set_segment(self, start: int, end: int, color: RGBW) -> None:
+    def set_segment(self, start: int, end: int, color: RGBW, stride: int = 1) -> None:
         start = max(0, start)
         end = min(len(self.pixels), end)
+        stride = max(1, stride)
         for i in range(start, end):
-            self.pixels[i] = color
-        log.info("sim leds [%d:%d] = %s", start, end, color)
+            self.pixels[i] = color if (i - start) % stride == 0 else BLACK
+        log.info("sim leds [%d:%d] = %s stride=%d", start, end, color, stride)
 
     def off(self) -> None:
         self.pixels = [BLACK] * len(self.pixels)

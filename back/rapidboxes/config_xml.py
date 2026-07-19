@@ -3,18 +3,24 @@
 Written once when an experiment starts (see engine/runner.py) and read back by
 GET /api/experiments/{id}/config so a past run's phases/light/camera settings
 can be reloaded into the setup form. Plain stdlib xml.etree — no new dependency.
+
+Schema v3 moved `photoIlluminationSource` out of the growth-only <growth>
+element into a shared <illumination> element (it now applies to Tropism dark
+captures too) and added a <leds> snapshot. v2 files (already on disk from
+before this change) are still readable: parse() falls back to <growth>'s
+attribute and LedSettings() defaults when the newer elements are absent.
 """
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from .models import CameraSettings, SavedExperimentConfig
+from .models import CameraSettings, LedSettings, SavedExperimentConfig
 
 _BOOL = {"true": True, "false": False}
 
 
 def serialize(config: SavedExperimentConfig) -> bytes:
-    root = ET.Element("experimentConfig", version="2", protocol=config.protocol)
+    root = ET.Element("experimentConfig", version="3", protocol=config.protocol)
 
     phases = ET.SubElement(root, "phases")
 
@@ -32,7 +38,6 @@ def serialize(config: SavedExperimentConfig) -> bytes:
             "growth",
             dayLengthHours=str(config.dayLengthHours),
             experimentLengthDays=str(config.experimentLengthDays),
-            photoIlluminationSource=config.photoIlluminationSource,
         )
 
     light_kwargs = {"intervalMinutes": str(config.intervalMinutes)}
@@ -43,6 +48,20 @@ def serialize(config: SavedExperimentConfig) -> bytes:
     light = ET.SubElement(root, "light", **light_kwargs)
     for spectrum in config.spectra:
         ET.SubElement(light, "spectrum").text = spectrum
+
+    ET.SubElement(root, "illumination", source=config.photoIlluminationSource)
+
+    leds = config.leds
+    ET.SubElement(
+        root,
+        "leds",
+        pixelCount=str(leds.pixelCount),
+        pixelOrder=leds.pixelOrder,
+        topSegment=f"{leds.topSegment[0]},{leds.topSegment[1]}",
+        lateralSegment=f"{leds.lateralSegment[0]},{leds.lateralSegment[1]}",
+        spiHz=str(leds.spiHz),
+        stride=str(leds.stride),
+    )
 
     cam = config.camera
     ET.SubElement(
@@ -62,6 +81,40 @@ def serialize(config: SavedExperimentConfig) -> bytes:
     )
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _parse_segment(text: str, fallback: tuple) -> tuple:
+    try:
+        start, end = text.split(",")
+        return (int(start), int(end))
+    except (ValueError, AttributeError):
+        return fallback
+
+
+def _parse_leds(root: ET.Element) -> LedSettings:
+    defaults = LedSettings()
+    el = root.find("leds")
+    if el is None:
+        return defaults
+    return LedSettings(
+        pixelCount=int(el.get("pixelCount", str(defaults.pixelCount))),
+        pixelOrder=el.get("pixelOrder", defaults.pixelOrder),
+        topSegment=_parse_segment(el.get("topSegment", ""), defaults.topSegment),
+        lateralSegment=_parse_segment(el.get("lateralSegment", ""), defaults.lateralSegment),
+        spiHz=int(el.get("spiHz", str(defaults.spiHz))),
+        stride=int(el.get("stride", str(defaults.stride))),
+    )
+
+
+def _parse_illumination_source(root: ET.Element, growth: ET.Element | None) -> str:
+    """Newer <illumination source=...> element, falling back to the legacy
+    per-growth attribute (v2 files) and finally the "ir" default."""
+    el = root.find("illumination")
+    if el is not None:
+        return el.get("source", "ir")
+    if growth is not None:
+        return growth.get("photoIlluminationSource", "ir")
+    return "ir"
 
 
 def parse(xml_bytes: bytes) -> SavedExperimentConfig:
@@ -95,11 +148,10 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
 
     spectra = [el.text for el in light.findall("spectrum") if el.text] if light is not None else ["white"]
     interval = float(light.get("intervalMinutes", "20.0")) if light is not None else 20.0
+    source = _parse_illumination_source(root, growth)
+    leds = _parse_leds(root)
 
     if protocol == "growth" or growth is not None:
-        source = "ir"
-        if growth is not None:
-            source = growth.get("photoIlluminationSource", "ir")
         return SavedExperimentConfig(
             protocol="growth",
             spectra=spectra,
@@ -110,6 +162,7 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
                 light.get("dayIntensity") or light.get("intensity") or "25"
             ) if light is not None else 25,
             photoIlluminationSource=source,
+            leds=leds,
             camera=camera,
         )
 
@@ -121,5 +174,7 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         spectra=spectra,
         intervalMinutes=interval,
         intensity=int(light.get("intensity", "25")) if light is not None else 25,
+        photoIlluminationSource=source,
+        leds=leds,
         camera=camera,
     )

@@ -23,7 +23,6 @@ const DEFAULT_VALUES = {
   selectedSpectra: new Set(["white"]),
   dayIntensity: 25,
   interval: 30,
-  photoIlluminationSource: "ir" as "ir" | "rgbw",
 };
 
 export default function GrowthProgram() {
@@ -38,9 +37,6 @@ export default function GrowthProgram() {
   );
   const [dayIntensity, setDayIntensity] = useState(DEFAULT_VALUES.dayIntensity);
   const [interval, setInterval] = useState(DEFAULT_VALUES.interval);
-  const [photoIlluminationSource, setPhotoIlluminationSource] = useState(
-    DEFAULT_VALUES.photoIlluminationSource
-  );
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -57,14 +53,20 @@ export default function GrowthProgram() {
     setSelectedSpectra(new Set(loaded.spectra));
     setDayIntensity(loaded.dayIntensity);
     setInterval(loaded.intervalMinutes);
-    setPhotoIlluminationSource(loaded.photoIlluminationSource);
 
     api
       .settings()
-      .then((current) => api.saveSettings({ ...current, camera: loaded.camera }))
-      .then(() => toast.success("Loaded previous experiment's settings, including camera."))
+      .then((current) =>
+        api.saveSettings({
+          ...current,
+          camera: loaded.camera,
+          leds: loaded.leds,
+          photoIlluminationSource: loaded.photoIlluminationSource,
+        })
+      )
+      .then(() => toast.success("Loaded previous experiment's settings, including camera and illumination."))
       .catch((e) =>
-        toast.error(`Loaded phases/light, but could not apply camera settings: ${(e as Error).message}`)
+        toast.error(`Loaded phases/light, but could not apply device settings: ${(e as Error).message}`)
       );
 
     navigate(location.pathname, { replace: true, state: {} });
@@ -101,7 +103,6 @@ export default function GrowthProgram() {
         spectra: Array.from(selectedSpectra) as Spectrum[],
         dayIntensity,
         intervalMinutes: interval,
-        photoIlluminationSource,
       });
       if (res.status === "busy") {
         toast.error("An experiment is already running.");
@@ -135,7 +136,6 @@ export default function GrowthProgram() {
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
     setDayIntensity(DEFAULT_VALUES.dayIntensity);
     setInterval(DEFAULT_VALUES.interval);
-    setPhotoIlluminationSource(DEFAULT_VALUES.photoIlluminationSource);
     toast.success("Growth settings reset to defaults.");
   };
 
@@ -208,32 +208,6 @@ export default function GrowthProgram() {
               onIncrement={() => setDayIntensity((v) => Math.min(100, v + 5))}
               onDecrement={() => setDayIntensity((v) => Math.max(0, v - 5))}
             />
-          </div>
-
-          <div className="flex p-1.5 flex-col items-start gap-1 self-stretch rounded-[10px] border border-app-border-primary bg-app-bg-secondary flex-shrink-0">
-            <div className="text-app-text-muted text-[8px] font-bold leading-[12px] tracking-[0.5px] uppercase">
-              Photo Illumination
-            </div>
-            <div className="flex w-full items-start gap-1.5">
-              {(["ir", "rgbw"] as const).map((source) => {
-                const isSelected = photoIlluminationSource === source;
-                return (
-                  <button
-                    key={source}
-                    onClick={() => setPhotoIlluminationSource(source)}
-                    className={`flex py-2 px-5 flex-col justify-center items-center rounded border transition-all cursor-pointer flex-1 ${
-                      isSelected
-                        ? "bg-[rgba(194,122,255,0.4)] border-[rgba(194,122,255,0.5)] text-white"
-                        : "bg-[rgba(194,122,255,0.15)] border-transparent text-white/60"
-                    }`}
-                  >
-                    <div className="text-center text-[10px] font-bold leading-[15px] uppercase">
-                      {source === "ir" ? "IR (Dark)" : "RGBW (White @10%, Top)"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
         </div>

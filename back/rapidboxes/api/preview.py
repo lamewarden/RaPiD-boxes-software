@@ -98,33 +98,14 @@ async def preview_frame(state: AppState = Depends(get_state)):
     )
 
 
-@router.get("/test-photo")
-async def test_photo(source: str, zoom: int = 1, state: AppState = Depends(get_state)):
-    """Growth config screen: preview a capture lit by IR or a fixed-intensity
-    top-down RGBW flash, matching how a night-phase Growth photo would look."""
-    if state.runner.status.state in (
-        ExperimentState.running,
-        ExperimentState.paused,
-        ExperimentState.finishing,
-    ):
-        raise HTTPException(409, "an experiment is running")
-    if source not in ("ir", "rgbw"):
-        raise HTTPException(400, "source must be 'ir' or 'rgbw'")
-    if zoom not in (1, 2):
-        raise HTTPException(400, "zoom must be 1 or 2")
-    try:
-        frame = await state.hw.test_capture(source, zoom)
-    except CameraUnavailableError:
-        raise HTTPException(503, "camera not connected")
-    return Response(frame, media_type="image/jpeg")
-
-
 @router.post("/test-photo")
 async def test_photo_with_settings(settings: CameraSettings, state: AppState = Depends(get_state)):
     """Camera settings screen: one-shot capture with unsaved camera params.
 
-    Illumination follows colour mode: IR boards if grayscale, else RGBW fill
-    (10,10,10,10). Same for Test Photo and 2x (zoom is display-only).
+    Illumination follows the persisted photoIlluminationSource setting (IR vs
+    RGBW top flash, at the configured LED stride) — the same illumination a
+    real dark/baseline/night capture would use. Camera settings may be unsaved
+    edits from the editor; illumination is not editable from this screen.
     """
     if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
         raise HTTPException(409, "cannot take a test photo while an experiment is running")

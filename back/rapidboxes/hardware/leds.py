@@ -31,15 +31,20 @@ class NeoPixelSpiLeds(LedBackend):
         )
         self.off()
 
-    def fill(self, color: RGBW) -> None:
-        self._np.fill(color)
+    def fill(self, color: RGBW, stride: int = 1) -> None:
+        if stride <= 1:
+            self._np.fill(color)
+        else:
+            for i in range(self._settings.pixelCount):
+                self._np[i] = color if i % stride == 0 else BLACK
         self._np.show()
 
-    def set_segment(self, start: int, end: int, color: RGBW) -> None:
+    def set_segment(self, start: int, end: int, color: RGBW, stride: int = 1) -> None:
         start = max(0, start)
         end = min(self._settings.pixelCount, end)
+        stride = max(1, stride)
         for i in range(start, end):
-            self._np[i] = color
+            self._np[i] = color if (i - start) % stride == 0 else BLACK
         self._np.show()
 
     def off(self) -> None:

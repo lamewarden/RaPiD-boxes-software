@@ -55,10 +55,17 @@ export default function TropismProgram() {
 
     api
       .settings()
-      .then((current) => api.saveSettings({ ...current, camera: loaded.camera }))
-      .then(() => toast.success("Loaded previous experiment's settings, including camera."))
+      .then((current) =>
+        api.saveSettings({
+          ...current,
+          camera: loaded.camera,
+          leds: loaded.leds,
+          photoIlluminationSource: loaded.photoIlluminationSource,
+        })
+      )
+      .then(() => toast.success("Loaded previous experiment's settings, including camera and illumination."))
       .catch((e) =>
-        toast.error(`Loaded phases/light, but could not apply camera settings: ${(e as Error).message}`)
+        toast.error(`Loaded phases/light, but could not apply device settings: ${(e as Error).message}`)
       );
 
     // Clear the router state so a later remount (e.g. browser back) doesn't replay it.

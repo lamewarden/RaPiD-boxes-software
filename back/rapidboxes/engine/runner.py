@@ -16,7 +16,7 @@ from typing import Awaitable, Callable, List, Optional, Set, Union
 from .. import config_xml
 from ..models import (
     CameraSettings,
-    GROWTH_PHOTO_FLASH_INTENSITY,
+    PHOTO_FLASH_INTENSITY,
     ExperimentPhase,
     ExperimentState,
     ExperimentStatus,
@@ -165,6 +165,8 @@ class ExperimentRunner:
                 spectra=config.spectra,
                 intervalMinutes=config.intervalMinutes,
                 intensity=config.intensity,
+                photoIlluminationSource=self._hw.photo_illumination_source,
+                leds=self._hw.led_settings,
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
@@ -176,7 +178,8 @@ class ExperimentRunner:
                 dayLengthHours=config.dayLengthHours,
                 experimentLengthDays=config.experimentLengthDays,
                 dayIntensity=config.dayIntensity,
-                photoIlluminationSource=config.photoIlluminationSource,
+                photoIlluminationSource=self._hw.photo_illumination_source,
+                leds=self._hw.led_settings,
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
@@ -320,7 +323,7 @@ class ExperimentRunner:
 
     async def _enter_phase_lights(self, phase: _Phase, config: Config) -> None:
         if phase.name == ExperimentPhase.dark:
-            await self._hw.all_off()  # darkness; IR only fires during capture
+            await self._hw.all_off()  # darkness; photo illumination fires only during capture
         elif phase.name == ExperimentPhase.bending:
             await self._hw.lateral(config.spectra, config.intensity)
         elif phase.name == ExperimentPhase.day:
@@ -333,33 +336,34 @@ class ExperimentRunner:
     ) -> None:
         idx = self.status.imagesCaptured
         path, image_id = exp.image_path(phase_name.value, idx)
-        if mode in ("dark", "baseline"):
+
+        # Every image, in every phase of both protocols, is lit ONLY by the
+        # photoIlluminationSource setting — never by the phase's between-image
+        # lighting. Imaging under the phase light (as the day phase used to)
+        # oversaturates the frame, and mixes two separate concerns: the program
+        # table configures light *between* captures, Settings configures how a
+        # capture is taken.
+        await self._hw.leds_off()  # kill phase lighting for the exposure
+        if self._hw.photo_illumination_source == "ir":
             await self._hw.ir_on()
             try:
                 await self._hw.capture(str(path))
             finally:
                 await self._hw.ir_off()
-        elif mode == "bending":
-            await self._hw.leds_off()  # lights off during the exposure
+        else:  # rgbw: fixed-intensity top-down white flash, off again after
+            await self._hw.top_white(PHOTO_FLASH_INTENSITY)
             try:
                 await self._hw.capture(str(path))
             finally:
-                await self._hw.lateral(config.spectra, config.intensity)  # back on for the interval
-        elif mode == "night":
-            if config.photoIlluminationSource == "ir":
-                await self._hw.ir_on()
-                try:
-                    await self._hw.capture(str(path))
-                finally:
-                    await self._hw.ir_off()
-            else:  # rgbw: fixed-intensity top-down white flash, off again after
-                await self._hw.top_white(GROWTH_PHOTO_FLASH_INTENSITY)
-                try:
-                    await self._hw.capture(str(path))
-                finally:
-                    await self._hw.all_off()
-        else:
-            await self._hw.capture(str(path))  # "day": ambient light, no flash
+                await self._hw.all_off()
+
+        # Restore the phase's between-image lighting for the coming interval;
+        # dark/night/baseline stay dark, so they need nothing put back.
+        if mode == "bending":
+            await self._hw.lateral(config.spectra, config.intensity)
+        elif mode == "day":
+            await self._hw.top(config.spectra, config.dayIntensity)
+
         self.status.imagesCaptured = idx + 1
         self.status.lastImageId = image_id
         self._write_metadata(exp)

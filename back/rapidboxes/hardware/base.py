@@ -92,11 +92,15 @@ class NullCamera(CameraBackend):
 
 class LedBackend(ABC):
     @abstractmethod
-    def fill(self, color: RGBW) -> None: ...
+    def fill(self, color: RGBW, stride: int = 1) -> None:
+        """Set every pixel to `color`; if stride > 1, only every Nth pixel lights
+        (the rest are driven off) counting from index 0."""
 
     @abstractmethod
-    def set_segment(self, start: int, end: int, color: RGBW) -> None:
-        """Set pixels [start, end) to `color` and show."""
+    def set_segment(self, start: int, end: int, color: RGBW, stride: int = 1) -> None:
+        """Set pixels [start, end) to `color` and show. If stride > 1, only every
+        Nth pixel within the segment lights (the rest are driven off), counting
+        from `start`."""
 
     @abstractmethod
     def off(self) -> None: ...
@@ -106,10 +110,10 @@ class LedBackend(ABC):
 
 
 class NullLeds(LedBackend):
-    def fill(self, color: RGBW) -> None:
+    def fill(self, color: RGBW, stride: int = 1) -> None:
         pass
 
-    def set_segment(self, start: int, end: int, color: RGBW) -> None:
+    def set_segment(self, start: int, end: int, color: RGBW, stride: int = 1) -> None:
         pass
 
     def off(self) -> None:

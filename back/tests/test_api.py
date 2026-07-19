@@ -145,31 +145,37 @@ async def test_live_backlight_blocked_while_running(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_camera_settings_test_photo_lights_by_grayscale():
-    """Camera Settings test photo: IR when grayscale, RGBW (10,10,10,10) when colour."""
-    from rapidboxes.hardware.manager import LIVE_WHITE_BACKLIGHT, HardwareManager
+async def test_camera_settings_test_photo_follows_illumination_setting():
+    """Camera Settings test photo follows the persisted photoIlluminationSource
+    setting (IR vs RGBW top flash) — independent of the camera's colour mode,
+    so it previews exactly what a real dark/baseline/night capture would use."""
+    from rapidboxes.hardware.manager import HardwareManager
     from rapidboxes.hardware.simulation import SimCamera, SimIr, SimLeds
-    from rapidboxes.models import CameraSettings, DeviceSettings
+    from rapidboxes.models import PHOTO_FLASH_INTENSITY, CameraSettings, DeviceSettings
+    from rapidboxes.hardware.base import white
 
     ir = SimIr()
-    leds = SimLeds(10)
+    leds = SimLeds(70)
     cam = SimCamera()
     seen: dict = {}
 
     def probe(settings: CameraSettings) -> bytes:
         seen["ir"] = ir.state
-        seen["pixel"] = leds.pixels[0]
+        seen["pixel"] = leds.pixels[22]  # inside the default top segment
         return SimCamera.capture_test_jpeg(cam, settings)
 
     cam.capture_test_jpeg = probe  # type: ignore[method-assign]
-    hw = HardwareManager(cam, leds, ir, DeviceSettings())
 
-    await hw.capture_test_jpeg(CameraSettings(grayscale=True, settleSeconds=0))
+    # grayscale=False here on purpose: illumination must not be inferred from
+    # colour mode, only from photoIlluminationSource.
+    hw_ir = HardwareManager(cam, leds, ir, DeviceSettings(photoIlluminationSource="ir"))
+    await hw_ir.capture_test_jpeg(CameraSettings(grayscale=False, settleSeconds=0))
     assert seen["ir"] is True
     assert ir.state is False
 
-    await hw.capture_test_jpeg(CameraSettings(grayscale=False, settleSeconds=0))
+    hw_rgbw = HardwareManager(cam, leds, ir, DeviceSettings(photoIlluminationSource="rgbw"))
+    await hw_rgbw.capture_test_jpeg(CameraSettings(grayscale=True, settleSeconds=0))
     assert seen["ir"] is False
-    assert seen["pixel"] == LIVE_WHITE_BACKLIGHT
+    assert seen["pixel"] == white(PHOTO_FLASH_INTENSITY)
     assert ir.state is False
-    assert leds.pixels[0] == (0, 0, 0, 0)
+    assert leds.pixels[22] == (0, 0, 0, 0)

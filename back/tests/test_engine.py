@@ -10,10 +10,10 @@ import pytest
 
 from rapidboxes.config import AppConfig
 from rapidboxes.engine.runner import ExperimentRunner
-from rapidboxes.hardware.base import BLACK, white
+from rapidboxes.hardware.base import BLACK, spectra_to_color, white
 from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.models import (
-    GROWTH_PHOTO_FLASH_INTENSITY,
+    PHOTO_FLASH_INTENSITY,
     DeviceSettings,
     ExperimentState,
     GrowthConfig,
@@ -34,14 +34,14 @@ class FakeTime:
         await asyncio.sleep(0)  # yield so listeners/captures run
 
 
-def _runner(tmp_path: Path, ft: FakeTime) -> ExperimentRunner:
+def _runner(tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None) -> ExperimentRunner:
     config = AppConfig(
         simulation=True,
         storage_root=tmp_path / "exp",
         settings_path=tmp_path / "settings.json",
     )
     config.ensure_dirs()
-    hw = build_hardware(config, DeviceSettings())
+    hw = build_hardware(config, settings or DeviceSettings())
     storage = Storage(config.storage_root)
     return ExperimentRunner(hw, storage, now=ft.now, sleep=ft.sleep, tick_seconds=10_000)
 
@@ -112,7 +112,8 @@ async def test_pause_resume_and_stop(tmp_path):
 @pytest.mark.asyncio
 async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     ft = FakeTime()
-    runner = _runner(tmp_path, ft)
+    settings = DeviceSettings(photoIlluminationSource="rgbw")
+    runner = _runner(tmp_path, ft, settings)
 
     # Spy on IR/LED calls so we can tell IR-lit vs RGBW-flash-lit captures apart.
     ir_on_calls = []
@@ -120,9 +121,9 @@ async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     orig_ir_on = runner._hw._ir.on
     orig_set_segment = runner._hw._leds.set_segment
     runner._hw._ir.on = lambda: (ir_on_calls.append(True), orig_ir_on())[1]
-    runner._hw._leds.set_segment = lambda start, end, color: (
+    runner._hw._leds.set_segment = lambda start, end, color, stride=1: (
         led_calls.append((start, end, color)),
-        orig_set_segment(start, end, color),
+        orig_set_segment(start, end, color, stride),
     )[1]
 
     config = GrowthConfig(
@@ -133,7 +134,6 @@ async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
         spectra=["white"],
         dayIntensity=40,
         intervalMinutes=240,         # max allowed; 23h night -> 6 captures
-        photoIlluminationSource="rgbw",
     )
 
     resp = await runner.start(config)
@@ -154,13 +154,103 @@ async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     assert sum(f.startswith("day_") for f in files) == 1
     assert sum(f.startswith("night_") for f in files) == 6
 
-    # Only the baseline capture (taken before any light is on) used IR; night
-    # captures used the fixed-intensity RGBW top flash instead.
-    assert len(ir_on_calls) == 1
-    flash_color = white(GROWTH_PHOTO_FLASH_INTENSITY)
+    # With photoIlluminationSource="rgbw", the setting applies uniformly to
+    # every capture — baseline, day and night alike — so all 8 fire the RGBW
+    # top flash and none use IR. The day capture is included: it must NOT be
+    # taken under the phase's day lighting (that oversaturated the frame).
+    assert len(ir_on_calls) == 0
+    flash_color = white(PHOTO_FLASH_INTENSITY)
     flash_calls = [c for c in led_calls if c[2] == flash_color]
-    assert len(flash_calls) == 6
+    assert len(flash_calls) == 8
 
     # Hardware left safe: all LEDs black, IR off.
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_tropism_dark_phase_respects_rgbw_illumination_setting(tmp_path):
+    """The photoIlluminationSource setting applies to Tropism's dark phase too,
+    not just Growth night — that's the whole point of moving it to Settings."""
+    ft = FakeTime()
+    settings = DeviceSettings(photoIlluminationSource="rgbw")
+    runner = _runner(tmp_path, ft, settings)
+
+    ir_on_calls = []
+    orig_ir_on = runner._hw._ir.on
+    runner._hw._ir.on = lambda: (ir_on_calls.append(True), orig_ir_on())[1]
+
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=120 / 3600,  # 120s @ 60s interval -> 2 captures
+        lateralIlluminationHours=0,
+        intervalMinutes=1.0,
+    )
+
+    resp = await runner.start(config)
+    assert resp.status == "started"
+    await runner._task
+
+    assert runner.status.state == ExperimentState.done
+    assert runner.status.imagesCaptured == 2
+    assert len(ir_on_calls) == 0  # rgbw setting, not the dark-phase default of ir
+
+
+@pytest.mark.asyncio
+async def test_day_capture_is_not_taken_under_phase_lighting(tmp_path):
+    """Regression: the Growth day capture used to fire with the day LEDs still
+    on, oversaturating the frame. Every capture must happen with the phase's
+    between-image lighting off, lit only by the Settings photo illumination —
+    and the phase lighting must be restored afterwards for the interval."""
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft, DeviceSettings(photoIlluminationSource="ir"))
+
+    # Record the light state at the exact instant each frame is captured.
+    at_capture = []
+    cam = runner._hw._camera
+    orig_capture_file = cam.capture_file
+
+    def spy(path):
+        at_capture.append(
+            {
+                "name": Path(path).name,
+                "ir": runner._hw._ir.state,
+                "any_led_lit": any(p != BLACK for p in runner._hw._leds.pixels),
+            }
+        )
+        return orig_capture_file(path)
+
+    cam.capture_file = spy  # type: ignore[method-assign]
+
+    led_calls = []
+    orig_set_segment = runner._hw._leds.set_segment
+    runner._hw._leds.set_segment = lambda start, end, color, stride=1: (
+        led_calls.append(color),
+        orig_set_segment(start, end, color, stride),
+    )[1]
+
+    config = GrowthConfig(
+        experimentName="g",
+        username="u",
+        dayLengthHours=1,           # 1h day @ 240min interval -> 1 day capture
+        experimentLengthDays=1,
+        spectra=["white"],
+        dayIntensity=100,           # max intensity: the worst case for saturation
+        intervalMinutes=240,
+    )
+
+    await runner.start(config)
+    await runner._task
+
+    day_shots = [c for c in at_capture if c["name"].startswith("day_")]
+    assert day_shots, "expected at least one day-phase capture"
+    for shot in day_shots:
+        assert shot["ir"] is True, "day frame must be lit by the photo illumination"
+        assert shot["any_led_lit"] is False, "day frame must not be lit by phase LEDs"
+
+    # Day lighting is applied twice: once entering the phase, once restored
+    # after the capture — so the plants aren't left dark for the interval.
+    day_color = spectra_to_color(["white"], 100)
+    assert led_calls.count(day_color) == 2

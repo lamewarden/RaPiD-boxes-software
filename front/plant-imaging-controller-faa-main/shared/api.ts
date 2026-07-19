@@ -28,7 +28,6 @@ export interface GrowthConfig {
   spectra: Spectrum[];
   dayIntensity: number;
   intervalMinutes: number;
-  photoIlluminationSource: PhotoIlluminationSource;
 }
 
 export type ExperimentConfig = TropismConfig | GrowthConfig;
@@ -122,19 +121,26 @@ export interface CameraSettings {
   settleSeconds: number;
 }
 
-export interface DeviceSettings {
-  camera: CameraSettings;
-  leds: {
-    pixelCount: number;
-    pixelOrder: string;
-    topSegment: [number, number];
-    lateralSegment: [number, number];
-    spiHz: number;
-  };
-  ir: { pins: number[] };
+export interface LedSettings {
+  pixelCount: number;
+  pixelOrder: string;
+  topSegment: [number, number];
+  lateralSegment: [number, number];
+  spiHz: number;
+  /** Fire every Nth pixel within a lit segment (1 = every pixel, 5 = every 5th). */
+  stride: number;
 }
 
-/** The saved/loaded per-experiment <name>.xml: phases + light + camera, no identity fields. */
+export interface DeviceSettings {
+  camera: CameraSettings;
+  leds: LedSettings;
+  ir: { pins: number[] };
+  /** Illumination source for dark/baseline/night captures — applies to every
+   * imaging mode and every next experiment, not a per-experiment choice. */
+  photoIlluminationSource: PhotoIlluminationSource;
+}
+
+/** The saved/loaded per-experiment <name>.xml: phases + light + illumination + camera, no identity fields. */
 export interface SavedExperimentConfig {
   protocol: "tropism" | "growth";
   darkPhaseEnabled: boolean;
@@ -147,5 +153,6 @@ export interface SavedExperimentConfig {
   experimentLengthDays: number;
   dayIntensity: number;
   photoIlluminationSource: PhotoIlluminationSource;
+  leds: LedSettings;
   camera: CameraSettings;
 }

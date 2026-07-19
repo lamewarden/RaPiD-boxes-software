@@ -11,7 +11,7 @@ import logging
 from typing import List, Literal, Optional
 
 from ..config import AppConfig
-from ..models import CameraSettings, DeviceSettings
+from ..models import CameraSettings, DeviceSettings, LedSettings
 from .base import (
     CameraBackend,
     CameraUnavailableError,
@@ -86,33 +86,19 @@ class HardwareManager:
     async def preview_frame(self, zoom: int = 1) -> bytes:
         return await self._run(self._camera.capture_jpeg, zoom)
 
-    async def test_capture(self, source: str, zoom: int = 1) -> bytes:
-        """One-off preview capture lit the same way a Growth night photo would be."""
-        from ..models import GROWTH_PHOTO_FLASH_INTENSITY
-
-        if source == "ir":
-            await self.ir_on()
-            try:
-                return await self.preview_frame(zoom)
-            finally:
-                await self.ir_off()
-        else:  # rgbw
-            await self.top_white(GROWTH_PHOTO_FLASH_INTENSITY)
-            try:
-                return await self.preview_frame(zoom)
-            finally:
-                await self.all_off()
-
     async def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
-        """Camera Settings test photo: IR if grayscale, else RGBW fill (10,10,10,10)."""
-        if settings.grayscale:
+        """Camera Settings test photo: same illumination a real dark/baseline/night
+        capture would use — the persisted photoIlluminationSource setting, not the
+        camera's colour mode. Camera settings themselves may be unsaved edits."""
+        from ..models import PHOTO_FLASH_INTENSITY
+
+        if self.photo_illumination_source == "ir":
             await self.ir_on()
             try:
                 return await self._run(self._camera.capture_test_jpeg, settings)
             finally:
                 await self.ir_off()
-        await self.ir_off()
-        await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT)
+        await self.top_white(PHOTO_FLASH_INTENSITY)
         try:
             return await self._run(self._camera.capture_test_jpeg, settings)
         finally:
@@ -151,21 +137,25 @@ class HardwareManager:
             self.light_desc = "off"
 
     # --- visible LEDs ----------------------------------------------------
+    @property
+    def _stride(self) -> int:
+        return self._settings.leds.stride
+
     async def top_white(self, intensity: int) -> None:
         seg = self._settings.leds.topSegment
-        await self._run(self._leds.set_segment, seg[0], seg[1], white(intensity))
+        await self._run(self._leds.set_segment, seg[0], seg[1], white(intensity), self._stride)
         self.light_desc = f"white@{intensity}%"
 
     async def top(self, spectra: List[str], intensity: int) -> None:
         seg = self._settings.leds.topSegment
         color = spectra_to_color(spectra, intensity)
-        await self._run(self._leds.set_segment, seg[0], seg[1], color)
+        await self._run(self._leds.set_segment, seg[0], seg[1], color, self._stride)
         self.light_desc = f"{'+'.join(spectra)}@{intensity}% (top)"
 
     async def lateral(self, spectra: List[str], intensity: int) -> None:
         seg = self._settings.leds.lateralSegment
         color = spectra_to_color(spectra, intensity)
-        await self._run(self._leds.set_segment, seg[0], seg[1], color)
+        await self._run(self._leds.set_segment, seg[0], seg[1], color, self._stride)
         self.light_desc = f"{'+'.join(spectra)}@{intensity}%"
 
     async def leds_off(self) -> None:
@@ -177,6 +167,15 @@ class HardwareManager:
         await self.ir_off()
         self._live_backlight = None
 
+    # --- settings snapshots (for status/history) --------------------------
+    @property
+    def photo_illumination_source(self) -> str:
+        return self._settings.photoIlluminationSource
+
+    @property
+    def led_settings(self) -> LedSettings:
+        return self._settings.leds
+
     async def set_live_backlight(self, mode: LiveBacklightMode) -> LiveBacklightMode:
         """Live-view assist lights. Mutually exclusive white fill vs IR boards."""
         if mode == "off":
@@ -184,7 +183,7 @@ class HardwareManager:
             return "off"
         if mode == "white":
             await self.ir_off()
-            await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT)
+            await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT, self._stride)
             self._live_backlight = "white"
             self.light_desc = "live-white"
             return "white"

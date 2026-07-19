@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Camera, Settings, X } from "lucide-react";
+import { Camera, Lightbulb, Settings, X } from "lucide-react";
 import CameraSettingsMenu from "@/components/CameraSettingsMenu";
 import GeneralSettingsMenu from "@/components/GeneralSettingsMenu";
+import IlluminationSettingsMenu from "@/components/IlluminationSettingsMenu";
 
-type SettingsSection = "camera" | "general";
+type SettingsSection = "camera" | "illumination" | "general";
 
 export default function SettingsMenu({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>("camera");
@@ -32,6 +33,13 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
           <Camera className="h-[14px] w-[14px]" strokeWidth={1.75} />
           <span>Camera</span>
         </button>
+        <button
+          onClick={() => setSection("illumination")}
+          className={tabClass(section === "illumination")}
+        >
+          <Lightbulb className="h-[14px] w-[14px]" strokeWidth={1.75} />
+          <span>Illumination</span>
+        </button>
         <button onClick={() => setSection("general")} className={tabClass(section === "general")}>
           <Settings className="h-[14px] w-[14px]" strokeWidth={1.75} />
           <span>General</span>
@@ -39,7 +47,9 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {section === "camera" ? <CameraSettingsMenu embedded /> : <GeneralSettingsMenu />}
+        {section === "camera" && <CameraSettingsMenu embedded />}
+        {section === "illumination" && <IlluminationSettingsMenu />}
+        {section === "general" && <GeneralSettingsMenu />}
       </div>
     </div>
   );
