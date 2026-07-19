@@ -82,8 +82,30 @@ maybe_build_spa() {
 }
 
 # Keep kiosk alive: if Chromium exits (crash/close/kill), restart it.
+#
+# Two guards, both needed to stop this loop running away:
+#
+#  - Never launch a second Chromium while one is already up. Launching
+#    `chromium --app=$URL` against a live instance does NOT start a browser:
+#    it asks the running one to open another window and returns immediately.
+#    Unguarded, that reads as "Chromium exited", so the loop relaunches, and
+#    windows pile up about once a second without limit.
+#  - Back off when Chromium exits unusually quickly, so a persistent startup
+#    failure retries slowly instead of hammering the machine.
+backoff=2
 while true; do
+  if pgrep -f "chromium.*--app=$URL" >/dev/null 2>&1; then
+    sleep 5
+    continue
+  fi
   maybe_build_spa
+  started=$SECONDS
   "$CHROMIUM_CMD" "${FLAGS[@]}"
-  sleep 1
+  if [ $((SECONDS - started)) -lt 10 ]; then
+    backoff=$((backoff * 2))
+    [ "$backoff" -gt 60 ] && backoff=60
+  else
+    backoff=2
+  fi
+  sleep "$backoff"
 done
