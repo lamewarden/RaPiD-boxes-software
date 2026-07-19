@@ -61,6 +61,7 @@ export default function GrowthProgram() {
           ...current,
           camera: loaded.camera,
           leds: loaded.leds,
+          ir: loaded.ir,
           photoIlluminationSource: loaded.photoIlluminationSource,
         })
       )

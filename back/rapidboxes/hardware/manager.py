@@ -11,7 +11,7 @@ import logging
 from typing import List, Literal, Optional
 
 from ..config import AppConfig
-from ..models import CameraSettings, DeviceSettings, LedSettings
+from ..models import CameraSettings, DeviceSettings, IrSettings, LedSettings
 from .base import (
     CameraBackend,
     CameraUnavailableError,
@@ -175,6 +175,10 @@ class HardwareManager:
     @property
     def led_settings(self) -> LedSettings:
         return self._settings.leds
+
+    @property
+    def ir_settings(self) -> IrSettings:
+        return self._settings.ir
 
     async def set_live_backlight(self, mode: LiveBacklightMode) -> LiveBacklightMode:
         """Live-view assist lights. Mutually exclusive white fill vs IR boards."""

@@ -60,6 +60,7 @@ export default function TropismProgram() {
           ...current,
           camera: loaded.camera,
           leds: loaded.leds,
+          ir: loaded.ir,
           photoIlluminationSource: loaded.photoIlluminationSource,
         })
       )

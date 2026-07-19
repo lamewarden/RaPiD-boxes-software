@@ -4,23 +4,29 @@ Written once when an experiment starts (see engine/runner.py) and read back by
 GET /api/experiments/{id}/config so a past run's phases/light/camera settings
 can be reloaded into the setup form. Plain stdlib xml.etree — no new dependency.
 
-Schema v3 moved `photoIlluminationSource` out of the growth-only <growth>
-element into a shared <illumination> element (it now applies to Tropism dark
-captures too) and added a <leds> snapshot. v2 files (already on disk from
-before this change) are still readable: parse() falls back to <growth>'s
-attribute and LedSettings() defaults when the newer elements are absent.
+The file holds a complete snapshot of DeviceSettings, so importing a past run
+restores exactly the device configuration its images were taken with.
+
+Schema history, all still readable — parse() falls back to defaults (or, for
+the illumination source, to <growth>'s legacy attribute) whenever a newer
+element is missing from an older file:
+
+  v2  `photoIlluminationSource` lived on the growth-only <growth> element.
+  v3  moved it to a shared <illumination> element (it applies to Tropism dark
+      captures too) and added a <leds> snapshot.
+  v4  added an <ir> snapshot, completing the DeviceSettings coverage.
 """
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-from .models import CameraSettings, LedSettings, SavedExperimentConfig
+from .models import CameraSettings, IrSettings, LedSettings, SavedExperimentConfig
 
 _BOOL = {"true": True, "false": False}
 
 
 def serialize(config: SavedExperimentConfig) -> bytes:
-    root = ET.Element("experimentConfig", version="3", protocol=config.protocol)
+    root = ET.Element("experimentConfig", version="4", protocol=config.protocol)
 
     phases = ET.SubElement(root, "phases")
 
@@ -50,6 +56,8 @@ def serialize(config: SavedExperimentConfig) -> bytes:
         ET.SubElement(light, "spectrum").text = spectrum
 
     ET.SubElement(root, "illumination", source=config.photoIlluminationSource)
+
+    ET.SubElement(root, "ir", pins=",".join(str(p) for p in config.ir.pins))
 
     leds = config.leds
     ET.SubElement(
@@ -106,6 +114,18 @@ def _parse_leds(root: ET.Element) -> LedSettings:
     )
 
 
+def _parse_ir(root: ET.Element) -> IrSettings:
+    defaults = IrSettings()
+    el = root.find("ir")
+    if el is None:
+        return defaults
+    try:
+        pins = [int(p) for p in el.get("pins", "").split(",") if p.strip()]
+    except ValueError:
+        return defaults
+    return IrSettings(pins=pins or defaults.pins)
+
+
 def _parse_illumination_source(root: ET.Element, growth: ET.Element | None) -> str:
     """Newer <illumination source=...> element, falling back to the legacy
     per-growth attribute (v2 files) and finally the "ir" default."""
@@ -150,6 +170,7 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
     interval = float(light.get("intervalMinutes", "20.0")) if light is not None else 20.0
     source = _parse_illumination_source(root, growth)
     leds = _parse_leds(root)
+    ir = _parse_ir(root)
 
     if protocol == "growth" or growth is not None:
         return SavedExperimentConfig(
@@ -163,6 +184,7 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
             ) if light is not None else 25,
             photoIlluminationSource=source,
             leds=leds,
+            ir=ir,
             camera=camera,
         )
 
@@ -176,5 +198,6 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         intensity=int(light.get("intensity", "25")) if light is not None else 25,
         photoIlluminationSource=source,
         leds=leds,
+        ir=ir,
         camera=camera,
     )

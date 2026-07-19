@@ -201,10 +201,15 @@ class SavedExperimentConfig(BaseModel):
     dayLengthHours: int = Field(default=16, ge=0, le=24)
     experimentLengthDays: int = Field(default=14, ge=1, le=30)
     dayIntensity: int = Field(default=25, ge=0, le=100)
-    # Illumination settings as they stood when this run started (historical
-    # record; also pushed back into current DeviceSettings on Import, like camera).
+    # A full snapshot of DeviceSettings as it stood when this run started: a
+    # historical record of how these images were taken, and the payload Import
+    # replays into the live device settings so a past run can be reproduced
+    # exactly. Every field of DeviceSettings must be mirrored here -- see
+    # test_saved_config_covers_every_device_setting, which fails if one is
+    # added to DeviceSettings and not carried through to here and the XML.
     photoIlluminationSource: PhotoIlluminationSource = "ir"
     leds: LedSettings = Field(default_factory=LedSettings)
+    ir: IrSettings = Field(default_factory=IrSettings)
     camera: CameraSettings = Field(default_factory=CameraSettings)
 
 

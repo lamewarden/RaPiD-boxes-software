@@ -167,6 +167,7 @@ class ExperimentRunner:
                 intensity=config.intensity,
                 photoIlluminationSource=self._hw.photo_illumination_source,
                 leds=self._hw.led_settings,
+                ir=self._hw.ir_settings,
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
@@ -180,6 +181,7 @@ class ExperimentRunner:
                 dayIntensity=config.dayIntensity,
                 photoIlluminationSource=self._hw.photo_illumination_source,
                 leds=self._hw.led_settings,
+                ir=self._hw.ir_settings,
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)

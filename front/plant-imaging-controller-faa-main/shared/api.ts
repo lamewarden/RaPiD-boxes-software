@@ -131,10 +131,15 @@ export interface LedSettings {
   stride: number;
 }
 
+export interface IrSettings {
+  /** BCM pins driving the IR boards. */
+  pins: number[];
+}
+
 export interface DeviceSettings {
   camera: CameraSettings;
   leds: LedSettings;
-  ir: { pins: number[] };
+  ir: IrSettings;
   /** Illumination source for dark/baseline/night captures — applies to every
    * imaging mode and every next experiment, not a per-experiment choice. */
   photoIlluminationSource: PhotoIlluminationSource;
@@ -154,5 +159,6 @@ export interface SavedExperimentConfig {
   dayIntensity: number;
   photoIlluminationSource: PhotoIlluminationSource;
   leds: LedSettings;
+  ir: IrSettings;
   camera: CameraSettings;
 }
