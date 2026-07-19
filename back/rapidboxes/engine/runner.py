@@ -337,28 +337,36 @@ class ExperimentRunner:
         idx = self.status.imagesCaptured
         path, image_id = exp.image_path(phase_name.value, idx)
 
-        # Every image, in every phase of both protocols, is lit ONLY by the
-        # photoIlluminationSource setting — never by the phase's between-image
-        # lighting. Imaging under the phase light (as the day phase used to)
-        # oversaturates the frame, and mixes two separate concerns: the program
-        # table configures light *between* captures, Settings configures how a
-        # capture is taken.
-        await self._hw.leds_off()  # kill phase lighting for the exposure
+        # The imaging sequence, identical for every phase of both protocols:
+        #
+        #   1. all light off (visible and IR)
+        #   2. backlight on, as set in Settings > Illumination
+        #   3. camera as set in Settings > Camera (applied at run start by
+        #      configure_camera(); settings are locked while a run is active)
+        #   4. take the image under that backlight
+        #   5. backlight off
+        #   6. protocol illumination back on for the interval, as configured
+        #      in the Growth/Tropism program table
+        #
+        # The program table therefore only ever controls light *between*
+        # images; Settings alone controls how an image is taken. Imaging under
+        # the phase light (as the day phase used to) blew the frame out.
+        await self._hw.all_off()                                    # 1
         if self._hw.photo_illumination_source == "ir":
-            await self._hw.ir_on()
+            await self._hw.ir_on()                                  # 2
             try:
-                await self._hw.capture(str(path))
+                await self._hw.capture(str(path))                   # 3, 4
             finally:
-                await self._hw.ir_off()
-        else:  # rgbw: fixed-intensity top-down white flash, off again after
-            await self._hw.top_white(PHOTO_FLASH_INTENSITY)
+                await self._hw.ir_off()                             # 5
+        else:  # rgbw: fixed-intensity top-down white flash
+            await self._hw.top_white(PHOTO_FLASH_INTENSITY)         # 2
             try:
-                await self._hw.capture(str(path))
+                await self._hw.capture(str(path))                   # 3, 4
             finally:
-                await self._hw.all_off()
+                await self._hw.all_off()                            # 5
 
-        # Restore the phase's between-image lighting for the coming interval;
-        # dark/night/baseline stay dark, so they need nothing put back.
+        # 6. Dark/night/baseline phases are dark by protocol, so they have
+        #    nothing to put back.
         if mode == "bending":
             await self._hw.lateral(config.spectra, config.intensity)
         elif mode == "day":
