@@ -27,3 +27,37 @@ def test_rejects_out_of_range_intensity():
 def test_bending_requires_a_colour():
     with pytest.raises(ValidationError):
         TropismConfig(darkPhaseEnabled=False, lateralIlluminationHours=5, spectra=[])
+
+
+def test_exposure_is_coupled_to_illumination_source():
+    """Exposure and light source are one decision: IR needs seconds, the RGBW
+    flash milliseconds. DeviceSettings must never hold an incoherent pair."""
+    from rapidboxes.models import EXPOSURE_PROFILES, CameraSettings, DeviceSettings
+
+    ir_default = EXPOSURE_PROFILES["ir"]["default"]
+    rgbw_default = EXPOSURE_PROFILES["rgbw"]["default"]
+
+    # Defaults are coherent out of the box.
+    assert DeviceSettings().camera.exposureMicroseconds == ir_default
+    assert DeviceSettings(photoIlluminationSource="rgbw").camera.exposureMicroseconds == rgbw_default
+
+    # An exposure that suits the other source is snapped to this one's default.
+    blown = DeviceSettings(
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(exposureMicroseconds=ir_default),
+    )
+    assert blown.camera.exposureMicroseconds == rgbw_default
+
+    black = DeviceSettings(
+        photoIlluminationSource="ir",
+        camera=CameraSettings(exposureMicroseconds=rgbw_default),
+    )
+    assert black.camera.exposureMicroseconds == ir_default
+
+    # A deliberate in-range choice is respected, not overwritten.
+    for source, value in (("ir", 5_000_000), ("rgbw", 50_000)):
+        s = DeviceSettings(
+            photoIlluminationSource=source,
+            camera=CameraSettings(exposureMicroseconds=value),
+        )
+        assert s.camera.exposureMicroseconds == value

@@ -136,6 +136,29 @@ export interface IrSettings {
   pins: number[];
 }
 
+export interface ExposureProfile {
+  /** Exposure (µs) the settings snap to when this source is selected. */
+  default: number;
+  min: number;
+  max: number;
+  /**
+   * How slider travel maps to exposure. RGBW is logarithmic because the useful
+   * values bunch at the short end — this gives 0.01–0.1s most of the track and
+   * compresses 0.2–0.5s. IR is a plain linear 1–10s sweep.
+   */
+  scale: "linear" | "log";
+}
+
+/**
+ * Exposure travels with the illumination source: IR needs a long integration,
+ * the RGBW flash is bright. Mirrors EXPOSURE_PROFILES in
+ * back/rapidboxes/models.py, which enforces default/min/max server-side.
+ */
+export const EXPOSURE_PROFILES: Record<PhotoIlluminationSource, ExposureProfile> = {
+  ir: { default: 3_500_000, min: 1_000_000, max: 10_000_000, scale: "linear" },
+  rgbw: { default: 100_000, min: 10_000, max: 500_000, scale: "log" },
+};
+
 export interface DeviceSettings {
   camera: CameraSettings;
   leds: LedSettings;

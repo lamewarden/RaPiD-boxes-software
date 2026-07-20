@@ -24,6 +24,30 @@ PhotoIlluminationSource = Literal["ir", "rgbw"]
 # Fixed photo-flash intensity for RGBW-lit dark/baseline/night captures.
 PHOTO_FLASH_INTENSITY = 10
 
+# Exposure is a function of how the frame is lit, so it travels with the
+# illumination source rather than being tuned independently: the IR boards need
+# a long integration, while the RGBW flash is comparatively bright. Each source
+# carries the range the UI offers and the value settings snap to when that
+# source is selected. Keep in sync with EXPOSURE_PROFILES in front/shared/api.ts
+# (which adds the slider scale — a UI-only concern).
+EXPOSURE_PROFILES = {
+    "ir": {"default": 3_500_000, "min": 1_000_000, "max": 10_000_000},
+    "rgbw": {"default": 100_000, "min": 10_000, "max": 500_000},
+}
+
+
+def exposure_for_source(source: str, current: Optional[int] = None) -> int:
+    """The exposure to use for `source`, keeping `current` if it already suits.
+
+    Out-of-range values snap to the source's default, so switching illumination
+    can never leave an exposure that blacks out (IR at flash speed) or blows out
+    (RGBW at IR speed) every capture.
+    """
+    profile = EXPOSURE_PROFILES.get(source, EXPOSURE_PROFILES["ir"])
+    if current is not None and profile["min"] <= current <= profile["max"]:
+        return current
+    return profile["default"]
+
 
 class TropismConfig(BaseModel):
     """The Tropism protocol as exposed by the React UI.
@@ -182,6 +206,22 @@ class DeviceSettings(BaseModel):
     # Illumination source for dark/baseline/night captures, shared by both
     # protocols. Persisted like camera/leds/ir; applies to every next run.
     photoIlluminationSource: PhotoIlluminationSource = "ir"
+
+    @model_validator(mode="after")
+    def _couple_exposure_to_source(self) -> "DeviceSettings":
+        """Keep the exposure in step with the illumination source.
+
+        Exposure and light source are one decision, not two: IR needs seconds,
+        the RGBW flash needs milliseconds. Enforcing it here means every route
+        into the settings — the API, the settings file, a session reset — lands
+        on a usable pairing, instead of each having to remember the rule.
+        """
+        wanted = exposure_for_source(
+            self.photoIlluminationSource, self.camera.exposureMicroseconds
+        )
+        if wanted != self.camera.exposureMicroseconds:
+            self.camera = self.camera.model_copy(update={"exposureMicroseconds": wanted})
+        return self
 
 
 # ---------------------------------------------------------------------------

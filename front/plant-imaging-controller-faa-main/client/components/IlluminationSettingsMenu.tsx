@@ -4,7 +4,13 @@ import { toast } from "sonner";
 import SegmentedCard from "@/components/SegmentedCard";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
-import type { DeviceSettings, LedSettings, PhotoIlluminationSource } from "@shared/api";
+import { formatExposure } from "@/lib/exposure";
+import {
+  EXPOSURE_PROFILES,
+  type DeviceSettings,
+  type LedSettings,
+  type PhotoIlluminationSource,
+} from "@shared/api";
 
 const DEFAULT_LEDS: LedSettings = {
   pixelCount: 70,
@@ -124,10 +130,20 @@ export default function IlluminationSettingsMenu() {
                       <div className="text-center text-[10px] font-bold uppercase leading-[15px]">
                         {opt === "ir" ? "IR (Dark)" : "RGBW (White, Top)"}
                       </div>
+                      <div className="text-center text-[9px] leading-[13px] opacity-80">
+                        {formatExposure(EXPOSURE_PROFILES[opt].default)} exposure
+                      </div>
                     </button>
                   );
                 })}
               </div>
+              <p className="mt-2 text-[10px] leading-[14px] text-app-text-muted">
+                Exposure follows the source: saving switches the camera to{" "}
+                {formatExposure(EXPOSURE_PROFILES[source].default)} and rescales the Camera
+                exposure slider to{" "}
+                {source === "ir" ? "1–10 s" : "10–500 ms"}. IR needs a long integration; the
+                RGBW flash does not.
+              </p>
             </div>
 
             <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-3">

@@ -5,7 +5,19 @@ import ParameterControl from "@/components/ParameterControl";
 import SegmentedCard from "@/components/SegmentedCard";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
-import type { CameraSettings, DeviceSettings } from "@shared/api";
+import {
+  EXPOSURE_SLIDER_STEPS,
+  exposureToPosition,
+  formatExposure,
+  positionToExposure,
+  stepExposure,
+} from "@/lib/exposure";
+import {
+  EXPOSURE_PROFILES,
+  type CameraSettings,
+  type DeviceSettings,
+  type PhotoIlluminationSource,
+} from "@shared/api";
 
 /**
  * The "standard" camera settings. Mirrors the pydantic field defaults in
@@ -27,6 +39,13 @@ const DEFAULT_CAMERA: CameraSettings = {
   settleSeconds: 1.0,
 };
 
+/** Defaults for the active light source — exposure is tied to it, so a reset
+ *  under IR must land on the IR default, not the flash-speed one. */
+const defaultCameraFor = (source: PhotoIlluminationSource): CameraSettings => ({
+  ...DEFAULT_CAMERA,
+  exposureMicroseconds: EXPOSURE_PROFILES[source].default,
+});
+
 const RESOLUTIONS = [
   { label: "Full", width: 4608, height: 2592 },
   { label: "Half", width: 2304, height: 1296 },
@@ -43,6 +62,9 @@ interface CameraSettingsMenuProps {
 export default function CameraSettingsMenu({ onClose, embedded = false }: CameraSettingsMenuProps) {
   const [deviceSettings, setDeviceSettings] = useState<DeviceSettings | null>(null);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
+  // The illumination source shapes the exposure control; it is owned by the
+  // Illumination tab, so this panel only reads it.
+  const [source, setSource] = useState<PhotoIlluminationSource>("ir");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
@@ -58,6 +80,7 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
       .then((s) => {
         setDeviceSettings(s);
         setCamera(s.camera);
+        setSource(s.photoIlluminationSource);
       })
       .catch((e) => toast.error(`Could not load camera settings: ${(e as Error).message}`))
       .finally(() => setLoading(false));
@@ -173,21 +196,23 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               onDecrement={() => patch({ jpegQuality: clamp(camera.jpegQuality - 1, 40, 100) })}
             />
 
+            {/* Range and curve follow the illumination source: a 1-10s linear
+                sweep for IR, a 0.01-0.5s log sweep for the RGBW flash. */}
             <ParameterControl
-              label="Exposure"
-              value={`${Math.round(camera.exposureMicroseconds / 1000)} ms`}
+              label={`Exposure — ${source === "ir" ? "IR 1–10 s" : "RGBW 10–500 ms"}`}
+              value={formatExposure(camera.exposureMicroseconds)}
               valueColor="#2B7FFF"
               sliderColor="#2B7FFF"
-              sliderValue={camera.exposureMicroseconds}
-              sliderMin={100}
-              sliderMax={6_000_000}
-              sliderStep={1000}
-              onSliderChange={(v) => patch({ exposureMicroseconds: v })}
+              sliderValue={exposureToPosition(source, camera.exposureMicroseconds)}
+              sliderMin={0}
+              sliderMax={EXPOSURE_SLIDER_STEPS}
+              sliderStep={1}
+              onSliderChange={(pos) => patch({ exposureMicroseconds: positionToExposure(source, pos) })}
               onIncrement={() =>
-                patch({ exposureMicroseconds: clamp(camera.exposureMicroseconds + 1000, 100, 6_000_000) })
+                patch({ exposureMicroseconds: stepExposure(source, camera.exposureMicroseconds, 10) })
               }
               onDecrement={() =>
-                patch({ exposureMicroseconds: clamp(camera.exposureMicroseconds - 1000, 100, 6_000_000) })
+                patch({ exposureMicroseconds: stepExposure(source, camera.exposureMicroseconds, -10) })
               }
             />
 
@@ -323,7 +348,7 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
         </div>
 
         <button
-          onClick={() => setCamera(DEFAULT_CAMERA)}
+          onClick={() => setCamera(defaultCameraFor(source))}
           disabled={loading}
           className="flex items-center gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
         >

@@ -35,6 +35,15 @@ def load_device_settings_for_new_session(path: Path) -> DeviceSettings:
     are kept as persisted.
     """
     settings = load_device_settings(path)
-    settings = settings.model_copy(update={"camera": CameraSettings()})
+    # Rebuild rather than model_copy: model_copy skips validation, and the
+    # DeviceSettings validator is what re-pairs the fresh camera defaults with
+    # the persisted illumination source (an IR run must not come back at flash
+    # exposure and capture nothing but black frames).
+    settings = DeviceSettings(
+        camera=CameraSettings(),
+        leds=settings.leds,
+        ir=settings.ir,
+        photoIlluminationSource=settings.photoIlluminationSource,
+    )
     save_device_settings(path, settings)
     return settings
