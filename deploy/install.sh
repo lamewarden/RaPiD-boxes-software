@@ -31,7 +31,8 @@ echo "==> Installing system packages..."
 sudo apt-get update
 sudo apt-get install -y \
   python3-venv python3-picamera2 python3-lgpio \
-  chromium nodejs npm curl
+  chromium nodejs npm curl \
+  swayidle wlopm
 
 echo "==> Enabling SPI + camera (and pinning core clock on Pi 4)..."
 CONFIG=/boot/firmware/config.txt
@@ -82,6 +83,12 @@ install -d "$HOME_DIR/.config/autostart"
 sed "s|@KIOSK_SH@|$REPO_DIR/deploy/kiosk.sh|g" \
     "$REPO_DIR/deploy/rapidboxes-kiosk.desktop" \
     > "$HOME_DIR/.config/autostart/rapidboxes-kiosk.desktop"
+
+echo "==> Installing idle screen-blank autostart (5min default, RAPIDBOXES_IDLE_TIMEOUT to change)..."
+chmod +x "$REPO_DIR/deploy/idle.sh"
+sed "s|@IDLE_SH@|$REPO_DIR/deploy/idle.sh|g" \
+    "$REPO_DIR/deploy/rapidboxes-idle.desktop" \
+    > "$HOME_DIR/.config/autostart/rapidboxes-idle.desktop"
 
 cat <<EOF
 

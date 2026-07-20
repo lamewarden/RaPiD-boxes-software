@@ -85,6 +85,21 @@ Important hardware notes:
 - Default IR settings use the two legacy control pins `[26, 23]`.
 - These defaults are persisted in `settings.json` and exposed by `GET/PUT /api/settings`.
 
+## Touchscreen power management
+
+`deploy/idle.sh` blanks the touchscreen after 5 minutes with no touch, and
+turns it back on the instant it's touched — screen power only, never system
+sleep or suspend. The backend and any running experiment keep running exactly
+as before either way; only the panel's own power state changes.
+
+Built on `swayidle` (touch-as-activity detection) driving `wlopm` (Wayland
+output power) against the DSI panel, both installed by `deploy/install.sh` and
+autostarted alongside the kiosk. Change the timeout with the
+`RAPIDBOXES_IDLE_TIMEOUT` environment variable (seconds) in
+`~/.config/autostart/rapidboxes-idle.desktop`; the output name (default
+`DSI-1`) is configurable the same way via `RAPIDBOXES_DISPLAY_OUTPUT` if you're
+on a different panel — check yours with `wlr-randr`.
+
 ## What the programs do
 
 ### Tropism program

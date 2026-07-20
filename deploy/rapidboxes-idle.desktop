@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RaPiD-boxes Idle Screen
+Comment=Blank the touchscreen after inactivity; wake instantly on touch
+Exec=@IDLE_SH@
+Terminal=false
+X-GNOME-Autostart-enabled=true
