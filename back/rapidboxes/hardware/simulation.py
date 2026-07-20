@@ -13,7 +13,7 @@ from datetime import datetime
 from PIL import Image, ImageDraw
 
 from ..models import CameraSettings
-from .base import RGBW, BLACK, CameraBackend, IrBackend, LedBackend
+from .base import RGBW, BLACK, CameraBackend, IrBackend, LedBackend, zoom_crop_box
 
 log = logging.getLogger("rapidboxes.sim")
 
@@ -56,9 +56,14 @@ class SimCamera(CameraBackend):
         d.multiline_text((10, 10), "\n".join(lines), fill=(0, 255, 0))
         return img
 
+    def _zoomed_frame(self, settings: CameraSettings) -> Image.Image:
+        img = self._render(settings.width, settings.height)
+        img = img.crop(zoom_crop_box(settings.width, settings.height, settings.zoom))
+        return img.resize((settings.width, settings.height), Image.LANCZOS)
+
     def capture_file(self, path: str) -> None:
         time.sleep(0.05)  # pretend a capture takes a moment
-        img = self._render(self._settings.width, self._settings.height)
+        img = self._zoomed_frame(self._settings)
         img.save(path, "JPEG", quality=self._settings.jpegQuality)
         self._frame += 1
         log.info("sim capture -> %s", path)
@@ -79,7 +84,7 @@ class SimCamera(CameraBackend):
     def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
         self.configure(settings)
         time.sleep(0.05)
-        img = self._render(settings.width, settings.height)
+        img = self._zoomed_frame(settings)
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=settings.jpegQuality)
         return buf.getvalue()

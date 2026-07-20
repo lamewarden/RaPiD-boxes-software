@@ -176,10 +176,35 @@ class CameraSettings(BaseModel):
     autofocusEnabled: bool = True
     focusDistance: float = Field(default=0.0, ge=0.0, le=32.0)
     grayscale: bool = True
-    awbRedGain: float = Field(default=2.0, ge=0.0, le=8.0)
-    awbBlueGain: float = Field(default=1.0, ge=0.0, le=8.0)
     jpegQuality: int = Field(default=92, ge=40, le=100)
-    settleSeconds: float = Field(default=1.0, ge=0, le=30)
+    # Digital zoom: center-crop to 1/zoom of the frame, then scale back up to
+    # width x height, so every image stays the configured size regardless of
+    # framing. Applied to every capture -- experiment images and test photos
+    # alike -- not just a preview convenience.
+    zoom: float = Field(default=1.0, ge=1.0, le=5.0)
+
+
+# AWB and per-shot settle time used to be user-tunable, but the sensor is
+# accurate enough at a fixed white balance that tuning them never actually
+# helped, and the manual settle slider is now unneeded now that settle is
+# derived from exposure (see settle_seconds_for below). Fixed here instead of
+# in CameraSettings so there is nothing left to (mis)configure.
+AWB_RED_GAIN = 2.0
+AWB_BLUE_GAIN = 1.0
+
+SETTLE_SECONDS_MIN = 0.15
+SETTLE_SECONDS_MAX = 2.0
+
+
+def settle_seconds_for(exposure_microseconds: int) -> float:
+    """Delay before a capture, so a just-changed exposure has settled.
+
+    Scales with exposure, bounded at both ends: a flash-speed RGBW shot
+    (10-500ms) settles almost immediately at the floor, while a multi-second
+    IR exposure gets proportionally more margin for the sensor pipeline to
+    flush the previous frame, capped so it never adds more than 2s.
+    """
+    return min(SETTLE_SECONDS_MAX, max(SETTLE_SECONDS_MIN, exposure_microseconds / 1_000_000))
 
 
 class LedSettings(BaseModel):

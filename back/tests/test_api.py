@@ -169,13 +169,47 @@ async def test_camera_settings_test_photo_follows_illumination_setting():
     # grayscale=False here on purpose: illumination must not be inferred from
     # colour mode, only from photoIlluminationSource.
     hw_ir = HardwareManager(cam, leds, ir, DeviceSettings(photoIlluminationSource="ir"))
-    await hw_ir.capture_test_jpeg(CameraSettings(grayscale=False, settleSeconds=0))
+    await hw_ir.capture_test_jpeg(CameraSettings(grayscale=False))
     assert seen["ir"] is True
     assert ir.state is False
 
     hw_rgbw = HardwareManager(cam, leds, ir, DeviceSettings(photoIlluminationSource="rgbw"))
-    await hw_rgbw.capture_test_jpeg(CameraSettings(grayscale=True, settleSeconds=0))
+    await hw_rgbw.capture_test_jpeg(CameraSettings(grayscale=True))
     assert seen["ir"] is False
     assert seen["pixel"] == white(PHOTO_FLASH_INTENSITY)
     assert ir.state is False
     assert leds.pixels[22] == (0, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_zoom_crops_and_rescales_to_configured_size():
+    """CameraSettings.zoom center-crops the frame and scales it back to
+    width x height, so every saved image is the configured size regardless of
+    framing -- and a real crop happens, not a no-op."""
+    from rapidboxes.hardware.simulation import SimCamera
+    from rapidboxes.models import CameraSettings
+
+    cam = SimCamera()
+    settings = CameraSettings(width=640, height=360, zoom=1.0)
+    unzoomed = cam._zoomed_frame(settings)
+    assert unzoomed.size == (640, 360)
+
+    zoomed_settings = CameraSettings(width=640, height=360, zoom=2.0)
+    zoomed = cam._zoomed_frame(zoomed_settings)
+    # Same output size as the unzoomed frame...
+    assert zoomed.size == (640, 360)
+    # ...but a real crop happened: the two frames differ (the sim overlay
+    # text sits near the top-left corner and falls outside a 2x center crop).
+    assert list(zoomed.getdata()) != list(unzoomed.getdata())
+
+
+def test_settle_seconds_scales_with_exposure_bounded():
+    from rapidboxes.models import (
+        SETTLE_SECONDS_MAX,
+        SETTLE_SECONDS_MIN,
+        settle_seconds_for,
+    )
+
+    assert settle_seconds_for(10_000) == SETTLE_SECONDS_MIN  # 10ms flash: floors
+    assert settle_seconds_for(500_000) == 0.5  # within range: passes through
+    assert settle_seconds_for(10_000_000) == SETTLE_SECONDS_MAX  # 10s IR: caps

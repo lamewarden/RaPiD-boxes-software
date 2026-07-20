@@ -36,6 +36,19 @@ def white(intensity: int) -> RGBW:
     return (0, 0, 0, v)
 
 
+def zoom_crop_box(width: int, height: int, zoom: float) -> tuple[int, int, int, int]:
+    """The (x0, y0, x1, y1) box a `width` x `height` frame is cropped to for
+    `zoom`. 1/zoom of each dimension, centered. zoom<=1 is a no-op box (the
+    full frame) so callers can skip cropping entirely without a special case."""
+    if zoom <= 1.0:
+        return (0, 0, width, height)
+    cw = max(1, round(width / zoom))
+    ch = max(1, round(height / zoom))
+    x0 = (width - cw) // 2
+    y0 = (height - ch) // 2
+    return (x0, y0, x0 + cw, y0 + ch)
+
+
 class CameraUnavailableError(RuntimeError):
     """Raised when no camera hardware is detected (e.g. ribbon unplugged)."""
 

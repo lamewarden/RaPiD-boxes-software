@@ -30,10 +30,8 @@ def test_round_trip_custom_values():
             autofocusEnabled=False,
             focusDistance=4.5,
             grayscale=False,
-            awbRedGain=1.5,
-            awbBlueGain=2.5,
             jpegQuality=80,
-            settleSeconds=2.0,
+            zoom=2.4,
         ),
     )
     restored = config_xml.parse(config_xml.serialize(original))
@@ -57,10 +55,8 @@ def test_round_trip_growth_values():
             autofocusEnabled=True,
             focusDistance=0.0,
             grayscale=True,
-            awbRedGain=2.0,
-            awbBlueGain=1.0,
             jpegQuality=90,
-            settleSeconds=1.5,
+            zoom=1.0,
         ),
     )
     restored = config_xml.parse(config_xml.serialize(original))
@@ -103,6 +99,20 @@ def test_parse_v2_file_without_illumination_or_leds_elements():
     assert restored.photoIlluminationSource == "ir"
     assert restored.leds == LedSettings()
     assert restored.ir == IrSettings()  # <ir> absent too -> defaults
+
+
+def test_parse_v4_file_without_zoom_attribute():
+    """v4 files (written before AWB/settle were dropped and zoom was added)
+    have <camera awbRedGain=... awbBlueGain=... settleSeconds=...> but no
+    zoom attribute. The stale attributes are simply ignored; a missing zoom
+    defaults to 1.0 (no crop) rather than failing to parse."""
+    xml_bytes = b"""<?xml version='1.0' encoding='utf-8'?>
+<experimentConfig version="4" protocol="growth"><phases><growth dayLengthHours="16" experimentLengthDays="14" /></phases><light intervalMinutes="30.0" dayIntensity="25"><spectrum>white</spectrum></light><illumination source="ir"/><ir pins="26,23"/><leds pixelCount="70" pixelOrder="GRBW" topSegment="22,64" lateralSegment="0,21" spiHz="6400000" stride="1"/><camera width="2304" height="1296" exposureMicroseconds="3500000" iso="100" autofocusEnabled="true" focusDistance="0.0" grayscale="true" awbRedGain="2.0" awbBlueGain="1.0" jpegQuality="92" settleSeconds="1.0" /></experimentConfig>"""
+
+    restored = config_xml.parse(xml_bytes)
+
+    assert restored.camera.zoom == 1.0
+    assert restored.camera.exposureMicroseconds == 3_500_000
 
 
 def test_round_trip_ir_pins():

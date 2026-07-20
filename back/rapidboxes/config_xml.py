@@ -15,6 +15,10 @@ element is missing from an older file:
   v3  moved it to a shared <illumination> element (it applies to Tropism dark
       captures too) and added a <leds> snapshot.
   v4  added an <ir> snapshot, completing the DeviceSettings coverage.
+  v5  dropped <camera awbRedGain/awbBlueGain/settleSeconds> -- AWB is now
+      fixed, settle is derived from exposure, neither is user-tunable -- and
+      added <camera zoom>. Older files' awb/settle attributes are simply
+      ignored; a missing zoom defaults to 1.0 (no crop).
 """
 from __future__ import annotations
 
@@ -26,7 +30,7 @@ _BOOL = {"true": True, "false": False}
 
 
 def serialize(config: SavedExperimentConfig) -> bytes:
-    root = ET.Element("experimentConfig", version="4", protocol=config.protocol)
+    root = ET.Element("experimentConfig", version="5", protocol=config.protocol)
 
     phases = ET.SubElement(root, "phases")
 
@@ -82,10 +86,8 @@ def serialize(config: SavedExperimentConfig) -> bytes:
         autofocusEnabled=str(cam.autofocusEnabled).lower(),
         focusDistance=str(cam.focusDistance),
         grayscale=str(cam.grayscale).lower(),
-        awbRedGain=str(cam.awbRedGain),
-        awbBlueGain=str(cam.awbBlueGain),
         jpegQuality=str(cam.jpegQuality),
-        settleSeconds=str(cam.settleSeconds),
+        zoom=str(cam.zoom),
     )
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -160,10 +162,8 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         ),
         focusDistance=float(cam_el.get("focusDistance", str(defaults.focusDistance))),
         grayscale=_BOOL.get(cam_el.get("grayscale", str(defaults.grayscale).lower()), defaults.grayscale),
-        awbRedGain=float(cam_el.get("awbRedGain", str(defaults.awbRedGain))),
-        awbBlueGain=float(cam_el.get("awbBlueGain", str(defaults.awbBlueGain))),
         jpegQuality=int(cam_el.get("jpegQuality", str(defaults.jpegQuality))),
-        settleSeconds=float(cam_el.get("settleSeconds", str(defaults.settleSeconds))),
+        zoom=float(cam_el.get("zoom", str(defaults.zoom))),
     )
 
     spectra = [el.text for el in light.findall("spectrum") if el.text] if light is not None else ["white"]

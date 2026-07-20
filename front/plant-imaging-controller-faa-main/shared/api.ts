@@ -115,10 +115,10 @@ export interface CameraSettings {
   autofocusEnabled: boolean;
   focusDistance: number;
   grayscale: boolean;
-  awbRedGain: number;
-  awbBlueGain: number;
   jpegQuality: number;
-  settleSeconds: number;
+  /** Digital zoom 1-5x: center-crop to 1/zoom of the frame, scaled back up to
+   *  width x height. Applied to every capture, not just a preview. */
+  zoom: number;
 }
 
 export interface LedSettings {

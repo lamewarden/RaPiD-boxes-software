@@ -9,8 +9,8 @@ import io
 import logging
 import time
 
-from ..models import CameraSettings
-from .base import CameraBackend, CameraUnavailableError
+from ..models import AWB_BLUE_GAIN, AWB_RED_GAIN, CameraSettings, settle_seconds_for
+from .base import CameraBackend, CameraUnavailableError, zoom_crop_box
 
 log = logging.getLogger("rapidboxes.camera")
 
@@ -40,7 +40,7 @@ class Picamera2Camera(CameraBackend):
             "AwbEnable": False,
             "ExposureTime": int(s.exposureMicroseconds),
             "AnalogueGain": max(1.0, s.iso / 100.0),
-            "ColourGains": (s.awbRedGain, s.awbBlueGain),
+            "ColourGains": (AWB_RED_GAIN, AWB_BLUE_GAIN),
             "Saturation": 0.0 if s.grayscale else 1.0,
         }
         if s.autofocusEnabled:
@@ -74,11 +74,25 @@ class Picamera2Camera(CameraBackend):
         if not self._configured:
             self.configure(self._settings)
 
+    @staticmethod
+    def _zoomed_frame(arr, settings: CameraSettings):
+        """Crop `arr` to `settings.zoom` and scale back to width x height, so
+        every saved image is the configured size regardless of framing."""
+        from PIL import Image  # available on-device too
+
+        img = Image.fromarray(arr).convert("RGB")
+        img = img.crop(zoom_crop_box(settings.width, settings.height, settings.zoom))
+        return img.resize((settings.width, settings.height), Image.LANCZOS)
+
     def capture_file(self, path: str) -> None:
         self._ensure()
-        # Let manual exposure/AWB settle before the still.
-        time.sleep(max(0.0, self._settings.settleSeconds))
-        self._cam.capture_file(path)
+        # Let a just-changed exposure/AWB settle before the still.
+        time.sleep(settle_seconds_for(self._settings.exposureMicroseconds))
+        if self._settings.zoom <= 1.0:
+            self._cam.capture_file(path)
+        else:
+            arr = self._cam.capture_array("main")
+            self._zoomed_frame(arr, self._settings).save(path, "JPEG", quality=self._settings.jpegQuality)
         log.info("captured %s", path)
 
     def capture_jpeg(self, zoom: int = 1) -> bytes:
@@ -98,12 +112,10 @@ class Picamera2Camera(CameraBackend):
         return buf.getvalue()
 
     def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
-        from PIL import Image  # available on-device too
-
         self.configure(settings)
-        time.sleep(max(0.0, settings.settleSeconds))
+        time.sleep(settle_seconds_for(settings.exposureMicroseconds))
         arr = self._cam.capture_array("main")
-        img = Image.fromarray(arr).convert("RGB")
+        img = self._zoomed_frame(arr, settings)
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=settings.jpegQuality)
         return buf.getvalue()

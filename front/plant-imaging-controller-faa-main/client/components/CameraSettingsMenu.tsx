@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Camera, Check, RotateCcw, X, ZoomIn } from "lucide-react";
+import { Camera, Check, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
 import ParameterControl from "@/components/ParameterControl";
 import SegmentedCard from "@/components/SegmentedCard";
@@ -12,6 +12,7 @@ import {
   positionToExposure,
   stepExposure,
 } from "@/lib/exposure";
+import { applyZoomStickiness, formatZoom, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from "@/lib/zoom";
 import {
   EXPOSURE_PROFILES,
   type CameraSettings,
@@ -24,6 +25,9 @@ import {
  * back/rapidboxes/models.py CameraSettings — keep the two in sync.
  * The backend also resets the persisted camera settings to these values at
  * every process start, so in-session tweaks never carry over to a new session.
+ * AWB and settle time are not here: AWB is fixed in the backend (the sensor
+ * doesn't need per-experiment tuning), and settle time is derived from
+ * exposure — neither is user-configurable any more.
  */
 const DEFAULT_CAMERA: CameraSettings = {
   width: 2304,
@@ -33,10 +37,8 @@ const DEFAULT_CAMERA: CameraSettings = {
   autofocusEnabled: true,
   focusDistance: 0.0,
   grayscale: true,
-  awbRedGain: 2.0,
-  awbBlueGain: 1.0,
   jpegQuality: 92,
-  settleSeconds: 1.0,
+  zoom: 1.0,
 };
 
 /** Defaults for the active light source — exposure is tied to it, so a reset
@@ -69,7 +71,6 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
   const [saving, setSaving] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
   const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
-  const [testZoom, setTestZoom] = useState<1 | 2>(1);
   const { status } = useExperimentStatus();
   const locked = status?.state === "running" || status?.state === "paused";
   const manualFocusDisabled = camera.autofocusEnabled;
@@ -95,13 +96,12 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
 
   const patch = (p: Partial<CameraSettings>) => setCamera((c) => ({ ...c, ...p }));
 
-  const handleTestPhoto = async (zoom: 1 | 2) => {
+  const handleTestPhoto = async () => {
     if (takingPhoto) return;
     setTakingPhoto(true);
     try {
       const blob = await api.testPhotoWithSettings(camera);
       setTestPhotoUrl(URL.createObjectURL(blob));
-      setTestZoom(zoom);
     } catch (e) {
       toast.error(`Could not take test photo: ${(e as Error).message}`);
     } finally {
@@ -264,46 +264,23 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               onDecrement={() => patch({ focusDistance: clamp(camera.focusDistance - 0.1, 0, 32) })}
             />
 
+            {/* Continuous 1x-5x with a magnetic snap at each integer: drag
+                near 3x and it locks to exactly 3x, pull further and it moves
+                freely (3.2x, 4.5x, ...). Center-crops every capture and
+                scales back to width x height, so framing tightens without
+                changing the saved image dimensions. */}
             <ParameterControl
-              label="Settle Time"
-              value={`${camera.settleSeconds.toFixed(1)}s`}
-              valueColor="#C27AFF"
-              sliderColor="#C27AFF"
-              sliderValue={camera.settleSeconds}
-              sliderMin={0}
-              sliderMax={30}
-              sliderStep={0.5}
-              onSliderChange={(v) => patch({ settleSeconds: v })}
-              onIncrement={() => patch({ settleSeconds: clamp(camera.settleSeconds + 0.5, 0, 30) })}
-              onDecrement={() => patch({ settleSeconds: clamp(camera.settleSeconds - 0.5, 0, 30) })}
-            />
-
-            <ParameterControl
-              label="AWB Red Gain"
-              value={camera.awbRedGain.toFixed(1)}
-              valueColor="#FB2C36"
-              sliderColor="#FB2C36"
-              sliderValue={camera.awbRedGain}
-              sliderMin={0}
-              sliderMax={8}
-              sliderStep={0.1}
-              onSliderChange={(v) => patch({ awbRedGain: v })}
-              onIncrement={() => patch({ awbRedGain: clamp(camera.awbRedGain + 0.1, 0, 8) })}
-              onDecrement={() => patch({ awbRedGain: clamp(camera.awbRedGain - 0.1, 0, 8) })}
-            />
-
-            <ParameterControl
-              label="AWB Blue Gain"
-              value={camera.awbBlueGain.toFixed(1)}
-              valueColor="#51A2FF"
-              sliderColor="#51A2FF"
-              sliderValue={camera.awbBlueGain}
-              sliderMin={0}
-              sliderMax={8}
-              sliderStep={0.1}
-              onSliderChange={(v) => patch({ awbBlueGain: v })}
-              onIncrement={() => patch({ awbBlueGain: clamp(camera.awbBlueGain + 0.1, 0, 8) })}
-              onDecrement={() => patch({ awbBlueGain: clamp(camera.awbBlueGain - 0.1, 0, 8) })}
+              label="Zoom"
+              value={formatZoom(camera.zoom)}
+              valueColor="#7BF1A8"
+              sliderColor="#7BF1A8"
+              sliderValue={camera.zoom}
+              sliderMin={ZOOM_MIN}
+              sliderMax={ZOOM_MAX}
+              sliderStep={ZOOM_STEP}
+              onSliderChange={(v) => patch({ zoom: applyZoomStickiness(v) })}
+              onIncrement={() => patch({ zoom: applyZoomStickiness(camera.zoom + 0.1) })}
+              onDecrement={() => patch({ zoom: applyZoomStickiness(camera.zoom - 0.1) })}
             />
 
             <div className="flex h-[74px] flex-col justify-between gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
@@ -312,6 +289,8 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               </div>
               <p className="text-[10px] leading-[13px] text-app-text-secondary">
                 Autofocus uses continuous tracking. In manual mode, focus distance 0.0 means infinity.
+                White balance is fixed and settle time follows exposure automatically — neither needs
+                tuning on this sensor.
               </p>
             </div>
           </div>
@@ -319,33 +298,21 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
       </div>
 
       <div className="flex items-center gap-2 border-t border-app-border-primary bg-app-bg-secondary p-2">
-        <div className="flex overflow-hidden rounded-[10px] border border-app-border-primary">
-          <button
-            onClick={() => handleTestPhoto(1)}
-            disabled={loading || takingPhoto || locked}
-            title={locked ? "Cannot take a test photo while an experiment is running" : undefined}
-            className="flex items-center gap-2 bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Camera className="h-[16px] w-[16px]" strokeWidth={1.5} />
-            <span className="text-[12px] font-bold uppercase tracking-[1px]">
-              {takingPhoto ? "Capturing…" : "Test Photo"}
-            </span>
-          </button>
-          <div className="w-px bg-app-border-primary" />
-          <button
-            onClick={() => handleTestPhoto(2)}
-            disabled={loading || takingPhoto || locked}
-            title={
-              locked
-                ? "Cannot take a test photo while an experiment is running"
-                : "Take a test photo and view it zoomed in 2x"
-            }
-            className="flex items-center gap-1 bg-app-bg-tertiary px-3 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ZoomIn className="h-[14px] w-[14px]" strokeWidth={1.5} />
-            <span className="text-[12px] font-black uppercase tracking-[1px]">2x</span>
-          </button>
-        </div>
+        <button
+          onClick={handleTestPhoto}
+          disabled={loading || takingPhoto || locked}
+          title={
+            locked
+              ? "Cannot take a test photo while an experiment is running"
+              : "Preview a capture at the current camera and illumination settings, including zoom"
+          }
+          className="flex items-center gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Camera className="h-[16px] w-[16px]" strokeWidth={1.5} />
+          <span className="text-[12px] font-bold uppercase tracking-[1px]">
+            {takingPhoto ? "Capturing…" : "Test Photo"}
+          </span>
+        </button>
 
         <button
           onClick={() => setCamera(defaultCameraFor(source))}
@@ -382,23 +349,12 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
           >
             <X className="h-[20px] w-[20px]" strokeWidth={1.5} />
           </button>
-          {testZoom === 2 ? (
-            <div className="h-full w-full overflow-auto" onClick={(e) => e.stopPropagation()}>
-              <img
-                src={testPhotoUrl}
-                alt="Test capture, zoomed 2x"
-                className="mx-auto"
-                style={{ width: "200%", maxWidth: "none" }}
-              />
-            </div>
-          ) : (
-            <img
-              src={testPhotoUrl}
-              alt="Test capture"
-              className="max-h-[88%] max-w-[92%] rounded-lg object-contain"
-              onClick={(e) => e.stopPropagation()}
-            />
-          )}
+          <img
+            src={testPhotoUrl}
+            alt="Test capture"
+            className="max-h-[88%] max-w-[92%] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </>
