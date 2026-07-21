@@ -196,10 +196,10 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               onDecrement={() => patch({ jpegQuality: clamp(camera.jpegQuality - 1, 40, 100) })}
             />
 
-            {/* Range and curve follow the illumination source: a 1-10s linear
-                sweep for IR, a 0.01-0.5s log sweep for the RGBW flash. */}
+            {/* Range and curve follow the illumination source: IR snaps 0.2–10 s
+                in 0.2 s steps; RGBW is a 0.01–0.5 s log sweep. */}
             <ParameterControl
-              label={`Exposure — ${source === "ir" ? "IR 1–10 s" : "RGBW 10–500 ms"}`}
+              label={`Exposure — ${source === "ir" ? "IR 0.2–10 s · 0.2 s steps" : "RGBW 10–500 ms"}`}
               value={formatExposure(camera.exposureMicroseconds)}
               valueColor="#2B7FFF"
               sliderColor="#2B7FFF"

@@ -141,7 +141,7 @@ export default function IlluminationSettingsMenu() {
                 Exposure follows the source: saving switches the camera to{" "}
                 {formatExposure(EXPOSURE_PROFILES[source].default)} and rescales the Camera
                 exposure slider to{" "}
-                {source === "ir" ? "1–10 s" : "10–500 ms"}. IR needs a long integration; the
+                {source === "ir" ? "0.2–10 s" : "10–500 ms"}. IR needs a long integration; the
                 RGBW flash does not.
               </p>
             </div>

@@ -31,7 +31,9 @@ PHOTO_FLASH_INTENSITY = 10
 # source is selected. Keep in sync with EXPOSURE_PROFILES in front/shared/api.ts
 # (which adds the slider scale — a UI-only concern).
 EXPOSURE_PROFILES = {
-    "ir": {"default": 3_500_000, "min": 1_000_000, "max": 10_000_000},
+    # IR UI: discrete 0.2 s notches from 0.2–10 s (see front exposure.ts).
+    # Default 3.6 s sits on that grid (3.5 s would fall between notches).
+    "ir": {"default": 3_600_000, "min": 200_000, "max": 10_000_000},
     "rgbw": {"default": 100_000, "min": 10_000, "max": 500_000},
 }
 

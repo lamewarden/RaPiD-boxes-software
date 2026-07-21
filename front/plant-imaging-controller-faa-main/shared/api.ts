@@ -144,7 +144,8 @@ export interface ExposureProfile {
   /**
    * How slider travel maps to exposure. RGBW is logarithmic because the useful
    * values bunch at the short end — this gives 0.01–0.1s most of the track and
-   * compresses 0.2–0.5s. IR is a plain linear 1–10s sweep.
+   * compresses 0.2–0.5s. IR is discrete 0.2 s notches from 0.2–10 s (see
+   * client/lib/exposure.ts); `scale: "linear"` here means equal notch spacing.
    */
   scale: "linear" | "log";
 }
@@ -155,7 +156,8 @@ export interface ExposureProfile {
  * back/rapidboxes/models.py, which enforces default/min/max server-side.
  */
 export const EXPOSURE_PROFILES: Record<PhotoIlluminationSource, ExposureProfile> = {
-  ir: { default: 3_500_000, min: 1_000_000, max: 10_000_000, scale: "linear" },
+  // Default 3.6 s sits on the 0.2 s IR notch grid (3.5 s would fall between notches).
+  ir: { default: 3_600_000, min: 200_000, max: 10_000_000, scale: "linear" },
   rgbw: { default: 100_000, min: 10_000, max: 500_000, scale: "log" },
 };
 
