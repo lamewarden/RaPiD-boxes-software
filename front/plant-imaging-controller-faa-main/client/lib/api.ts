@@ -42,6 +42,7 @@ export const api = {
   pause: () => jsonFetch<ExperimentStatus>("/api/experiments/current/pause", { method: "POST" }),
   resume: () => jsonFetch<ExperimentStatus>("/api/experiments/current/resume", { method: "POST" }),
   stop: () => jsonFetch<ExperimentStatus>("/api/experiments/current/stop", { method: "POST" }),
+  abort: () => jsonFetch<ExperimentStatus>("/api/experiments/current/abort", { method: "POST" }),
   history: () => jsonFetch<HistoryEntry[]>("/api/experiments/history"),
   experimentConfig: (id: string) =>
     jsonFetch<SavedExperimentConfig>(`/api/experiments/${id}/config`),

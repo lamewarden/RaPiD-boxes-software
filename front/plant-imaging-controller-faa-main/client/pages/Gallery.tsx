@@ -1,15 +1,25 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { api } from "@/lib/api";
 import type { ImageInfo } from "@shared/api";
 
+type GalleryNavState = {
+  experimentId?: string | null;
+  returnTo?: string;
+};
+
 export default function Gallery() {
+  const location = useLocation();
+  const navState = (location.state as GalleryNavState | null) ?? null;
+  const experimentId = navState?.experimentId ?? undefined;
+  const returnTo = navState?.returnTo ?? "/";
+
   const { data, isLoading } = useQuery({
-    queryKey: ["images"],
-    queryFn: () => api.images(),
+    queryKey: ["images", experimentId ?? "current"],
+    queryFn: () => api.images(experimentId),
     refetchInterval: 5000,
   });
   const [selected, setSelected] = useState<ImageInfo | null>(null);
@@ -20,16 +30,16 @@ export default function Gallery() {
       <div className="flex p-0.5 justify-between items-center self-stretch border-b border-app-border-primary bg-app-bg-secondary">
         <div className="flex items-center gap-1">
           <Link
-            to="/"
-            className="flex w-[160px] py-1.5 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+            to={returnTo}
+            className="flex min-w-[160px] px-3 py-1.5 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
           >
             <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-            <span className="text-white text-[13px] font-semibold">Close</span>
+            <span className="text-white text-[13px] font-semibold">Close gallery</span>
           </Link>
           <RunningExperimentButton />
         </div>
         <span className="px-3 text-[13px] font-semibold text-app-text-secondary">
-          {data?.experimentId ?? "No experiment"} · {images.length} images
+          {data?.experimentId ?? experimentId ?? "No experiment"} · {images.length} images
         </span>
       </div>
 

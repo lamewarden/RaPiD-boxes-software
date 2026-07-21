@@ -236,7 +236,7 @@ export default function TropismProgram() {
             valueColor={getColorForValue(interval, 120, "blue")}
             sliderColor="#2B7FFF"
             sliderValue={interval}
-            sliderMin={3}
+            sliderMin={1}
             sliderMax={120}
             onSliderChange={setInterval}
           />

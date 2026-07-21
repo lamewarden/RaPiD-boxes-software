@@ -224,6 +224,25 @@ class ExperimentRunner:
                 except Exception:
                     log.exception("experiment task error during stop")
 
+    async def abort(self) -> None:
+        """Stop the current run and delete its experiment folder (images included)."""
+        experiment_id = self.status.experimentId or (
+            self._exp_dir.experiment_id if self._exp_dir else None
+        )
+        await self.stop()
+        if experiment_id:
+            try:
+                self._storage.delete_experiment(experiment_id)
+            except Exception:
+                log.exception("failed to delete aborted experiment %s", experiment_id)
+        self._exp_dir = None
+        self._task = None
+        self.status = ExperimentStatus(
+            state=ExperimentState.idle,
+            message="aborted — experiment deleted",
+        )
+        await self._broadcast()
+
     async def shutdown(self) -> None:
         """Called on app shutdown: stop the run and release hardware."""
         await self.stop()

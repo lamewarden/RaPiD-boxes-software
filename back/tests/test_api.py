@@ -94,6 +94,30 @@ async def test_start_experiment_busy_after_start(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_abort_stops_and_deletes_experiment(client: AsyncClient, app_config: AppConfig):
+    config = TropismConfig(
+        experimentName="abort-me",
+        darkPhaseEnabled=True,
+        darkPhaseHours=0.05,
+        lateralIlluminationHours=0,
+        intervalMinutes=1,
+    )
+    res = await client.post("/api/experiments", json=config.model_dump())
+    assert res.status_code == 200
+    experiment_id = res.json()["experimentId"]
+    assert experiment_id
+    exp_dir = app_config.storage_root / experiment_id
+    assert exp_dir.is_dir()
+
+    res = await client.post("/api/experiments/current/abort")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["state"] == "idle"
+    assert not exp_dir.exists()
+    assert (await client.get("/api/experiments/history")).json() == []
+
+
+@pytest.mark.asyncio
 async def test_cannot_change_settings_while_running(client: AsyncClient, app_config: AppConfig):
     config = TropismConfig(
         experimentName="lock-test",

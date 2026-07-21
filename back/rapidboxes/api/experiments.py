@@ -40,6 +40,13 @@ async def stop(state: AppState = Depends(get_state)):
     return state.runner.status
 
 
+@router.post("/current/abort", response_model=ExperimentStatus)
+async def abort(state: AppState = Depends(get_state)):
+    """Stop the running experiment and delete its folder/images."""
+    await state.runner.abort()
+    return state.runner.status
+
+
 @router.get("/history")
 async def history(state: AppState = Depends(get_state)) -> List[dict]:
     out = []

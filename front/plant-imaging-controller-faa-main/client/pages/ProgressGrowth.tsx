@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Pause, Play, Square } from "lucide-react";
+import { Folder, Home, Pause, Play, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { restartAppToHome } from "@/lib/restartApp";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import type { ExperimentPhase } from "@shared/api";
 
@@ -24,7 +23,6 @@ export default function ProgressGrowth() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
   const summaryOpened = useRef(false);
-  const [restarting, setRestarting] = useState(false);
 
   const isPaused = status?.state === "paused";
   const isActive = status?.state === "running" || status?.state === "paused";
@@ -40,9 +38,10 @@ export default function ProgressGrowth() {
     status && status.totalSeconds > 0
       ? Math.min(100, (status.elapsedSeconds / status.totalSeconds) * 100)
       : 0;
+  const experimentId = status?.experimentId ?? null;
   const lastImageUrl =
-    status?.experimentId && status?.lastImageId
-      ? `/api/images/${status.experimentId}/${status.lastImageId}`
+    experimentId && status?.lastImageId
+      ? `/api/images/${experimentId}/${status.lastImageId}`
       : null;
   const dayLabel =
     status?.dayIndex != null && status?.totalDays != null
@@ -57,7 +56,7 @@ export default function ProgressGrowth() {
     navigate("/summary", {
       state: {
         programType: "growth",
-        experimentId: status?.experimentId ?? null,
+        experimentId,
         elapsed,
         imagesCaptured: captured,
       },
@@ -79,24 +78,43 @@ export default function ProgressGrowth() {
     openSummary();
   };
 
-  const handleClose = async () => {
-    if (restarting) return;
-    await restartAppToHome(setRestarting);
+  const handleAbort = async () => {
+    try {
+      await api.abort();
+    } catch {
+      /* ignore */
+    }
+    window.location.replace("/");
+  };
+
+  const openGallery = () => {
+    if (!experimentId) return;
+    navigate("/gallery", {
+      state: {
+        experimentId,
+        returnTo: "/progress-growth",
+      },
+    });
   };
 
   return (
     <div className="flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto bg-app-bg-primary">
       {/* Top nav */}
-      <div className="flex p-0.5 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full">
+      <div className="flex p-0.5 items-center self-stretch border-b border-app-border-primary bg-app-bg-secondary w-full gap-1">
         <button
-          onClick={handleClose}
-          disabled={restarting}
-          className="flex w-[199.25px] py-1.5 px-0 justify-center items-center gap-2 rounded-md border-r border-app-border-secondary bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
+          onClick={() => navigate("/")}
+          className="flex min-w-[140px] py-1.5 px-3 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors"
         >
-          <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-center text-[13px] font-semibold leading-5">
-            {restarting ? "Restarting..." : "Close"}
-          </span>
+          <Home className="w-[18px] h-[18px]" strokeWidth={1.5} />
+          <span className="text-white text-center text-[13px] font-semibold leading-5">Home</span>
+        </button>
+        <button
+          onClick={openGallery}
+          disabled={!experimentId}
+          className="flex min-w-[140px] py-1.5 px-3 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary hover:bg-app-border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Folder className="w-[18px] h-[18px]" strokeWidth={1.5} />
+          <span className="text-white text-center text-[13px] font-semibold leading-5">Gallery</span>
         </button>
       </div>
 
@@ -171,6 +189,14 @@ export default function ProgressGrowth() {
               >
                 <Square className="w-3 h-3" />
                 {isActive ? "Stop" : "Summary"}
+              </button>
+              <button
+                onClick={handleAbort}
+                disabled={!isActive && !experimentId}
+                className="flex items-center justify-center gap-1 px-2 py-1.5 bg-red-600 hover:bg-red-500 text-white font-semibold rounded text-xs transition-colors disabled:opacity-50"
+              >
+                <X className="w-3 h-3" />
+                Abort
               </button>
             </div>
           </div>

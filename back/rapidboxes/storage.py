@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -137,3 +138,15 @@ class Storage:
     def get_experiment(self, experiment_id: str) -> Optional[ExperimentDir]:
         p = self.root / _slug(experiment_id)
         return ExperimentDir(p) if p.is_dir() else None
+
+    def delete_experiment(self, experiment_id: str) -> bool:
+        """Remove an experiment folder and all its images. Returns True if deleted."""
+        exp = self.get_experiment(experiment_id)
+        if exp is None:
+            return False
+        resolved = exp.path.resolve()
+        root = self.root.resolve()
+        if resolved == root or root not in resolved.parents:
+            raise ValueError(f"refusing to delete path outside storage root: {resolved}")
+        shutil.rmtree(resolved)
+        return True
