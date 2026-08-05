@@ -6,41 +6,57 @@ Backs both the manual "Update" button (Settings -> General, via
 CLI: `python -m rapidboxes.updater apply --restart-on-success`).
 
 Safety:
-- Every git invocation is a fixed argument list passed to `subprocess.run`
-  (never `shell=True` / string interpolation), so there is no command
-  injection surface even though the branch name is config-controlled.
+- Every git/pip/npm invocation is a fixed argument list passed to
+  `subprocess.run` (never `shell=True` / string interpolation), so there is
+  no command injection surface even though the branch name is
+  config-controlled.
 - Only `git fetch` and `git merge --ff-only` are used to apply an update.
   A fast-forward is a strictly additive move of the local branch pointer; if
   the working tree is dirty or history has diverged, the merge is refused by
   git itself and we surface that as an error instead of falling back to
   anything destructive like `reset --hard`.
+- An update is refused outright (no fetch/merge attempted) while an
+  experiment is running/paused/finishing -- see `BUSY_EXPERIMENT_STATES`,
+  the in-process check in `api/update.py`, and `check_experiment_active_via_http`
+  for the CLI's out-of-process equivalent.
 """
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from .models import UpdateApplyResult, UpdateCheckResult
+from .models import ExperimentState, UpdateApplyResult, UpdateCheckResult
+
+# Experiment states that make an update unsafe to apply -- mirrors the
+# "busy" check in engine/runner.py's own start() guard.
+BUSY_EXPERIMENT_STATES = frozenset(
+    {ExperimentState.running.value, ExperimentState.paused.value, ExperimentState.finishing.value}
+)
 
 # Cap on how many "<hash> <subject>" lines we return from a check -- enough to
 # skim, not a changelog dump.
 _MAX_LOG_LINES = 10
 
 _GIT_TIMEOUT_S = 30
+# pip/npm can be slow, especially on a Pi -- generous but bounded so a hung
+# network call can't wedge the monthly timer (or a request thread) forever.
+_PIP_TIMEOUT_S = 600
+_NPM_TIMEOUT_S = 600
 
 _repo_root_cache: Optional[Path] = None
 
 
 class UpdaterError(RuntimeError):
-    """A git command failed, timed out, or git itself is unavailable."""
+    """A git/pip/npm command failed, timed out, or the executable is missing."""
 
 
-def _run_git(args: List[str], cwd: Path, timeout: int = _GIT_TIMEOUT_S) -> str:
-    """Run `git <args>` as a fixed argument list (no shell) and return stdout."""
+def _run_cmd(args: List[str], cwd: Path, timeout: int) -> str:
+    """Run a fixed argument list (no shell) and return stdout, or raise."""
     try:
         result = subprocess.run(
-            ["git", *args],
+            args,
             cwd=str(cwd),
             capture_output=True,
             text=True,
@@ -48,14 +64,19 @@ def _run_git(args: List[str], cwd: Path, timeout: int = _GIT_TIMEOUT_S) -> str:
             check=False,
         )
     except FileNotFoundError as e:
-        raise UpdaterError("git executable not found") from e
+        raise UpdaterError(f"{args[0]} not found") from e
     except subprocess.TimeoutExpired as e:
-        raise UpdaterError(f"git {' '.join(args)} timed out after {timeout}s") from e
+        raise UpdaterError(f"{' '.join(args)} timed out after {timeout}s") from e
 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        raise UpdaterError(detail or f"git {' '.join(args)} failed (exit {result.returncode})")
+        raise UpdaterError(detail or f"{' '.join(args)} failed (exit {result.returncode})")
     return result.stdout
+
+
+def _run_git(args: List[str], cwd: Path, timeout: int = _GIT_TIMEOUT_S) -> str:
+    """Run `git <args>` as a fixed argument list (no shell) and return stdout."""
+    return _run_cmd(["git", *args], cwd, timeout)
 
 
 def get_repo_root() -> Path:
@@ -67,6 +88,101 @@ def get_repo_root() -> Path:
     root = _run_git(["rev-parse", "--show-toplevel"], here).strip()
     _repo_root_cache = Path(root)
     return _repo_root_cache
+
+
+# ---------------------------------------------------------------------------
+# Post-pull rebuild: mirrors deploy/update.sh's "pip install ... && npm
+# install && npm run build" exactly, so there is one source of truth for how
+# this project is rebuilt after new code lands, whether that's a human
+# running update.sh by hand or the OTA path pulling automatically. Only the
+# half (backend/frontend) that actually changed is rebuilt.
+# ---------------------------------------------------------------------------
+
+
+def _changed_paths(before: str, after: str, repo: Path) -> List[str]:
+    out = _run_git(["diff", "--name-only", f"{before}..{after}"], repo)
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def _needs_backend_rebuild(paths: List[str]) -> bool:
+    # deploy/install.sh and deploy/update.sh install the backend as a normal
+    # (non-editable) package -- `pip install "$BACK_DIR[pi]"` -- so a running
+    # process is on a *copy* of back/rapidboxes in site-packages. Any change
+    # under back/ (not just pyproject.toml) needs a reinstall to take effect.
+    return any(p == "back" or p.startswith("back/") for p in paths)
+
+
+def _needs_frontend_rebuild(paths: List[str]) -> bool:
+    return any(p == "front" or p.startswith("front/") for p in paths)
+
+
+def _venv_pip() -> Path:
+    """pip alongside the interpreter currently running this process.
+
+    systemd's ExecStart (both rapidboxes.service and rapidboxes-update.service)
+    points at `@VENV@/bin/python`, so `sys.executable` *is* the venv this app
+    was installed into -- more robust than assuming a fixed `back/.venv` path.
+    """
+    return Path(sys.executable).resolve().parent / "pip"
+
+
+def _find_front_dir(repo: Path) -> Optional[Path]:
+    """Mirror deploy/update.sh's `find front -maxdepth 3 -name package.json`."""
+    front_root = repo / "front"
+    if not front_root.is_dir():
+        return None
+    matches = sorted(front_root.glob("package.json"))
+    matches += sorted(front_root.glob("*/package.json"))
+    matches += sorted(front_root.glob("*/*/package.json"))
+    return matches[0].parent if matches else None
+
+
+def _rebuild_backend(repo: Path) -> None:
+    back_dir = repo / "back"
+    pip = _venv_pip()
+    # Same as deploy/update.sh: `pip install "$BACK_DIR[pi]"` (the Pi hardware
+    # extras), not "[dev]" -- this is the production deploy path.
+    _run_cmd([str(pip), "install", f"{back_dir}[pi]"], repo, timeout=_PIP_TIMEOUT_S)
+
+
+def _rebuild_frontend(repo: Path) -> None:
+    front_dir = _find_front_dir(repo)
+    if front_dir is None:
+        raise UpdaterError("could not locate the front-end project (no package.json under front/)")
+    # Same as deploy/update.sh.
+    _run_cmd(["npm", "install", "--no-audit", "--no-fund"], front_dir, timeout=_NPM_TIMEOUT_S)
+    _run_cmd(["npm", "run", "build"], front_dir, timeout=_NPM_TIMEOUT_S)
+
+
+def _rebuild_after_pull(before: str, after: str, repo: Path) -> Tuple[str, str]:
+    """Returns (rebuildStatus, rebuildMessage) for UpdateApplyResult.
+
+    Best-effort change detection: if `git diff --name-only` itself fails for
+    some reason, fail safe by rebuilding both rather than silently skipping.
+    """
+    try:
+        changed = _changed_paths(before, after, repo)
+        needs_backend = _needs_backend_rebuild(changed)
+        needs_frontend = _needs_frontend_rebuild(changed)
+    except UpdaterError:
+        changed = []
+        needs_backend = True
+        needs_frontend = True
+
+    if not needs_backend and not needs_frontend:
+        return "skipped", "No backend or frontend changes; nothing to rebuild."
+
+    done: List[str] = []
+    try:
+        if needs_backend:
+            _rebuild_backend(repo)
+            done.append("backend deps")
+        if needs_frontend:
+            _rebuild_frontend(repo)
+            done.append("frontend build")
+        return "ok", f"Rebuilt: {', '.join(done)}."
+    except UpdaterError as e:
+        return "failed", f"Pulled new code but rebuild failed after {', '.join(done) or 'nothing'}: {e}"
 
 
 def check_for_update(branch: str, repo_root: Optional[Path] = None) -> UpdateCheckResult:
@@ -122,6 +238,17 @@ def apply_update(branch: str, repo_root: Optional[Path] = None) -> UpdateApplyRe
     impossible -- fixing that is a human/manual-deploy decision, never an
     automatic `reset --hard`.
 
+    On a successful fast-forward, rebuilds whichever half (backend deps /
+    frontend build) actually changed -- see `_rebuild_after_pull` -- and
+    reports that separately via rebuildStatus/rebuildMessage, since a pull
+    that succeeded but whose rebuild failed leaves the process on mismatched
+    code and deps, a worse state than a clean refusal.
+
+    Does NOT check whether an experiment is active -- callers (the API
+    endpoint / the CLI's `main()`) must gate on that themselves first, since
+    only they know how to observe live state (in-process vs. over loopback
+    HTTP). See `check_experiment_active_via_http` for the CLI's version.
+
     `repo_root` defaults to the real repo (autodetected via `git rev-parse
     --show-toplevel`); tests pass a throwaway repo instead.
     """
@@ -160,11 +287,15 @@ def apply_update(branch: str, repo_root: Optional[Path] = None) -> UpdateApplyRe
                 toCommit=after[:8],
             )
 
+        rebuild_status, rebuild_message = _rebuild_after_pull(before, after, repo)
+
         return UpdateApplyResult(
             status="updated",
             message=f"Updated {before[:8]} -> {after[:8]}.",
             fromCommit=before[:8],
             toCommit=after[:8],
+            rebuildStatus=rebuild_status,
+            rebuildMessage=rebuild_message,
         )
     except UpdaterError as e:
         return UpdateApplyResult(status="error", message=str(e))
@@ -193,6 +324,32 @@ def _trigger_restart(port: int) -> None:
         pass
 
 
+def check_experiment_active_via_http(port: int, timeout: float = 5.0) -> bool:
+    """Best-effort loopback check of whether an experiment is running.
+
+    The CLI (invoked by the systemd timer) is a *separate process* from the
+    running rapidboxes.service and has no direct access to the live
+    ExperimentRunner, so it asks the already-running server the same way the
+    kiosk UI does: GET /api/experiments/current (see api/experiments.py),
+    which returns the same ExperimentStatus.state the in-process API check
+    uses (api/update.py).
+
+    Any failure to reach it (server down, timeout, bad response) is treated
+    as "active" -- refuse to update -- since skipping one monthly update is
+    far cheaper than guessing wrong and interrupting a multi-day protocol.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/experiments/current")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode())
+        return body.get("state") in BUSY_EXPERIMENT_STATES
+    except Exception:
+        return True
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     import argparse
     import sys
@@ -206,8 +363,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--restart-on-success",
         action="store_true",
-        help="After a successful 'apply' that pulled new commits, POST "
-        "/api/system/restart-service to the locally running instance.",
+        help="After a successful 'apply' that pulled new commits (and whose "
+        "rebuild, if any, succeeded), POST /api/system/restart-service to "
+        "the locally running instance.",
     )
     args = parser.parse_args(argv)
 
@@ -218,10 +376,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(result.model_dump_json())
         return 1 if result.error else 0
 
+    # apply: refuse outright if an experiment looks active -- same "clean
+    # refusal, no partial state" pattern as the dirty-tree / diverged-history
+    # cases inside apply_update() itself. Persistent=true on the timer (plus
+    # next month's run) covers the case where this is skipped.
+    if check_experiment_active_via_http(config.port):
+        result = UpdateApplyResult(
+            status="experiment_active",
+            message="An experiment appears to be active (or its status could not "
+            "be verified); refusing to update.",
+        )
+        print(result.model_dump_json())
+        print(result.message, file=sys.stderr)
+        return 1
+
     result = apply_update(config.update_branch)
     print(result.model_dump_json())
 
     if result.status == "updated" and args.restart_on_success:
+        if result.rebuildStatus == "failed":
+            print(
+                f"warning: pull succeeded but rebuild failed ({result.rebuildMessage}); "
+                "NOT restarting -- code and installed deps are now mismatched, needs "
+                "manual attention (e.g. deploy/update.sh).",
+                file=sys.stderr,
+            )
+            return 2
         try:
             _trigger_restart(config.port)
         except Exception as e:  # noqa: BLE001 - report and exit non-zero, don't crash the timer

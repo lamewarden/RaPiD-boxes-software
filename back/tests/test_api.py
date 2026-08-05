@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
-from rapidboxes.models import TropismConfig, UpdateApplyResult, UpdateCheckResult
+from rapidboxes.models import ExperimentState, TropismConfig, UpdateApplyResult, UpdateCheckResult
 
 
 @pytest.fixture
@@ -84,6 +84,75 @@ async def test_update_apply_endpoint_delegates_to_updater(client: AsyncClient, m
     body = res.json()
     assert body["status"] == "updated"
     assert body["toCommit"] == "bbb"
+
+
+@pytest.mark.parametrize("state_value", ["running", "paused", "finishing"])
+@pytest.mark.asyncio
+async def test_update_apply_refused_while_experiment_busy(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    # "finishing" isn't currently reachable through the real experiment API
+    # (see engine/runner.py -- it's checked but never assigned yet), so this
+    # sets runner.status.state directly rather than driving it via HTTP.
+    called = {"n": 0}
+
+    def fake_apply(branch, repo_root=None):
+        called["n"] += 1
+        return UpdateApplyResult(status="updated", message="should not have been called")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/apply")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["status"] == "experiment_active"
+
+    assert called["n"] == 0
+
+
+@pytest.mark.parametrize("state_value", ["idle", "done", "error"])
+@pytest.mark.asyncio
+async def test_update_apply_allowed_while_experiment_not_active(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    def fake_apply(branch, repo_root=None):
+        return UpdateApplyResult(status="up_to_date", message="already current")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/apply")
+            assert res.status_code == 200
+            assert res.json()["status"] == "up_to_date"
+
+
+@pytest.mark.asyncio
+async def test_update_check_allowed_even_while_experiment_running(
+    app_config: AppConfig, monkeypatch
+):
+    # Read-only -- never gated on experiment state.
+    def fake_check(branch, repo_root=None):
+        return UpdateCheckResult(branch=branch, updateAvailable=True, commitsBehind=1)
+
+    monkeypatch.setattr("rapidboxes.api.update.check_for_update", fake_check)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState.running
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/api/system/update/check")
+            assert res.status_code == 200
+            assert res.json()["updateAvailable"] is True
 
 
 @pytest.mark.asyncio

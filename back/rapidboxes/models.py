@@ -323,10 +323,17 @@ class UpdateCheckResult(BaseModel):
 
 
 class UpdateApplyResult(BaseModel):
-    status: str  # "updated" | "up_to_date" | "error"
+    status: str  # "updated" | "up_to_date" | "error" | "experiment_active"
     message: str
     fromCommit: Optional[str] = None
     toCommit: Optional[str] = None
+    # Set only when status == "updated": whether the post-pull dependency /
+    # frontend-build step ran, and how it went. "failed" means the git pull
+    # succeeded but the running process is now on mismatched code/deps -- a
+    # worse state than a clean refusal, so callers must NOT treat this as a
+    # green light to restart (see updater.py).
+    rebuildStatus: Optional[str] = None  # None | "skipped" | "ok" | "failed"
+    rebuildMessage: Optional[str] = None
 
 
 class StartResponse(BaseModel):

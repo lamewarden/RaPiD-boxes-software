@@ -48,13 +48,28 @@ export default function UpdatePanel() {
     setPhase("applying");
     try {
       const result = await api.applyUpdate();
-      if (result.status === "error") {
+      if (result.status === "error" || result.status === "experiment_active") {
         toast.error(result.message);
         setPhase("available");
         return;
       }
       if (result.status === "up_to_date") {
         toast.success("Already up to date.");
+        setCheck(null);
+        setPhase("idle");
+        return;
+      }
+      // status === "updated"
+      if (result.rebuildStatus === "failed") {
+        // The git pull succeeded but the dependency/build step didn't --
+        // code and installed deps are now mismatched. Don't offer to
+        // restart into that; surface it clearly so a human can SSH in and
+        // finish the job (e.g. deploy/update.sh) instead.
+        toast.error(
+          `Update pulled but the rebuild failed: ${result.rebuildMessage ?? "unknown error"}. ` +
+            "Do not restart until this is resolved manually.",
+          { duration: 15000 },
+        );
         setCheck(null);
         setPhase("idle");
         return;
