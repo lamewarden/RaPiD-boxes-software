@@ -18,16 +18,23 @@ Safety:
 - An update is refused outright (no fetch/merge attempted) while an
   experiment is running/paused/finishing -- see `BUSY_EXPERIMENT_STATES`,
   the in-process check in `api/update.py`, and `check_experiment_active_via_http`
-  for the CLI's out-of-process equivalent.
+  for the CLI's out-of-process equivalent. The same gate applies to
+  `rollback_update()`.
+- Rollback moves the working tree with `git checkout --detach <commit>`,
+  never `git reset --hard` on the branch ref -- see `rollback_update` for
+  why.
 """
 from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from .models import ExperimentState, UpdateApplyResult, UpdateCheckResult
+from .config import get_config
+from .models import ExperimentState, UpdateApplyResult, UpdateCheckResult, UpdateHistoryEntry, VersionStatus
+from .update_history import append_entry, load_history
 
 # Experiment states that make an update unsafe to apply -- mirrors the
 # "busy" check in engine/runner.py's own start() guard.
@@ -88,6 +95,22 @@ def get_repo_root() -> Path:
     root = _run_git(["rev-parse", "--show-toplevel"], here).strip()
     _repo_root_cache = Path(root)
     return _repo_root_cache
+
+
+def _commit_datetime(commit: str, repo: Path) -> datetime:
+    """Best-effort "when was this commit made", for seeding history entries.
+
+    Used only when the history file has no entries yet (fresh install, or a
+    box that predates this feature) -- we don't actually know when the
+    current checkout was installed, so the commit's own commit-date is a much
+    better proxy for "how long has this been running" than `now()`, which
+    would make a freshly-seeded box always report ~0 uptime.
+    """
+    try:
+        raw = _run_git(["show", "-s", "--format=%cI", commit], repo).strip()
+        return datetime.fromisoformat(raw)
+    except Exception:
+        return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +253,12 @@ def check_for_update(branch: str, repo_root: Optional[Path] = None) -> UpdateChe
         return UpdateCheckResult(branch=branch, updateAvailable=False, error=str(e))
 
 
-def apply_update(branch: str, repo_root: Optional[Path] = None) -> UpdateApplyResult:
+def apply_update(
+    branch: str,
+    repo_root: Optional[Path] = None,
+    history_path: Optional[Path] = None,
+    trigger: str = "manual",
+) -> UpdateApplyResult:
     """`git fetch origin <branch>` then `git merge --ff-only origin/<branch>`.
 
     Refuses (returns status="error", changes nothing) if the working tree has
@@ -242,18 +270,23 @@ def apply_update(branch: str, repo_root: Optional[Path] = None) -> UpdateApplyRe
     frontend build) actually changed -- see `_rebuild_after_pull` -- and
     reports that separately via rebuildStatus/rebuildMessage, since a pull
     that succeeded but whose rebuild failed leaves the process on mismatched
-    code and deps, a worse state than a clean refusal.
+    code and deps, a worse state than a clean refusal. Also appends a
+    version-history entry (see update_history.py) recording the new commit,
+    when, and `trigger` ("manual" from the Settings button, "monthly" from
+    the CLI/timer) -- this is what powers the "running commit X for Y" /
+    rollback UI.
 
     Does NOT check whether an experiment is active -- callers (the API
     endpoint / the CLI's `main()`) must gate on that themselves first, since
     only they know how to observe live state (in-process vs. over loopback
     HTTP). See `check_experiment_active_via_http` for the CLI's version.
 
-    `repo_root` defaults to the real repo (autodetected via `git rev-parse
-    --show-toplevel`); tests pass a throwaway repo instead.
+    `repo_root` / `history_path` default to the real repo / configured
+    history file; tests pass throwaway paths instead.
     """
     try:
         repo = repo_root or get_repo_root()
+        hpath = history_path or get_config().update_history_path
         _run_git(["fetch", "origin", branch], repo)
 
         dirty = _run_git(["status", "--porcelain"], repo).strip()
@@ -289,9 +322,158 @@ def apply_update(branch: str, repo_root: Optional[Path] = None) -> UpdateApplyRe
 
         rebuild_status, rebuild_message = _rebuild_after_pull(before, after, repo)
 
+        append_entry(
+            hpath,
+            UpdateHistoryEntry(commit=after[:8], appliedAt=datetime.now(timezone.utc), trigger=trigger),
+        )
+
         return UpdateApplyResult(
             status="updated",
             message=f"Updated {before[:8]} -> {after[:8]}.",
+            fromCommit=before[:8],
+            toCommit=after[:8],
+            rebuildStatus=rebuild_status,
+            rebuildMessage=rebuild_message,
+        )
+    except UpdaterError as e:
+        return UpdateApplyResult(status="error", message=str(e))
+
+
+def get_version_status(history_path: Path, repo_root: Optional[Path] = None) -> VersionStatus:
+    """What's currently running, and (if any) what it can roll back to.
+
+    Lazily seeds `history_path` with a single "seed" entry for the current
+    HEAD if it has no entries yet -- a box that's never run an OTA update (or
+    is still on the very first install.sh checkout) has no prior entries, but
+    "how long has the current version been running" should still have an
+    answer. See `_commit_datetime` for why the seed's timestamp is the
+    commit's own date rather than "now".
+
+    Trusts the history file as the record of truth for what's "current" --
+    it does not reconcile against live git HEAD beyond the initial seed, so
+    an update applied outside this module (e.g. a manual `deploy/update.sh`
+    pull) won't be reflected here until the next apply/rollback through it.
+    """
+    try:
+        repo = repo_root or get_repo_root()
+        history = load_history(history_path)
+        if not history:
+            head = _run_git(["rev-parse", "HEAD"], repo).strip()
+            seeded = append_entry(
+                history_path,
+                UpdateHistoryEntry(commit=head[:8], appliedAt=_commit_datetime(head, repo), trigger="seed"),
+            )
+            history = [seeded]
+
+        current = history[-1]
+        previous = history[-2] if len(history) >= 2 else None
+        return VersionStatus(current=current, previous=previous)
+    except UpdaterError as e:
+        return VersionStatus(error=str(e))
+
+
+def rollback_update(history_path: Path, repo_root: Optional[Path] = None) -> UpdateApplyResult:
+    """Move the working tree back to the previous recorded commit.
+
+    Judgment call: this uses `git checkout --detach <commit>`, not
+    `git reset --hard <commit>` on the tracked branch. Weighed both:
+
+    - `reset --hard` would rewrite the branch ref (e.g. refs/heads/main)
+      itself backward. That's a bigger hammer than needed here, and it has a
+      nasty side effect: the *next* `apply_update()` (or the monthly timer)
+      fetches, compares local HEAD to origin/<branch>, and sees it's simply
+      "behind" by the exact commits we just rolled back through --
+      `merge --ff-only` would then happily fast-forward right back onto the
+      commit we were trying to get away from, silently undoing the rollback
+      on the very next check.
+    - `checkout --detach` instead moves only the *working tree* + HEAD to
+      that commit, leaving HEAD detached (not pointing at refs/heads/<branch>
+      at all). refs/heads/<branch> is untouched. A subsequent apply_update()
+      still fetches fine, but `git merge --ff-only origin/<branch>` from a
+      detached HEAD that isn't a fast-forward ancestor of origin/<branch>
+      fails correctly instead of silently reapplying the rolled-back commit
+      -- i.e. it fails the same safe way a diverged-history apply already
+      does. (Still worth flagging to the user: see the "risk" note surfaced
+      by the UI -- a human explicitly re-running "Update Now" after a
+      rollback, or the next monthly run once history has "moved on" past the
+      rolled-back commit, can still land back on it. This module doesn't try
+      to prevent that; it only avoids doing it *silently* on the very next
+      routine check.)
+
+    Refuses (no-op) if the working tree is dirty, or if there's no previous
+    entry recorded to roll back to. Does NOT check whether an experiment is
+    active -- same split of responsibility as apply_update(): callers gate
+    on that first.
+
+    Unlike apply_update(), this needs no network access -- the rollback
+    target is a commit this repo already has (it was HEAD before), so no
+    `git fetch` is required.
+    """
+    try:
+        repo = repo_root or get_repo_root()
+        history = load_history(history_path)
+
+        if not history:
+            # Mirror get_version_status()'s lazy seed so a box that calls
+            # rollback before ever calling check/apply/version still gets a
+            # sensible history file going forward -- but there is still
+            # nothing *previous* to offer.
+            head = _run_git(["rev-parse", "HEAD"], repo).strip()
+            append_entry(
+                history_path,
+                UpdateHistoryEntry(commit=head[:8], appliedAt=_commit_datetime(head, repo), trigger="seed"),
+            )
+            return UpdateApplyResult(
+                status="nothing_to_roll_back_to", message="No previous version recorded yet."
+            )
+
+        if len(history) < 2:
+            return UpdateApplyResult(
+                status="nothing_to_roll_back_to", message="No previous version recorded yet."
+            )
+
+        target_entry = history[-2]
+
+        dirty = _run_git(["status", "--porcelain"], repo).strip()
+        if dirty:
+            return UpdateApplyResult(
+                status="error",
+                message=(
+                    "Working tree has local changes; refusing to roll back. "
+                    "Resolve manually before retrying."
+                ),
+            )
+
+        before = _run_git(["rev-parse", "HEAD"], repo).strip()
+
+        try:
+            target_full = _run_git(["rev-parse", target_entry.commit], repo).strip()
+        except UpdaterError:
+            return UpdateApplyResult(
+                status="error",
+                message=(
+                    f"Recorded previous commit {target_entry.commit} no longer exists in "
+                    "this repo (it may have been garbage-collected)."
+                ),
+            )
+
+        try:
+            _run_git(["checkout", "--detach", target_full], repo)
+        except UpdaterError as e:
+            return UpdateApplyResult(status="error", message=f"Rollback checkout failed: {e}")
+
+        after = _run_git(["rev-parse", "HEAD"], repo).strip()
+
+        rebuild_status, rebuild_message = _rebuild_after_pull(before, after, repo)
+
+        append_entry(
+            history_path,
+            UpdateHistoryEntry(commit=after[:8], appliedAt=datetime.now(timezone.utc), trigger="rollback"),
+        )
+
+        return UpdateApplyResult(
+            status="rolled_back",
+            message=f"Rolled back {before[:8]} -> {after[:8]}.",
             fromCommit=before[:8],
             toCommit=after[:8],
             rebuildStatus=rebuild_status,
@@ -354,8 +536,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     import argparse
     import sys
 
-    from .config import get_config
-
     parser = argparse.ArgumentParser(
         description="RaPiD-boxes OTA updater (git fetch + fast-forward-only pull)."
     )
@@ -390,7 +570,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(result.message, file=sys.stderr)
         return 1
 
-    result = apply_update(config.update_branch)
+    result = apply_update(
+        config.update_branch, history_path=config.update_history_path, trigger="monthly"
+    )
     print(result.model_dump_json())
 
     if result.status == "updated" and args.restart_on_success:

@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from rapidboxes.updater import apply_update, check_for_update
+from rapidboxes.update_history import load_history
+from rapidboxes.updater import apply_update, check_for_update, get_version_status, rollback_update
 
 
 def _git(args, cwd: Path) -> str:
@@ -215,6 +216,170 @@ def test_apply_reports_rebuild_failure_distinctly_without_reverting_the_pull(
 
 
 # ---------------------------------------------------------------------------
+# Version history + rollback. `history_path` is always an explicit tmp_path
+# file here (never the real config default) so these tests can never touch a
+# developer's actual ~/rapidboxes/update_history.json.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_records_history_entry_on_success(remote_and_local, tmp_path):
+    remote, local = remote_and_local
+    remote_head = _commit(remote, "b.txt", "2", "second commit")
+    history_path = tmp_path / "history.json"
+
+    result = apply_update("main", repo_root=local, history_path=history_path)
+    assert result.status == "updated"
+
+    entries = load_history(history_path)
+    assert len(entries) == 1
+    assert entries[0].commit == remote_head[:8]
+    assert entries[0].trigger == "manual"  # default trigger
+
+
+def test_apply_records_the_trigger_it_was_given(remote_and_local, tmp_path):
+    remote, local = remote_and_local
+    _commit(remote, "b.txt", "2", "second commit")
+    history_path = tmp_path / "history.json"
+
+    result = apply_update("main", repo_root=local, history_path=history_path, trigger="monthly")
+    assert result.status == "updated"
+    assert load_history(history_path)[-1].trigger == "monthly"
+
+
+def test_apply_does_not_record_history_when_already_up_to_date(remote_and_local, tmp_path):
+    _remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+
+    result = apply_update("main", repo_root=local, history_path=history_path)
+    assert result.status == "up_to_date"
+    assert load_history(history_path) == []
+
+
+def test_version_status_seeds_when_no_history_exists_yet(remote_and_local, tmp_path):
+    _remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+    assert not history_path.exists()
+
+    status = get_version_status(history_path, repo_root=local)
+    assert status.error is None
+    assert status.current is not None
+    head = _git(["rev-parse", "HEAD"], local).strip()
+    assert status.current.commit == head[:8]
+    assert status.current.trigger == "seed"
+    assert status.previous is None
+
+    # Persisted, not just returned in-memory -- the next call (or the
+    # rollback path) sees the same seeded entry rather than re-seeding.
+    assert history_path.exists()
+    assert len(load_history(history_path)) == 1
+
+
+def test_version_status_reports_current_and_previous_after_two_applies(remote_and_local, tmp_path):
+    remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+
+    first_head = _commit(remote, "b.txt", "2", "first update")
+    apply_update("main", repo_root=local, history_path=history_path)
+
+    second_head = _commit(remote, "c.txt", "3", "second update")
+    apply_update("main", repo_root=local, history_path=history_path)
+
+    status = get_version_status(history_path, repo_root=local)
+    assert status.current.commit == second_head[:8]
+    assert status.previous is not None
+    assert status.previous.commit == first_head[:8]
+
+
+def test_rollback_moves_head_back_and_history_carries_a_computable_duration(
+    remote_and_local, tmp_path
+):
+    remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+
+    first_head = _commit(remote, "b.txt", "2", "first update")
+    apply_update("main", repo_root=local, history_path=history_path)
+    first_entry_time = load_history(history_path)[-1].appliedAt
+
+    second_head = _commit(remote, "c.txt", "3", "second update")
+    apply_update("main", repo_root=local, history_path=history_path)
+    second_entry_time = load_history(history_path)[-1].appliedAt
+
+    # Real, distinct timestamps -- a "ran for" duration downstream (UI
+    # subtracts these) is only meaningful if they actually differ.
+    assert first_entry_time < second_entry_time
+
+    result = rollback_update(history_path, repo_root=local)
+    assert result.status == "rolled_back"
+    assert result.toCommit == first_head[:8]
+
+    head = _git(["rev-parse", "HEAD"], local).strip()
+    assert head == first_head
+    assert (local / "b.txt").exists()
+    assert not (local / "c.txt").exists()
+    # Rollback moves the working tree via `checkout --detach`, not
+    # `reset --hard` on the branch -- refs/heads/main is untouched.
+    branch_tip = _git(["rev-parse", "refs/heads/main"], local).strip()
+    assert branch_tip == second_head
+
+    entries = load_history(history_path)
+    assert len(entries) == 3
+    assert entries[-1].commit == first_head[:8]
+    assert entries[-1].trigger == "rollback"
+
+    # get_version_status() now reports the rolled-back-to commit as current
+    # and the just-abandoned one as previous, with the original timestamp
+    # preserved -- so the UI can compute "ran for X" for the abandoned
+    # version from real data, not a guess.
+    status = get_version_status(history_path, repo_root=local)
+    assert status.current.commit == first_head[:8]
+    assert status.previous.commit == second_head[:8]
+    assert status.previous.appliedAt == second_entry_time
+
+
+def test_rollback_refuses_on_dirty_tree(remote_and_local, tmp_path):
+    remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+
+    _commit(remote, "b.txt", "2", "first update")
+    apply_update("main", repo_root=local, history_path=history_path)
+    _commit(remote, "c.txt", "3", "second update")
+    apply_update("main", repo_root=local, history_path=history_path)
+
+    (local / "b.txt").write_text("dirty, uncommitted")
+
+    result = rollback_update(history_path, repo_root=local)
+    assert result.status == "error"
+    assert "local changes" in result.message
+
+    # Nothing moved -- still on the second commit, dirty file untouched.
+    head = _git(["rev-parse", "HEAD"], local).strip()
+    assert (local / "c.txt").exists()
+    assert (local / "b.txt").read_text() == "dirty, uncommitted"
+
+
+def test_rollback_with_no_history_returns_nothing_to_roll_back_to(remote_and_local, tmp_path):
+    _remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+    assert not history_path.exists()
+
+    result = rollback_update(history_path, repo_root=local)
+    assert result.status == "nothing_to_roll_back_to"
+    assert "no previous version" in result.message.lower()
+
+
+def test_rollback_with_only_one_history_entry_returns_nothing_to_roll_back_to(
+    remote_and_local, tmp_path
+):
+    remote, local = remote_and_local
+    history_path = tmp_path / "history.json"
+    _commit(remote, "b.txt", "2", "first update")
+    apply_update("main", repo_root=local, history_path=history_path)
+
+    result = rollback_update(history_path, repo_root=local)
+    assert result.status == "nothing_to_roll_back_to"
+
+
+# ---------------------------------------------------------------------------
 # CLI: experiment-active gate + restart-on-rebuild-failure behaviour.
 # apply_update() itself is faked here (already covered above / by the
 # fast-forward tests) so these focus purely on main()'s control flow.
@@ -241,7 +406,7 @@ def test_cli_apply_refuses_when_experiment_active(monkeypatch, capsys, cli_confi
     monkeypatch.setattr(updater, "check_experiment_active_via_http", lambda port, timeout=5.0: True)
     called = {"n": 0}
 
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         called["n"] += 1
         return updater.UpdateApplyResult(status="updated", message="should not run")
 
@@ -258,7 +423,7 @@ def test_cli_apply_proceeds_when_experiment_not_active(monkeypatch, capsys, cli_
 
     monkeypatch.setattr(updater, "check_experiment_active_via_http", lambda port, timeout=5.0: False)
 
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         return updater.UpdateApplyResult(status="up_to_date", message="already current")
 
     monkeypatch.setattr(updater, "apply_update", fake_apply)
@@ -273,7 +438,7 @@ def test_cli_triggers_restart_after_successful_pull_and_rebuild(monkeypatch, cli
 
     monkeypatch.setattr(updater, "check_experiment_active_via_http", lambda port, timeout=5.0: False)
 
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         return updater.UpdateApplyResult(
             status="updated", message="ok", fromCommit="a", toCommit="b",
             rebuildStatus="ok", rebuildMessage="rebuilt",
@@ -293,7 +458,7 @@ def test_cli_does_not_restart_when_rebuild_failed(monkeypatch, capsys, cli_confi
 
     monkeypatch.setattr(updater, "check_experiment_active_via_http", lambda port, timeout=5.0: False)
 
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         return updater.UpdateApplyResult(
             status="updated", message="ok", fromCommit="a", toCommit="b",
             rebuildStatus="failed", rebuildMessage="npm blew up",
