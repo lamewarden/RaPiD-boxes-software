@@ -67,6 +67,12 @@ class AppConfig(BaseSettings):
     # blindly against origin/main.
     update_branch: str = "main"
 
+    # Record of applied OTA updates/rollbacks (see rapidboxes/update_history.py),
+    # used by Settings -> General -> Version to show "running commit X for Y"
+    # and to know what the "Roll back" button targets. Same directory
+    # convention as settings_path.
+    update_history_path: Path = Path.home() / "rapidboxes" / "update_history.json"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)

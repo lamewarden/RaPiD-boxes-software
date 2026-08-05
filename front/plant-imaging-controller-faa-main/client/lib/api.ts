@@ -11,6 +11,7 @@ import type {
   SystemInfo,
   UpdateApplyResult,
   UpdateCheckResult,
+  VersionStatus,
 } from "@shared/api";
 
 async function errorDetail(res: Response): Promise<string> {
@@ -60,6 +61,8 @@ export const api = {
   restartService: () => jsonFetch<{ status: string }>("/api/system/restart-service", { method: "POST" }),
   checkForUpdate: () => jsonFetch<UpdateCheckResult>("/api/system/update/check"),
   applyUpdate: () => jsonFetch<UpdateApplyResult>("/api/system/update/apply", { method: "POST" }),
+  versionStatus: () => jsonFetch<VersionStatus>("/api/system/update/version"),
+  rollbackUpdate: () => jsonFetch<UpdateApplyResult>("/api/system/update/rollback", { method: "POST" }),
   testPhotoWithSettings: async (settings: CameraSettings): Promise<Blob> => {
     const res = await fetch("/api/preview/test-photo", {
       method: "POST",

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Power } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { formatElapsed } from "@/lib/progress";
 import type { ImageInfo } from "@shared/api";
 
 export default function ExperimentSummary() {
@@ -48,13 +49,6 @@ export default function ExperimentSummary() {
     return `${system.storageRoot}/${experimentId}`;
   }, [system?.storageRoot, experimentId]);
 
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  };
-
   const handleClose = () => {
     // Do NOT restart the backend here. Killing uvicorn while the kiosk holds
     // WebSocket / MJPEG connections hangs the UI on "Restarting…" forever.
@@ -81,7 +75,7 @@ export default function ExperimentSummary() {
           <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2 text-center">
             <div className="text-app-text-muted text-[10px] font-bold uppercase">Total Time</div>
             <div className="text-[22px] font-black text-app-green tabular-nums leading-7">
-              {formatTime(elapsed)}
+              {formatElapsed(elapsed)}
             </div>
           </div>
           <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2 text-center">

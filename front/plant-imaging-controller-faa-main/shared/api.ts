@@ -105,6 +105,10 @@ export interface SystemInfo {
   diskFreeBytes: number;
   diskTotalBytes: number;
   cameraAvailable: boolean;
+  // Settings -> General -> SSH Access. Build the full command client-side
+  // (`ssh ${sshUser}@${ip}`) -- `ip` above is the one source of truth.
+  sshUser: string;
+  sshEnabled: boolean;
 }
 
 // OTA self-update (Settings -> General -> Update button).
@@ -119,15 +123,35 @@ export interface UpdateCheckResult {
 }
 
 export interface UpdateApplyResult {
-  status: "updated" | "up_to_date" | "error" | "experiment_active";
+  status:
+    | "updated"
+    | "up_to_date"
+    | "error"
+    | "experiment_active"
+    | "rolled_back"
+    | "nothing_to_roll_back_to";
   message: string;
   fromCommit: string | null;
   toCommit: string | null;
-  // Set only when status === "updated". "failed" means the pull itself
-  // succeeded but the post-pull dependency/build step did not -- code and
-  // installed deps are now mismatched, a worse state than a clean refusal.
+  // Set only when status is "updated" or "rolled_back". "failed" means the
+  // git move succeeded but the post-move dependency/build step did not --
+  // code and installed deps are now mismatched, a worse state than a clean
+  // refusal.
   rebuildStatus: "skipped" | "ok" | "failed" | null;
   rebuildMessage: string | null;
+}
+
+// One row in the OTA update history (Settings -> General -> Version).
+export interface UpdateHistoryEntry {
+  commit: string;
+  appliedAt: string; // ISO 8601
+  trigger: "manual" | "monthly" | "rollback" | "seed";
+}
+
+export interface VersionStatus {
+  current: UpdateHistoryEntry | null;
+  previous: UpdateHistoryEntry | null;
+  error: string | null;
 }
 
 export interface CameraSettings {

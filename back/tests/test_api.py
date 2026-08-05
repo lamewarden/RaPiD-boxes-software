@@ -1,6 +1,7 @@
 """FastAPI integration tests with simulated hardware."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,14 @@ from httpx import ASGITransport, AsyncClient
 
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
-from rapidboxes.models import ExperimentState, TropismConfig, UpdateApplyResult, UpdateCheckResult
+from rapidboxes.models import (
+    ExperimentState,
+    TropismConfig,
+    UpdateApplyResult,
+    UpdateCheckResult,
+    UpdateHistoryEntry,
+    VersionStatus,
+)
 
 
 @pytest.fixture
@@ -48,6 +56,15 @@ async def test_system_info(client: AsyncClient):
     assert "diskFreeBytes" in body
     assert body["cameraAvailable"] is True
 
+    # SSH info card (Settings -> General): sshUser should resolve to the
+    # real OS account running the tests on any POSIX box (dev laptop or CI),
+    # via pwd.getpwuid -- never blank. sshEnabled's actual value is
+    # environment-dependent (no systemd on most dev laptops), so only check
+    # its shape, not a specific value.
+    assert isinstance(body["sshUser"], str)
+    assert body["sshUser"] != ""
+    assert isinstance(body["sshEnabled"], bool)
+
 
 @pytest.mark.asyncio
 async def test_update_check_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
@@ -74,7 +91,7 @@ async def test_update_check_endpoint_delegates_to_updater(client: AsyncClient, m
 
 @pytest.mark.asyncio
 async def test_update_apply_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         return UpdateApplyResult(status="updated", message="ok", fromCommit="aaa", toCommit="bbb")
 
     monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
@@ -96,7 +113,7 @@ async def test_update_apply_refused_while_experiment_busy(
     # sets runner.status.state directly rather than driving it via HTTP.
     called = {"n": 0}
 
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         called["n"] += 1
         return UpdateApplyResult(status="updated", message="should not have been called")
 
@@ -120,7 +137,7 @@ async def test_update_apply_refused_while_experiment_busy(
 async def test_update_apply_allowed_while_experiment_not_active(
     app_config: AppConfig, monkeypatch, state_value: str
 ):
-    def fake_apply(branch, repo_root=None):
+    def fake_apply(branch, repo_root=None, **kwargs):
         return UpdateApplyResult(status="up_to_date", message="already current")
 
     monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
@@ -153,6 +170,81 @@ async def test_update_check_allowed_even_while_experiment_running(
             res = await ac.get("/api/system/update/check")
             assert res.status_code == 200
             assert res.json()["updateAvailable"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_version_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    entry = UpdateHistoryEntry(commit="abc12345", appliedAt=datetime.now(timezone.utc), trigger="manual")
+
+    def fake_version(history_path):
+        return VersionStatus(current=entry, previous=None)
+
+    monkeypatch.setattr("rapidboxes.api.update.get_version_status", fake_version)
+
+    res = await client.get("/api/system/update/version")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["current"]["commit"] == "abc12345"
+    assert body["previous"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_rollback_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    def fake_rollback(history_path):
+        return UpdateApplyResult(status="rolled_back", message="ok", fromCommit="bbb", toCommit="aaa")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    res = await client.post("/api/system/update/rollback")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "rolled_back"
+    assert body["toCommit"] == "aaa"
+
+
+@pytest.mark.parametrize("state_value", ["running", "paused", "finishing"])
+@pytest.mark.asyncio
+async def test_update_rollback_refused_while_experiment_busy(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    called = {"n": 0}
+
+    def fake_rollback(history_path):
+        called["n"] += 1
+        return UpdateApplyResult(status="rolled_back", message="should not have been called")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/rollback")
+            assert res.status_code == 200
+            assert res.json()["status"] == "experiment_active"
+
+    assert called["n"] == 0
+
+
+@pytest.mark.parametrize("state_value", ["idle", "done", "error"])
+@pytest.mark.asyncio
+async def test_update_rollback_allowed_while_experiment_not_active(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    def fake_rollback(history_path):
+        return UpdateApplyResult(status="nothing_to_roll_back_to", message="No previous version recorded yet.")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/rollback")
+            assert res.status_code == 200
+            assert res.json()["status"] == "nothing_to_roll_back_to"
 
 
 @pytest.mark.asyncio

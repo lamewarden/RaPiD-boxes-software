@@ -303,6 +303,12 @@ class SystemInfo(BaseModel):
     diskFreeBytes: int
     diskTotalBytes: int
     cameraAvailable: bool = True
+    # Settings -> General -> SSH Access. sshUser is the account `rapidboxes.
+    # service` runs as (User=@USER@ in deploy/rapidboxes.service) -- the same
+    # account SSH would log into. sshEnabled reflects whether the openssh
+    # server is actually reachable right now (see api/system.py).
+    sshUser: str = ""
+    sshEnabled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -323,17 +329,35 @@ class UpdateCheckResult(BaseModel):
 
 
 class UpdateApplyResult(BaseModel):
-    status: str  # "updated" | "up_to_date" | "error" | "experiment_active"
+    # "updated" | "up_to_date" | "error" | "experiment_active"
+    # | "rolled_back" | "nothing_to_roll_back_to" (rollback only)
+    status: str
     message: str
     fromCommit: Optional[str] = None
     toCommit: Optional[str] = None
-    # Set only when status == "updated": whether the post-pull dependency /
-    # frontend-build step ran, and how it went. "failed" means the git pull
-    # succeeded but the running process is now on mismatched code/deps -- a
-    # worse state than a clean refusal, so callers must NOT treat this as a
-    # green light to restart (see updater.py).
+    # Set only when status in ("updated", "rolled_back"): whether the
+    # post-move dependency / frontend-build step ran, and how it went.
+    # "failed" means the git move succeeded but the running process is now on
+    # mismatched code/deps -- a worse state than a clean refusal, so callers
+    # must NOT treat this as a green light to restart (see updater.py).
     rebuildStatus: Optional[str] = None  # None | "skipped" | "ok" | "failed"
     rebuildMessage: Optional[str] = None
+
+
+class UpdateHistoryEntry(BaseModel):
+    """One row in update_history.json: a commit that became HEAD, and why."""
+
+    commit: str  # short hash (8 chars), consistent with fromCommit/toCommit above
+    appliedAt: datetime
+    trigger: str  # "manual" | "monthly" | "rollback" | "seed"
+
+
+class VersionStatus(BaseModel):
+    """What Settings -> General -> Version shows: current + (if any) previous."""
+
+    current: Optional[UpdateHistoryEntry] = None
+    previous: Optional[UpdateHistoryEntry] = None
+    error: Optional[str] = None
 
 
 class StartResponse(BaseModel):
