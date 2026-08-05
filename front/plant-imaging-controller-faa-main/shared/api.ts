@@ -107,6 +107,24 @@ export interface SystemInfo {
   cameraAvailable: boolean;
 }
 
+// OTA self-update (Settings -> General -> Update button).
+export interface UpdateCheckResult {
+  branch: string;
+  updateAvailable: boolean;
+  currentCommit: string | null;
+  remoteCommit: string | null;
+  commitsBehind: number;
+  commitLog: string[];
+  error: string | null;
+}
+
+export interface UpdateApplyResult {
+  status: "updated" | "up_to_date" | "error";
+  message: string;
+  fromCommit: string | null;
+  toCommit: string | null;
+}
+
 export interface CameraSettings {
   width: number;
   height: number;

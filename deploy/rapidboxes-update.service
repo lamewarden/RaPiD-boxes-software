@@ -1,0 +1,19 @@
+[Unit]
+Description=RaPiD-boxes OTA self-update (git fetch + fast-forward-only pull)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@BACK_DIR@
+EnvironmentFile=/etc/rapidboxes.env
+# Same git fetch + `merge --ff-only` logic as the manual Settings -> General
+# "Update" button (rapidboxes/updater.py). No user is present to confirm a
+# restart here, so on a successful pull this asks the already-running
+# rapidboxes.service to restart itself over loopback HTTP (POST
+# /api/system/restart-service) -- the same path the manual button uses after
+# the user confirms. That endpoint just kills its own process and relies on
+# rapidboxes.service's Restart=always, so this unit needs no systemctl/sudo
+# access of its own.
+ExecStart=@VENV@/bin/python -m rapidboxes.updater apply --restart-on-success

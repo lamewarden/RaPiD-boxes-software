@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
-from rapidboxes.models import TropismConfig
+from rapidboxes.models import TropismConfig, UpdateApplyResult, UpdateCheckResult
 
 
 @pytest.fixture
@@ -47,6 +47,43 @@ async def test_system_info(client: AsyncClient):
     assert body["simulation"] is True
     assert "diskFreeBytes" in body
     assert body["cameraAvailable"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_check_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    # Git plumbing itself is covered against real throwaway repos in
+    # test_updater.py; here we only need to know the route is wired up and
+    # returns whatever the updater reports, for the configured branch.
+    seen = {}
+
+    def fake_check(branch, repo_root=None):
+        seen["branch"] = branch
+        return UpdateCheckResult(
+            branch=branch, updateAvailable=True, commitsBehind=2, commitLog=["abc123 fix"]
+        )
+
+    monkeypatch.setattr("rapidboxes.api.update.check_for_update", fake_check)
+
+    res = await client.get("/api/system/update/check")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["updateAvailable"] is True
+    assert body["commitsBehind"] == 2
+    assert seen["branch"] == "main"  # AppConfig default
+
+
+@pytest.mark.asyncio
+async def test_update_apply_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    def fake_apply(branch, repo_root=None):
+        return UpdateApplyResult(status="updated", message="ok", fromCommit="aaa", toCommit="bbb")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    res = await client.post("/api/system/update/apply")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "updated"
+    assert body["toCommit"] == "bbb"
 
 
 @pytest.mark.asyncio
