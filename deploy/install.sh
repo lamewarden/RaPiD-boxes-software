@@ -59,6 +59,13 @@ python3 -m venv --system-site-packages "$VENV"
 echo "==> Building the UI bundle..."
 ( cd "$FRONT_DIR" && npm install --no-audit --no-fund && npm run build )
 
+# OTA self-update (Settings -> General "Update" button + the monthly timer)
+# tracks whatever branch is actually checked out right now, not a hardcoded
+# "main" -- this repo is developed on "v2" while "main" is the older/stable
+# branch, and a given box may be deliberately pinned elsewhere. Override
+# later by editing RAPIDBOXES_UPDATE_BRANCH in /etc/rapidboxes.env.
+UPDATE_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+
 echo "==> Writing /etc/rapidboxes.env..."
 sudo tee /etc/rapidboxes.env >/dev/null <<EOF
 RAPIDBOXES_SIMULATION=0
@@ -67,6 +74,7 @@ RAPIDBOXES_PORT=$PORT
 RAPIDBOXES_SPA_DIR=$FRONT_DIR/dist/spa
 RAPIDBOXES_STORAGE_ROOT=$HOME_DIR/rapidboxes/experiments
 RAPIDBOXES_SETTINGS_PATH=$HOME_DIR/rapidboxes/settings.json
+RAPIDBOXES_UPDATE_BRANCH=$UPDATE_BRANCH
 EOF
 
 echo "==> Installing systemd service..."
@@ -76,6 +84,15 @@ sed -e "s|@USER@|$RUN_USER|g" \
     "$REPO_DIR/deploy/rapidboxes.service" | sudo tee /etc/systemd/system/rapidboxes.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now rapidboxes.service
+
+echo "==> Installing monthly OTA self-update timer..."
+sed -e "s|@USER@|$RUN_USER|g" \
+    -e "s|@BACK_DIR@|$BACK_DIR|g" \
+    -e "s|@VENV@|$VENV|g" \
+    "$REPO_DIR/deploy/rapidboxes-update.service" | sudo tee /etc/systemd/system/rapidboxes-update.service >/dev/null
+sudo cp "$REPO_DIR/deploy/rapidboxes-update.timer" /etc/systemd/system/rapidboxes-update.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now rapidboxes-update.timer
 
 echo "==> Installing Chromium kiosk autostart..."
 chmod +x "$REPO_DIR/deploy/kiosk.sh"
@@ -93,8 +110,10 @@ sed "s|@IDLE_SH@|$REPO_DIR/deploy/idle.sh|g" \
 cat <<EOF
 
 ==> Done.
-    Backend:  systemctl status rapidboxes      (http://localhost:$PORT)
+    Backend:  systemctl status rapidboxes            (http://localhost:$PORT)
     Logs:     journalctl -u rapidboxes -f
+    OTA:      systemctl list-timers rapidboxes-update  (tracks branch: $UPDATE_BRANCH)
+              journalctl -u rapidboxes-update -f
     Reboot to apply SPI/camera/group changes and launch the kiosk:
         sudo reboot
 EOF

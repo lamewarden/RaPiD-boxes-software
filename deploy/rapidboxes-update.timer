@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the RaPiD-boxes OTA self-update monthly
+
+[Timer]
+# Once a month, at 3am local time -- a low-activity hour unlikely to land
+# mid-capture, and far enough from midnight to dodge most cron/log-rotate
+# contention. RandomizedDelaySec spreads a fleet of boxes out instead of
+# every device hitting origin at the same instant. Persistent=true means a
+# box that's powered off at 3am on the 1st runs the check on its next boot
+# instead of silently skipping a whole month.
+OnCalendar=*-*-01 03:00:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

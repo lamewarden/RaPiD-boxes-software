@@ -107,6 +107,29 @@ export interface SystemInfo {
   cameraAvailable: boolean;
 }
 
+// OTA self-update (Settings -> General -> Update button).
+export interface UpdateCheckResult {
+  branch: string;
+  updateAvailable: boolean;
+  currentCommit: string | null;
+  remoteCommit: string | null;
+  commitsBehind: number;
+  commitLog: string[];
+  error: string | null;
+}
+
+export interface UpdateApplyResult {
+  status: "updated" | "up_to_date" | "error" | "experiment_active";
+  message: string;
+  fromCommit: string | null;
+  toCommit: string | null;
+  // Set only when status === "updated". "failed" means the pull itself
+  // succeeded but the post-pull dependency/build step did not -- code and
+  // installed deps are now mismatched, a worse state than a clean refusal.
+  rebuildStatus: "skipped" | "ok" | "failed" | null;
+  rebuildMessage: string | null;
+}
+
 export interface CameraSettings {
   width: number;
   height: number;

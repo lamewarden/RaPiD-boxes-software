@@ -6,7 +6,9 @@ RUN_USER="${SUDO_USER:-$USER}"
 HOME_DIR="$(eval echo "~$RUN_USER")"
 
 sudo systemctl disable --now rapidboxes.service 2>/dev/null || true
+sudo systemctl disable --now rapidboxes-update.timer 2>/dev/null || true
 sudo rm -f /etc/systemd/system/rapidboxes.service /etc/rapidboxes.env
+sudo rm -f /etc/systemd/system/rapidboxes-update.service /etc/systemd/system/rapidboxes-update.timer
 sudo systemctl daemon-reload
 rm -f "$HOME_DIR/.config/autostart/rapidboxes-kiosk.desktop"
 rm -f "$HOME_DIR/.config/autostart/rapidboxes-idle.desktop"

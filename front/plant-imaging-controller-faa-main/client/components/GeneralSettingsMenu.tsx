@@ -1,4 +1,5 @@
 import { useSystemInfo } from "@/hooks/useSystemInfo";
+import UpdatePanel from "@/components/UpdatePanel";
 
 const LOW_DISK_BYTES = 2 * 1024 * 1024 * 1024;
 
@@ -80,6 +81,8 @@ export default function GeneralSettingsMenu() {
               </p>
             )}
           </div>
+
+          <UpdatePanel />
         </div>
       </div>
     </div>

@@ -305,6 +305,37 @@ class SystemInfo(BaseModel):
     cameraAvailable: bool = True
 
 
+# ---------------------------------------------------------------------------
+# OTA self-update (Settings -> General -> Update button, and the monthly
+# rapidboxes-update.timer). See rapidboxes/updater.py for the git plumbing.
+# ---------------------------------------------------------------------------
+
+
+class UpdateCheckResult(BaseModel):
+    branch: str
+    updateAvailable: bool
+    currentCommit: Optional[str] = None
+    remoteCommit: Optional[str] = None
+    commitsBehind: int = 0
+    # Short "<hash> <subject>" lines, newest first, capped (see updater.py).
+    commitLog: List[str] = []
+    error: Optional[str] = None
+
+
+class UpdateApplyResult(BaseModel):
+    status: str  # "updated" | "up_to_date" | "error" | "experiment_active"
+    message: str
+    fromCommit: Optional[str] = None
+    toCommit: Optional[str] = None
+    # Set only when status == "updated": whether the post-pull dependency /
+    # frontend-build step ran, and how it went. "failed" means the git pull
+    # succeeded but the running process is now on mismatched code/deps -- a
+    # worse state than a clean refusal, so callers must NOT treat this as a
+    # green light to restart (see updater.py).
+    rebuildStatus: Optional[str] = None  # None | "skipped" | "ok" | "failed"
+    rebuildMessage: Optional[str] = None
+
+
 class StartResponse(BaseModel):
     status: str  # "started" | "busy" | "no_camera"
     experimentId: Optional[str] = None

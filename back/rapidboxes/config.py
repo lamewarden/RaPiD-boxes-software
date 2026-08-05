@@ -56,6 +56,17 @@ class AppConfig(BaseSettings):
     # Live preview (MJPEG) target frame rate.
     preview_fps: float = 5.0
 
+    # Branch this device tracks for the OTA self-update feature (Settings ->
+    # General -> Update button, and the monthly rapidboxes-update.timer).
+    # Judgment call: defaults to "main" as the intended long-term stable
+    # branch, but whatever branch is actually checked out on a given device
+    # may differ (e.g. this repo is developed on "v2" while "main" is the
+    # older/stable branch) -- override with RAPIDBOXES_UPDATE_BRANCH so
+    # `git fetch origin <branch>` / `git merge --ff-only origin/<branch>`
+    # compares against the branch this deployment is meant to track, not
+    # blindly against origin/main.
+    update_branch: str = "main"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
