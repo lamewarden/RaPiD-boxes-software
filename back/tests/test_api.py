@@ -56,6 +56,15 @@ async def test_system_info(client: AsyncClient):
     assert "diskFreeBytes" in body
     assert body["cameraAvailable"] is True
 
+    # SSH info card (Settings -> General): sshUser should resolve to the
+    # real OS account running the tests on any POSIX box (dev laptop or CI),
+    # via pwd.getpwuid -- never blank. sshEnabled's actual value is
+    # environment-dependent (no systemd on most dev laptops), so only check
+    # its shape, not a specific value.
+    assert isinstance(body["sshUser"], str)
+    assert body["sshUser"] != ""
+    assert isinstance(body["sshEnabled"], bool)
+
 
 @pytest.mark.asyncio
 async def test_update_check_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):

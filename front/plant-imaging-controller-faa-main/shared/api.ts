@@ -105,6 +105,10 @@ export interface SystemInfo {
   diskFreeBytes: number;
   diskTotalBytes: number;
   cameraAvailable: boolean;
+  // Settings -> General -> SSH Access. Build the full command client-side
+  // (`ssh ${sshUser}@${ip}`) -- `ip` above is the one source of truth.
+  sshUser: string;
+  sshEnabled: boolean;
 }
 
 // OTA self-update (Settings -> General -> Update button).

@@ -303,6 +303,12 @@ class SystemInfo(BaseModel):
     diskFreeBytes: int
     diskTotalBytes: int
     cameraAvailable: bool = True
+    # Settings -> General -> SSH Access. sshUser is the account `rapidboxes.
+    # service` runs as (User=@USER@ in deploy/rapidboxes.service) -- the same
+    # account SSH would log into. sshEnabled reflects whether the openssh
+    # server is actually reachable right now (see api/system.py).
+    sshUser: str = ""
+    sshEnabled: bool = False
 
 
 # ---------------------------------------------------------------------------
