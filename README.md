@@ -100,6 +100,49 @@ autostarted alongside the kiosk. Change the timeout with the
 `DSI-1`) is configurable the same way via `RAPIDBOXES_DISPLAY_OUTPUT` if you're
 on a different panel — check yours with `wlr-randr`.
 
+## Software updates & version rollback
+
+The box can update itself over the air from `origin/<RAPIDBOXES_UPDATE_BRANCH>`
+(default `main`), git-only and fast-forward-only — it never rewrites history or
+force-resets. An update (manual or automatic) is refused outright, cleanly and
+without side effects, if the working tree has local changes, if the branch has
+diverged such that a fast-forward is impossible, or if an experiment is
+currently running/paused/finishing.
+
+**Manual**: Settings → General → **Software Update** card. **Check for
+Updates** only fetches and compares — it never touches the working tree.
+**Update Now** does the actual `git fetch` + fast-forward merge, then rebuilds
+only what changed (`pip install` if anything under `back/` changed, `npm
+install && npm run build` if anything under `front/` changed), then prompts
+**Restart now?** to apply it.
+
+**Automatic**: `rapidboxes-update.timer` runs the same logic unattended once a
+month (3am on the 1st, `Persistent=true` so a box that's off at that moment
+catches up on next boot). With no user present to confirm a restart, it
+restarts on its own — but only if the pull *and* the rebuild both succeeded;
+if the rebuild fails, it deliberately leaves the old, still-consistent build
+running rather than restart into mismatched code and dependencies (check
+`journalctl -u rapidboxes-update` if that happens).
+
+**Version card**: the same Settings → General panel shows the commit the box
+is currently running and how long it's been running it. Every successful
+update (manual or automatic) is recorded, so once at least one update has
+happened, a **Roll back to `<hash>`** button appears — this checks out the
+previous recorded commit (`git checkout --detach`, not `git reset --hard`, so
+the tracked branch pointer is left alone) and re-runs the same rebuild step.
+Rollback is not permanent protection: if the box still auto-tracks the branch
+you rolled back from, the next monthly check (or a manually-pressed "Update
+Now") can land back on that same commit once the branch has moved past it
+again — the UI flags this when you roll back.
+
+## SSH access
+
+Settings → General also shows what you need to reach the box over SSH: the
+account name (the same user `rapidboxes.service` runs as), whether `sshd` is
+currently active, the box's LAN IP, and the exact command to run —
+`ssh <user>@<ip>`. Handy since the box normally only has a touchscreen
+attached, not a keyboard.
+
 ## What the programs do
 
 ### Tropism program
@@ -183,7 +226,10 @@ The import menu lists previous experiments from history.
 The settings menu has two tabs:
 
 - **Camera**: opens the full camera settings panel.
-- **General**: system info (hostname, version, disk space), LED strip segment editor, and IR pin display.
+- **General**: system info (hostname, version, disk space), LED strip segment
+  editor, IR pin display, software update / rollback controls, and SSH access
+  info. See [Software updates & version rollback](#software-updates--version-rollback)
+  and [SSH access](#ssh-access) below.
 
 The **X** button closes the settings menu.
 
@@ -341,3 +387,8 @@ Compared with the old single-purpose UI flow, the current system now includes:
 - an in-app **gallery**
 - a **measurement finished** screen with first/last frame preview and storage path
 - a restart-based summary close flow that returns the kiosk to the home screen
+- **over-the-air self-update** (manual button + monthly unattended timer),
+  fast-forward-only and refused cleanly on any risk of data loss
+- **one-click rollback** to the previously-running version, with how-long-it-ran
+  tracked automatically
+- an in-app **SSH access** panel (username, status, IP, ready-to-run command)
