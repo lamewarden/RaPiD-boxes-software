@@ -56,6 +56,29 @@ class AppConfig(BaseSettings):
     # Live preview (MJPEG) target frame rate.
     preview_fps: float = 5.0
 
+    # Branch this device tracks for the OTA self-update feature (Settings ->
+    # General -> Update button, and the monthly rapidboxes-update.timer).
+    # Judgment call: defaults to "main" as the intended long-term stable
+    # branch, but whatever branch is actually checked out on a given device
+    # may differ (e.g. this repo is developed on "v2" while "main" is the
+    # older/stable branch) -- override with RAPIDBOXES_UPDATE_BRANCH so
+    # `git fetch origin <branch>` / `git merge --ff-only origin/<branch>`
+    # compares against the branch this deployment is meant to track, not
+    # blindly against origin/main.
+    update_branch: str = "main"
+
+    # Record of applied OTA updates/rollbacks (see rapidboxes/update_history.py),
+    # used by Settings -> General -> Version to show "running commit X for Y"
+    # and to know what the "Roll back" button targets. Same directory
+    # convention as settings_path.
+    update_history_path: Path = Path.home() / "rapidboxes" / "update_history.json"
+
+    # Remote CIFS sync (Settings -> General -> Remote Sync). Only the
+    # non-secret half lives here -- server, CIFS username, on/off, researcher.
+    # The password is session-only and is never written to this (or any) file;
+    # see rapidboxes/remote_sync.py.
+    remote_sync_path: Path = Path.home() / "rapidboxes" / "remote_sync.json"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)

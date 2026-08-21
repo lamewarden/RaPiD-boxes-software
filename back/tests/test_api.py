@@ -1,6 +1,9 @@
 """FastAPI integration tests with simulated hardware."""
 from __future__ import annotations
 
+import io
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +12,14 @@ from httpx import ASGITransport, AsyncClient
 
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
-from rapidboxes.models import TropismConfig
+from rapidboxes.models import (
+    ExperimentState,
+    TropismConfig,
+    UpdateApplyResult,
+    UpdateCheckResult,
+    UpdateHistoryEntry,
+    VersionStatus,
+)
 
 
 @pytest.fixture
@@ -18,6 +28,9 @@ def app_config(tmp_path: Path) -> AppConfig:
         simulation=True,
         storage_root=tmp_path / "experiments",
         settings_path=tmp_path / "settings.json",
+        # Keep remote-sync state in the tmpdir too, so tests never read or
+        # write the developer's real ~/rapidboxes/remote_sync.json.
+        remote_sync_path=tmp_path / "remote_sync.json",
         spa_dir=None,
     )
 
@@ -48,6 +61,196 @@ async def test_system_info(client: AsyncClient):
     assert body["simulation"] is True
     assert "diskFreeBytes" in body
     assert body["cameraAvailable"] is True
+
+    # SSH info card (Settings -> General): sshUser should resolve to the
+    # real OS account running the tests on any POSIX box (dev laptop or CI),
+    # via pwd.getpwuid -- never blank. sshEnabled's actual value is
+    # environment-dependent (no systemd on most dev laptops), so only check
+    # its shape, not a specific value.
+    assert isinstance(body["sshUser"], str)
+    assert body["sshUser"] != ""
+    assert isinstance(body["sshEnabled"], bool)
+
+
+@pytest.mark.asyncio
+async def test_update_check_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    # Git plumbing itself is covered against real throwaway repos in
+    # test_updater.py; here we only need to know the route is wired up and
+    # returns whatever the updater reports, for the configured branch.
+    seen = {}
+
+    def fake_check(branch, repo_root=None):
+        seen["branch"] = branch
+        return UpdateCheckResult(
+            branch=branch, updateAvailable=True, commitsBehind=2, commitLog=["abc123 fix"]
+        )
+
+    monkeypatch.setattr("rapidboxes.api.update.check_for_update", fake_check)
+
+    res = await client.get("/api/system/update/check")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["updateAvailable"] is True
+    assert body["commitsBehind"] == 2
+    assert seen["branch"] == "main"  # AppConfig default
+
+
+@pytest.mark.asyncio
+async def test_update_apply_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    def fake_apply(branch, repo_root=None, **kwargs):
+        return UpdateApplyResult(status="updated", message="ok", fromCommit="aaa", toCommit="bbb")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    res = await client.post("/api/system/update/apply")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "updated"
+    assert body["toCommit"] == "bbb"
+
+
+@pytest.mark.parametrize("state_value", ["running", "paused", "finishing"])
+@pytest.mark.asyncio
+async def test_update_apply_refused_while_experiment_busy(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    # "finishing" isn't currently reachable through the real experiment API
+    # (see engine/runner.py -- it's checked but never assigned yet), so this
+    # sets runner.status.state directly rather than driving it via HTTP.
+    called = {"n": 0}
+
+    def fake_apply(branch, repo_root=None, **kwargs):
+        called["n"] += 1
+        return UpdateApplyResult(status="updated", message="should not have been called")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/apply")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["status"] == "experiment_active"
+
+    assert called["n"] == 0
+
+
+@pytest.mark.parametrize("state_value", ["idle", "done", "error"])
+@pytest.mark.asyncio
+async def test_update_apply_allowed_while_experiment_not_active(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    def fake_apply(branch, repo_root=None, **kwargs):
+        return UpdateApplyResult(status="up_to_date", message="already current")
+
+    monkeypatch.setattr("rapidboxes.api.update.apply_update", fake_apply)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/apply")
+            assert res.status_code == 200
+            assert res.json()["status"] == "up_to_date"
+
+
+@pytest.mark.asyncio
+async def test_update_check_allowed_even_while_experiment_running(
+    app_config: AppConfig, monkeypatch
+):
+    # Read-only -- never gated on experiment state.
+    def fake_check(branch, repo_root=None):
+        return UpdateCheckResult(branch=branch, updateAvailable=True, commitsBehind=1)
+
+    monkeypatch.setattr("rapidboxes.api.update.check_for_update", fake_check)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState.running
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/api/system/update/check")
+            assert res.status_code == 200
+            assert res.json()["updateAvailable"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_version_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    entry = UpdateHistoryEntry(commit="abc12345", appliedAt=datetime.now(timezone.utc), trigger="manual")
+
+    def fake_version(history_path):
+        return VersionStatus(current=entry, previous=None)
+
+    monkeypatch.setattr("rapidboxes.api.update.get_version_status", fake_version)
+
+    res = await client.get("/api/system/update/version")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["current"]["commit"] == "abc12345"
+    assert body["previous"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_rollback_endpoint_delegates_to_updater(client: AsyncClient, monkeypatch):
+    def fake_rollback(history_path):
+        return UpdateApplyResult(status="rolled_back", message="ok", fromCommit="bbb", toCommit="aaa")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    res = await client.post("/api/system/update/rollback")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "rolled_back"
+    assert body["toCommit"] == "aaa"
+
+
+@pytest.mark.parametrize("state_value", ["running", "paused", "finishing"])
+@pytest.mark.asyncio
+async def test_update_rollback_refused_while_experiment_busy(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    called = {"n": 0}
+
+    def fake_rollback(history_path):
+        called["n"] += 1
+        return UpdateApplyResult(status="rolled_back", message="should not have been called")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/rollback")
+            assert res.status_code == 200
+            assert res.json()["status"] == "experiment_active"
+
+    assert called["n"] == 0
+
+
+@pytest.mark.parametrize("state_value", ["idle", "done", "error"])
+@pytest.mark.asyncio
+async def test_update_rollback_allowed_while_experiment_not_active(
+    app_config: AppConfig, monkeypatch, state_value: str
+):
+    def fake_rollback(history_path):
+        return UpdateApplyResult(status="nothing_to_roll_back_to", message="No previous version recorded yet.")
+
+    monkeypatch.setattr("rapidboxes.api.update.rollback_update", fake_rollback)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        app.state.app.runner.status.state = ExperimentState(state_value)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.post("/api/system/update/rollback")
+            assert res.status_code == 200
+            assert res.json()["status"] == "nothing_to_roll_back_to"
 
 
 @pytest.mark.asyncio
@@ -138,6 +341,46 @@ async def test_abort_stops_and_deletes_experiment(client: AsyncClient, app_confi
     assert body["state"] == "idle"
     assert not exp_dir.exists()
     assert (await client.get("/api/experiments/history")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_zip_contains_all_files(app_config: AppConfig):
+    """The download endpoint should zip everything under the experiment's
+    folder (images, metadata.json, saved config xml) and offer it as a
+    downloadable attachment, without loading the whole archive into memory
+    at once (see the comment on download_experiment for why)."""
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        storage = app.state.app.storage
+        exp = storage.create_experiment("alice", "zip-test")
+        (exp.path / "dark_00000.jpg").write_bytes(b"fake-jpeg-bytes-1")
+        (exp.path / "bending_00000.jpg").write_bytes(b"fake-jpeg-bytes-2")
+        exp.write_metadata({"experimentName": "zip-test", "username": "alice", "imagesCaptured": 2})
+        exp.write_config_xml(b"<config></config>", "zip-test")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get(f"/api/experiments/{exp.experiment_id}/download")
+
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert f'filename="{exp.experiment_id}.zip"' in res.headers["content-disposition"]
+    assert "attachment" in res.headers["content-disposition"]
+
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert zf.testzip() is None  # no corrupt members
+        names = set(zf.namelist())
+        assert "dark_00000.jpg" in names
+        assert "bending_00000.jpg" in names
+        assert "metadata.json" in names
+        assert "zip-test.xml" in names
+        assert zf.read("dark_00000.jpg") == b"fake-jpeg-bytes-1"
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_404_for_missing_experiment(client: AsyncClient):
+    res = await client.get("/api/experiments/does-not-exist/download")
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio

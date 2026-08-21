@@ -4,6 +4,7 @@ These are mirrored as TypeScript interfaces in front/shared/api.ts.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, List, Literal, Optional, Tuple, Union
@@ -311,6 +312,61 @@ class SystemInfo(BaseModel):
     diskFreeBytes: int
     diskTotalBytes: int
     cameraAvailable: bool = True
+    # Settings -> General -> SSH Access. sshUser is the account `rapidboxes.
+    # service` runs as (User=@USER@ in deploy/rapidboxes.service) -- the same
+    # account SSH would log into. sshEnabled reflects whether the openssh
+    # server is actually reachable right now (see api/system.py).
+    sshUser: str = ""
+    sshEnabled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# OTA self-update (Settings -> General -> Update button, and the monthly
+# rapidboxes-update.timer). See rapidboxes/updater.py for the git plumbing.
+# ---------------------------------------------------------------------------
+
+
+class UpdateCheckResult(BaseModel):
+    branch: str
+    updateAvailable: bool
+    currentCommit: Optional[str] = None
+    remoteCommit: Optional[str] = None
+    commitsBehind: int = 0
+    # Short "<hash> <subject>" lines, newest first, capped (see updater.py).
+    commitLog: List[str] = []
+    error: Optional[str] = None
+
+
+class UpdateApplyResult(BaseModel):
+    # "updated" | "up_to_date" | "error" | "experiment_active"
+    # | "rolled_back" | "nothing_to_roll_back_to" (rollback only)
+    status: str
+    message: str
+    fromCommit: Optional[str] = None
+    toCommit: Optional[str] = None
+    # Set only when status in ("updated", "rolled_back"): whether the
+    # post-move dependency / frontend-build step ran, and how it went.
+    # "failed" means the git move succeeded but the running process is now on
+    # mismatched code/deps -- a worse state than a clean refusal, so callers
+    # must NOT treat this as a green light to restart (see updater.py).
+    rebuildStatus: Optional[str] = None  # None | "skipped" | "ok" | "failed"
+    rebuildMessage: Optional[str] = None
+
+
+class UpdateHistoryEntry(BaseModel):
+    """One row in update_history.json: a commit that became HEAD, and why."""
+
+    commit: str  # short hash (8 chars), consistent with fromCommit/toCommit above
+    appliedAt: datetime
+    trigger: str  # "manual" | "monthly" | "rollback" | "seed"
+
+
+class VersionStatus(BaseModel):
+    """What Settings -> General -> Version shows: current + (if any) previous."""
+
+    current: Optional[UpdateHistoryEntry] = None
+    previous: Optional[UpdateHistoryEntry] = None
+    error: Optional[str] = None
 
 
 class StorageSuggestion(BaseModel):
@@ -340,3 +396,133 @@ class FreeSpaceResponse(BaseModel):
     deletedIds: List[str]
     freedBytes: int
     availableBytes: int
+
+
+# ---------------------------------------------------------------------------
+# Remote CIFS/SMB sync (Settings -> General -> Remote Sync).
+# See rapidboxes/remote_sync.py for the mount + copy plumbing.
+#
+# SECURITY: there is deliberately NO password field on any model below that is
+# persisted or returned by the API. The password is accepted only on
+# RemoteSyncUpdate (write-only, PUT body) and lives in process memory for the
+# lifetime of the process -- never in settings files, never in a response,
+# never in a process argument list. `passwordSet` is the only thing the UI
+# learns about it.
+# ---------------------------------------------------------------------------
+
+# Pre-filled default, from the institutional share the legacy script mounted.
+DEFAULT_REMOTE_SERVER = "//ds.asuch.cas.cz/ueb/lhr"
+
+# Strict allowlist for the //host/share[/path] string. This value is passed to
+# a *sudo* mount command, so anything outside this pattern is rejected outright
+# rather than escaped: no spaces, no commas, no leading "-" (which mount would
+# read as an option), no shell metacharacters, no relative segments.
+REMOTE_SERVER_PATTERN = r"^//[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+$"
+_REMOTE_SERVER_RE = re.compile(REMOTE_SERVER_PATTERN)
+REMOTE_SERVER_MAX_LEN = 255
+
+# The CIFS account name also reaches the (root) mount, inside the credentials
+# file rather than on the command line -- but a newline there would let a
+# crafted username inject extra credential directives, so it is constrained too.
+REMOTE_USERNAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@\\-]{0,63}$"
+_REMOTE_USERNAME_RE = re.compile(REMOTE_USERNAME_PATTERN)
+
+
+def validate_remote_server(server: str) -> str:
+    """Return `server` if it is a safe //host/share[/path], else raise ValueError."""
+    value = (server or "").strip()
+    if not value:
+        raise ValueError("server/share path is required")
+    if len(value) > REMOTE_SERVER_MAX_LEN:
+        raise ValueError(f"server/share path is too long (max {REMOTE_SERVER_MAX_LEN} characters)")
+    if not _REMOTE_SERVER_RE.match(value):
+        raise ValueError(
+            "server/share path must look like //host/share or //host/share/folder "
+            "(letters, digits, dots, hyphens and underscores only)"
+        )
+    if any(segment == ".." for segment in value.split("/")):
+        raise ValueError("server/share path must not contain '..' segments")
+    return value
+
+
+def validate_remote_username(username: str) -> str:
+    """Return `username` if it is a safe CIFS account name, else raise ValueError."""
+    value = (username or "").strip()
+    if not value:
+        raise ValueError("username is required")
+    if not _REMOTE_USERNAME_RE.match(value):
+        raise ValueError(
+            "username may only contain letters, digits, dots, underscores, "
+            "hyphens, '@' and '\\'"
+        )
+    return value
+
+
+class RemoteSyncSettings(BaseModel):
+    """The persisted (non-secret) half of the remote-sync configuration.
+
+    Written to its own JSON file rather than into DeviceSettings: it is not a
+    property of how an image was taken, so it must not travel into the
+    per-experiment config XML — and keeping it separate means the password can
+    never be swept into a settings snapshot by accident.
+    """
+
+    enabled: bool = False
+    server: str = DEFAULT_REMOTE_SERVER
+    # The CIFS/SMB account used to mount the share.
+    username: str = ""
+    # The researcher whose experiments sync (the destination subfolder on the
+    # share). Captured when sync is switched on; sync stops if it changes.
+    researcher: str = ""
+
+    @model_validator(mode="after")
+    def _check(self) -> "RemoteSyncSettings":
+        if self.server:
+            validate_remote_server(self.server)
+        if self.username:
+            validate_remote_username(self.username)
+        return self
+
+
+class RemoteSyncUpdate(BaseModel):
+    """PUT /api/settings/remote-sync body — the only model carrying a password.
+
+    Every field is optional so the UI can patch one thing at a time (e.g. flip
+    the toggle without resending credentials). `password` is WRITE-ONLY: it is
+    never echoed back by any endpoint and never written to disk.
+    """
+
+    enabled: Optional[bool] = None
+    server: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = Field(default=None, max_length=256)
+    researcher: Optional[str] = None
+
+
+class RemoteSyncStatus(BaseModel):
+    """GET /api/settings/remote-sync — everything the UI shows. No password."""
+
+    enabled: bool = False
+    server: str = DEFAULT_REMOTE_SERVER
+    username: str = ""
+    # Whether a password is held in memory. Never the password, never its length.
+    passwordSet: bool = False
+    mounted: bool = False
+    # The loud state: sync is switched on but the in-memory password is gone
+    # (fresh process after a restart/reboot/OTA update), so nothing can sync
+    # until a human re-enters it.
+    credentialsRequired: bool = False
+    # Destination subfolder on the share = the researcher this sync is armed for.
+    researcher: str = ""
+    remotePath: Optional[str] = None
+    # Images captured but not yet copied (queued + failed-and-awaiting-retry).
+    pendingCount: int = 0
+    lastSyncAt: Optional[datetime] = None
+    lastResult: Optional[str] = None  # "ok" | "error"
+    lastError: Optional[str] = None
+    # Progress/outcome text for the last "Sync entire folder now" run.
+    bulkInProgress: bool = False
+    bulkMessage: Optional[str] = None
+    # True on a dev laptop (RAPIDBOXES_SIMULATION=1): no real CIFS mount is
+    # attempted; the share is emulated by a local directory.
+    simulation: bool = False

@@ -7,6 +7,8 @@ import signal
 import subprocess
 import shutil
 import socket
+import time
+from typing import Tuple
 
 from fastapi import APIRouter, Depends
 
@@ -28,6 +30,61 @@ def _local_ip() -> str:
         return "127.0.0.1"
 
 
+def _ssh_user() -> str:
+    """The account SSH would log into -- same one rapidboxes.service runs as
+    (User=@USER@ in deploy/rapidboxes.service), read in-process rather than
+    from config since it needs no new setting."""
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:
+        return os.environ.get("USER", "")
+
+
+# /api/system is polled every 5s by the kiosk (see useSystemInfo); SSH
+# enabled/disabled essentially never changes at runtime, so cache the
+# subprocess result briefly rather than forking `systemctl` on every poll.
+_SSH_ENABLED_CACHE_S = 30.0
+_ssh_enabled_cache: Tuple[float, bool] = (0.0, False)
+
+
+def _ssh_enabled() -> bool:
+    """Whether openssh-server is actually reachable right now.
+
+    Raspberry Pi OS (Debian-based, Bookworm included) registers the openssh
+    server as the systemd unit `ssh.service`, not `sshd.service` -- confirmed
+    against Raspberry Pi OS Bookworm docs/forums, which consistently use
+    `systemctl enable ssh` / `systemctl status ssh` (unit description "OpenBSD
+    Secure Shell server"); `sshd` is not the unit name there even though the
+    daemon binary itself is /usr/sbin/sshd. `is-active` (not `is-enabled`) is
+    used because what the UI cares about is "can I ssh in right now", not
+    just whether it's set to start on boot -- and both are queryable as a
+    non-root user. On a dev laptop without systemd (e.g. macOS), this just
+    fails closed to False.
+    """
+    global _ssh_enabled_cache
+    checked_at, cached = _ssh_enabled_cache
+    now = time.monotonic()
+    if now - checked_at < _SSH_ENABLED_CACHE_S:
+        return cached
+
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "ssh"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        enabled = result.stdout.strip() == "active"
+    except Exception:
+        enabled = False
+
+    _ssh_enabled_cache = (now, enabled)
+    return enabled
+
+
 def _info(state: AppState) -> SystemInfo:
     usage = shutil.disk_usage(state.config.storage_root)
     return SystemInfo(
@@ -39,6 +96,8 @@ def _info(state: AppState) -> SystemInfo:
         diskFreeBytes=usage.free,
         diskTotalBytes=usage.total,
         cameraAvailable=state.hw.camera_available,
+        sshUser=_ssh_user(),
+        sshEnabled=_ssh_enabled(),
     )
 
 

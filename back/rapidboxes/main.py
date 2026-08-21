@@ -18,10 +18,21 @@ from fastapi.staticfiles import StaticFiles
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
+from .remote_sync import RemoteSyncService, load_remote_sync_settings
 from .retention import cleanup_expired_experiments
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
-from .api import experiments, health, images, preview, settings as settings_api, system, ws
+from .api import (
+    experiments,
+    health,
+    images,
+    preview,
+    remote_sync as remote_sync_api,
+    settings as settings_api,
+    system,
+    update,
+    ws,
+)
 from .api.deps import AppState
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,14 +46,33 @@ async def lifespan(app: FastAPI):
     storage = Storage(config.storage_root)
     cleanup_expired_experiments(storage)
     hw = build_hardware(config, device_settings)
-    runner = ExperimentRunner(hw, storage)
+
+    # Remote CIFS sync. The persisted half (server/user/on-off) survives a
+    # restart; the password deliberately does not, so a box that comes back up
+    # with `enabled: true` reports credentialsRequired until a human re-enters
+    # it -- see remote_sync.py and the "Remote Sync" card in the UI.
+    sync = RemoteSyncService(
+        load_remote_sync_settings(config.remote_sync_path),
+        storage_root=config.storage_root,
+        simulation=config.simulation,
+        settings_path=config.remote_sync_path,
+    )
+    sync.start()
+    if sync.credentials_required:
+        log.warning(
+            "remote sync is switched on but has no password after this restart; "
+            "it stays inactive until the password is re-entered in Settings"
+        )
+
+    runner = ExperimentRunner(hw, storage, on_image_captured=sync.enqueue_image)
     runner.recover()
-    app.state.app = AppState(config, device_settings, storage, hw, runner)
+    app.state.app = AppState(config, device_settings, storage, hw, runner, sync)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
         yield
     finally:
         await runner.shutdown()
+        await sync.shutdown()
         log.info("RaPiD-boxes stopped; hardware released")
 
 
@@ -59,7 +89,16 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    for module in (experiments, images, settings_api, system, preview, health):
+    for module in (
+        experiments,
+        images,
+        settings_api,
+        remote_sync_api,
+        system,
+        update,
+        preview,
+        health,
+    ):
         app.include_router(module.router)
     app.include_router(ws.router)
 

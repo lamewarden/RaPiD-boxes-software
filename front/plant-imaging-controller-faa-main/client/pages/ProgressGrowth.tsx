@@ -4,6 +4,7 @@ import { Folder, Home, Pause, Play, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import StorageNoticeBanner from "@/components/StorageNoticeBanner";
+import { formatElapsed } from "@/lib/progress";
 import type { ExperimentPhase } from "@shared/api";
 
 const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
@@ -11,14 +12,6 @@ const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
   day: "Day (lit)",
   night: "Night (dark)",
 };
-
-function formatTime(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
 
 export default function ProgressGrowth() {
   const navigate = useNavigate();
@@ -151,7 +144,7 @@ export default function ProgressGrowth() {
           {/* Info panel */}
           <div className="flex flex-col gap-2 flex-shrink-0 w-36">
             <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-3 text-center">
-              <div className="text-2xl font-black text-app-green tabular-nums">{formatTime(elapsed)}</div>
+              <div className="text-2xl font-black text-app-green tabular-nums">{formatElapsed(elapsed)}</div>
               <p className="text-app-text-muted text-[10px] mt-1">Elapsed</p>
             </div>
 

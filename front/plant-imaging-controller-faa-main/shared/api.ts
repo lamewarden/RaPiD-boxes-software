@@ -138,6 +138,53 @@ export interface SystemInfo {
   diskFreeBytes: number;
   diskTotalBytes: number;
   cameraAvailable: boolean;
+  // Settings -> General -> SSH Access. Build the full command client-side
+  // (`ssh ${sshUser}@${ip}`) -- `ip` above is the one source of truth.
+  sshUser: string;
+  sshEnabled: boolean;
+}
+
+// OTA self-update (Settings -> General -> Update button).
+export interface UpdateCheckResult {
+  branch: string;
+  updateAvailable: boolean;
+  currentCommit: string | null;
+  remoteCommit: string | null;
+  commitsBehind: number;
+  commitLog: string[];
+  error: string | null;
+}
+
+export interface UpdateApplyResult {
+  status:
+    | "updated"
+    | "up_to_date"
+    | "error"
+    | "experiment_active"
+    | "rolled_back"
+    | "nothing_to_roll_back_to";
+  message: string;
+  fromCommit: string | null;
+  toCommit: string | null;
+  // Set only when status is "updated" or "rolled_back". "failed" means the
+  // git move succeeded but the post-move dependency/build step did not --
+  // code and installed deps are now mismatched, a worse state than a clean
+  // refusal.
+  rebuildStatus: "skipped" | "ok" | "failed" | null;
+  rebuildMessage: string | null;
+}
+
+// One row in the OTA update history (Settings -> General -> Version).
+export interface UpdateHistoryEntry {
+  commit: string;
+  appliedAt: string; // ISO 8601
+  trigger: "manual" | "monthly" | "rollback" | "seed";
+}
+
+export interface VersionStatus {
+  current: UpdateHistoryEntry | null;
+  previous: UpdateHistoryEntry | null;
+  error: string | null;
 }
 
 export interface CameraSettings {
@@ -200,6 +247,64 @@ export interface DeviceSettings {
   /** Illumination source for dark/baseline/night captures — applies to every
    * imaging mode and every next experiment, not a per-experiment choice. */
   photoIlluminationSource: PhotoIlluminationSource;
+}
+
+// ---------------------------------------------------------------------------
+// Remote CIFS/SMB sync (Settings -> General -> Remote Sync).
+// Mirrors RemoteSyncStatus / RemoteSyncUpdate in back/rapidboxes/models.py.
+//
+// SECURITY: there is deliberately no `password` field on RemoteSyncStatus. The
+// backend never returns it, and the UI must never try to display or infer it —
+// including its length. `passwordSet` is all there is.
+// ---------------------------------------------------------------------------
+
+/** Pre-filled default, from the institutional share the legacy script mounted. */
+export const DEFAULT_REMOTE_SERVER = "//ds.asuch.cas.cz/ueb/lhr";
+
+export interface RemoteSyncStatus {
+  enabled: boolean;
+  /** //host/share[/path] — strictly validated server-side before it can reach mount. */
+  server: string;
+  /** The CIFS/SMB account used to mount the share. */
+  username: string;
+  /** Whether a password is held in the backend's memory. Never the password itself. */
+  passwordSet: boolean;
+  mounted: boolean;
+  /**
+   * Switched on, but the in-memory password is gone — i.e. the backend has
+   * restarted (reboot, power blip, or the monthly OTA update). Sync can do
+   * nothing at all in this state, so the UI must say so loudly rather than
+   * showing an "on" toggle that silently copies nothing.
+   */
+  credentialsRequired: boolean;
+  /** Destination subfolder on the share; sync stops if the researcher changes. */
+  researcher: string;
+  remotePath: string | null;
+  /** Images captured but not yet copied (queued + failed-and-awaiting-retry). */
+  pendingCount: number;
+  lastSyncAt: string | null; // ISO 8601
+  lastResult: "ok" | "error" | null;
+  lastError: string | null;
+  bulkInProgress: boolean;
+  bulkMessage: string | null;
+  /** True on a dev laptop: no real CIFS mount is attempted. */
+  simulation: boolean;
+}
+
+/** PUT body. Every field optional so the UI can patch one thing at a time.
+ *  `password` is write-only — it is never returned by any endpoint. */
+export interface RemoteSyncUpdate {
+  enabled?: boolean;
+  server?: string;
+  username?: string;
+  password?: string;
+  researcher?: string;
+}
+
+export interface RemoteSyncCheckResult {
+  ok: boolean;
+  message: string;
+  status: RemoteSyncStatus;
 }
 
 /** The saved/loaded per-experiment <name>.xml: phases + light + illumination + camera, no identity fields. */

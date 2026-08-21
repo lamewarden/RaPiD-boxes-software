@@ -100,6 +100,151 @@ autostarted alongside the kiosk. Change the timeout with the
 `DSI-1`) is configurable the same way via `RAPIDBOXES_DISPLAY_OUTPUT` if you're
 on a different panel — check yours with `wlr-randr`.
 
+## Software updates & version rollback
+
+The box can update itself over the air from `origin/<RAPIDBOXES_UPDATE_BRANCH>`
+(default `main`), git-only and fast-forward-only — it never rewrites history or
+force-resets. An update (manual or automatic) is refused outright, cleanly and
+without side effects, if the working tree has local changes, if the branch has
+diverged such that a fast-forward is impossible, or if an experiment is
+currently running/paused/finishing.
+
+**Manual**: Settings → General → **Software Update** card. **Check for
+Updates** only fetches and compares — it never touches the working tree.
+**Update Now** does the actual `git fetch` + fast-forward merge, then rebuilds
+only what changed (`pip install` if anything under `back/` changed, `npm
+install && npm run build` if anything under `front/` changed), then prompts
+**Restart now?** to apply it.
+
+**Automatic**: `rapidboxes-update.timer` runs the same logic unattended once a
+month (3am on the 1st, `Persistent=true` so a box that's off at that moment
+catches up on next boot). With no user present to confirm a restart, it
+restarts on its own — but only if the pull *and* the rebuild both succeeded;
+if the rebuild fails, it deliberately leaves the old, still-consistent build
+running rather than restart into mismatched code and dependencies (check
+`journalctl -u rapidboxes-update` if that happens).
+
+**Version card**: the same Settings → General panel shows the commit the box
+is currently running and how long it's been running it. Every successful
+update (manual or automatic) is recorded, so once at least one update has
+happened, a **Roll back to `<hash>`** button appears — this checks out the
+previous recorded commit (`git checkout --detach`, not `git reset --hard`, so
+the tracked branch pointer is left alone) and re-runs the same rebuild step.
+Rollback is not permanent protection: if the box still auto-tracks the branch
+you rolled back from, the next monthly check (or a manually-pressed "Update
+Now") can land back on that same commit once the branch has moved past it
+again — the UI flags this when you roll back.
+
+## SSH access
+
+Settings → General also shows what you need to reach the box over SSH: the
+account name (the same user `rapidboxes.service` runs as), whether `sshd` is
+currently active, the box's LAN IP, and the exact command to run —
+`ssh <user>@<ip>`. Handy since the box normally only has a touchscreen
+attached, not a keyboard.
+
+## Remote storage sync (CIFS/SMB)
+
+The box can mount an institutional SMB/CIFS share and copy experiment images to
+it automatically as they are captured, replacing the legacy hand-run
+`sudo mount -t cifs //ds.asuch.cas.cz/ueb/lhr /mnt/Shared -o user=…,pass=…`.
+
+Settings → General → **Remote Sync** card:
+
+- **On/off toggle**: arms syncing for the researcher currently set on the home
+  screen.
+- **Server / share**: pre-filled with `//ds.asuch.cas.cz/ueb/lhr` and freely
+  editable. The value is checked against a strict allowlist
+  (`//host/share[/folder]`, letters, digits, dots, hyphens and underscores
+  only) before it can reach the mount command; anything else is rejected with
+  a clear message.
+- **Username** and **Password** for the share account. The password field is
+  masked, and when a password is already set the field shows a fixed-width
+  placeholder — the UI is never told the real password or its length.
+- **Check Connection**: enabled only once a username and password are both
+  present. It mounts the share (if it isn't already), proves the destination
+  folder is actually writable, and reports the real error text if not —
+  "wrong password" and "host unreachable" need different fixes.
+- **Sync Entire Folder**: a one-shot bulk copy of *every* local experiment
+  belonging to the current researcher, not just newly captured images.
+- **Status**: mounted / not mounted / credentials needed, the destination path,
+  the last successful sync time, and a count of files still waiting to be
+  copied.
+
+**Remote layout** mirrors the legacy convention: the mounted share, then a
+subfolder named after the researcher (created if missing), then one folder per
+experiment:
+
+```
+/mnt/rapidboxes-remote/<researcher>/<YYYY-MM-DD>_<researcher>_<name>/
+    dark_00000.jpg
+    metadata.json
+    <name>.xml
+```
+
+Thumbnails are not copied — they are regenerated locally on demand.
+
+**Sync stops** when the toggle is switched off, or when the researcher name
+changes (starting an experiment under a different name switches sync off and
+says so, rather than quietly writing into someone else's folder).
+
+**The local experiment always wins.** Copying happens on a background queue,
+never on the capture path, so a slow, hung or dead share cannot delay the
+capture schedule. A failed copy is logged, counted as pending, and retried on
+the next capture; it never aborts or errors a running experiment.
+
+### The password is deliberately never written to disk
+
+This is a design decision, not an oversight: the password is held in memory for
+the lifetime of the backend process and is written nowhere — not to
+`settings.json`, not to `remote_sync.json`, not to logs, and not to any
+credentials file that outlives the mount call itself. It is also never returned
+by any API endpoint (this box has no authentication and binds `0.0.0.0`, so
+anything it serves is readable by anyone on the LAN); the API exposes only a
+`passwordSet` boolean.
+
+**The operational consequence: after any restart the password is gone and must
+be re-entered.** That includes a reboot, a power blip, and the monthly
+`rapidboxes-update.timer` OTA restart. In that state sync does not quietly
+pretend to work — the Remote Sync card turns orange and reads **"Inactive —
+credentials needed after restart"** until someone re-enters the password and
+presses Check Connection. The same tradeoff is stated as helper text next to
+the password field and confirmed by a toast when credentials are accepted, so
+it is known *before* anyone leaves the box on a long unattended run. Server,
+username and the on/off setting all persist normally; only the password does
+not.
+
+### What the sudoers entry grants
+
+Mounting needs root, so `deploy/install.sh` installs
+`/etc/sudoers.d/rapidboxes` (mode 0440, validated with `visudo -c` **before**
+installation — a malformed sudoers file can lock the account out of `sudo`
+entirely). It grants the service account exactly two commands and nothing else:
+
+```
+Cmnd_Alias RAPIDBOXES_CIFS = \
+  /usr/bin/mount -t cifs //* /mnt/rapidboxes-remote -o credentials=/run/rapidboxes-cifs/cred-*\,nosuid\,nodev\,noexec\,uid=1000\,gid=1000\,file_mode=0664\,dir_mode=0775, \
+  /usr/bin/umount /mnt/rapidboxes-remote
+<user> ALL=(root) NOPASSWD: RAPIDBOXES_CIFS
+```
+
+That is: one fixed mount point, one fixed trailing option string, and no
+blanket `ALL`. The hardening options (`nosuid,nodev,noexec` and the
+unprivileged uid/gid) come last on purpose — mount options are last-one-wins.
+`deploy/uninstall.sh` removes the rule, the mount point and the mount.
+
+The password reaches `mount` through a `credentials=` file created 0600 with
+`tempfile.mkstemp` in the service's private `/run/rapidboxes-cifs` directory
+(systemd `RuntimeDirectory=`, on tmpfs), and that file is unlinked in a
+`finally` the instant `mount` returns, success or failure. It is never passed
+as `-o pass=…`, because `ps aux` is world-readable. Every subprocess call uses
+a fixed argument list; `shell=True` is never used anywhere in the backend, and
+a test enforces that.
+
+**Simulation mode** (`RAPIDBOXES_SIMULATION=1`, i.e. laptop development) never
+attempts a real mount: the share is emulated by a local directory so the whole
+sync path stays exercisable with no CIFS server present.
+
 ## What the programs do
 
 ### Tropism program
@@ -158,6 +303,8 @@ From left to right:
   This does **not** stop the backend service.
 - **Import**: opens the import menu and lets the user load a previous experiment
   configuration.
+- **Downloads**: opens the downloads menu and lets the user grab a ZIP of their
+  own past experiment folders (images + metadata + saved config).
 - **User**: opens the on-screen keyboard to change the saved researcher name.
 - **Gallery**: opens the image gallery.
 - **Live**: opens the live camera preview.
@@ -178,12 +325,36 @@ The import menu lists previous experiments from history.
   - a Tropism config opens the **Tropism** screen
 - The **X** button closes the import menu without loading anything.
 
+### Downloads menu
+
+The downloads menu lists previous experiments from history, filtered to the
+ones whose saved `username` matches the current researcher name (the same
+name shown on the **User** button, and the same one baked into each
+experiment's folder name). This box has no login/auth, so the filter is a
+convenience for finding your own runs quickly, not an access-control
+boundary — any experiment folder is reachable by anyone on the LAN who knows
+its ID.
+
+- Each row shows the experiment name, start date, and image count, plus a
+  **Download ZIP** button.
+- Tapping **Download ZIP** downloads a `.zip` of that experiment's entire
+  folder — every captured image, `metadata.json`, and the saved `.xml`
+  protocol config — via `GET /api/experiments/{id}/download`. The browser
+  saves it like any other file download; no separate tool (SSH, Samba, etc.)
+  is required.
+- The **X** button closes the downloads menu.
+
 ### Settings menu
 
 The settings menu has two tabs:
 
 - **Camera**: opens the full camera settings panel.
-- **General**: system info (hostname, version, disk space), LED strip segment editor, and IR pin display.
+- **General**: system info (hostname, version, disk space), LED strip segment
+  editor, IR pin display, remote CIFS sync configuration, software update /
+  rollback controls, and SSH access info. See
+  [Software updates & version rollback](#software-updates--version-rollback),
+  [SSH access](#ssh-access) and
+  [Remote storage sync](#remote-storage-sync-cifssmb) below.
 
 The **X** button closes the settings menu.
 
@@ -341,3 +512,15 @@ Compared with the old single-purpose UI flow, the current system now includes:
 - an in-app **gallery**
 - a **measurement finished** screen with first/last frame preview and storage path
 - a restart-based summary close flow that returns the kiosk to the home screen
+- **over-the-air self-update** (manual button + monthly unattended timer),
+  fast-forward-only and refused cleanly on any risk of data loss
+- **one-click rollback** to the previously-running version, with how-long-it-ran
+  tracked automatically
+- an in-app **SSH access** panel (username, status, IP, ready-to-run command)
+- **remote CIFS/SMB sync**: images copied to an institutional share as they are
+  captured, plus a one-shot bulk copy of a researcher's whole back catalogue —
+  off the capture path, so a dead share can never stall or fail a running
+  experiment. The share password is session-only and never written to disk, and
+  the UI says so plainly both while it is typed and after a restart clears it.
+- a **downloads menu** for grabbing a ZIP of your own experiment files
+  (images + metadata + config) straight from the browser, no SSH/Samba needed

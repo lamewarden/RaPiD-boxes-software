@@ -8,9 +8,15 @@ import type {
   HistoryEntry,
   ImageListResponse,
   PlantMaskStatus,
+  RemoteSyncCheckResult,
+  RemoteSyncStatus,
+  RemoteSyncUpdate,
   SavedExperimentConfig,
   StartResponse,
   SystemInfo,
+  UpdateApplyResult,
+  UpdateCheckResult,
+  VersionStatus,
 } from "@shared/api";
 
 async function errorDetail(res: Response): Promise<string> {
@@ -69,6 +75,10 @@ export const api = {
   history: () => jsonFetch<HistoryEntry[]>("/api/experiments/history"),
   experimentConfig: (id: string) =>
     jsonFetch<SavedExperimentConfig>(`/api/experiments/${id}/config`),
+  /** URL for the zipped experiment folder (images + metadata + config XML).
+   * No fetch needed -- an <a href> download or window.location navigation
+   * lets the browser handle the actual save. */
+  experimentDownloadUrl: (id: string) => `/api/experiments/${id}/download`,
   images: (experimentId?: string) =>
     jsonFetch<ImageListResponse>(experimentId ? `/api/images/${experimentId}` : "/api/images"),
   /** Growth heatmap JPEG URL; `v` cache-busts when the frame set grows. */
@@ -83,11 +93,29 @@ export const api = {
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
+  remoteSync: () => jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync"),
+  /** Patch the remote-sync config. `password` is write-only and never comes back. */
+  saveRemoteSync: (update: RemoteSyncUpdate) =>
+    jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync", {
+      method: "PUT",
+      body: JSON.stringify(update),
+    }),
+  checkRemoteSync: () =>
+    jsonFetch<RemoteSyncCheckResult>("/api/settings/remote-sync/check", { method: "POST" }),
+  syncAllRemote: (researcher: string) =>
+    jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync/sync-all", {
+      method: "POST",
+      body: JSON.stringify({ researcher }),
+    }),
   health: () => jsonFetch<{ ok: boolean; version: string }>("/api/health"),
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),
   closeKiosk: () => jsonFetch<{ status: string; kioskPids: number[] }>("/api/system/close-kiosk", { method: "POST" }),
   restartService: () => jsonFetch<{ status: string }>("/api/system/restart-service", { method: "POST" }),
+  checkForUpdate: () => jsonFetch<UpdateCheckResult>("/api/system/update/check"),
+  applyUpdate: () => jsonFetch<UpdateApplyResult>("/api/system/update/apply", { method: "POST" }),
+  versionStatus: () => jsonFetch<VersionStatus>("/api/system/update/version"),
+  rollbackUpdate: () => jsonFetch<UpdateApplyResult>("/api/system/update/rollback", { method: "POST" }),
   testPhotoWithSettings: async (settings: CameraSettings): Promise<Blob> => {
     const res = await fetch("/api/preview/test-photo", {
       method: "POST",

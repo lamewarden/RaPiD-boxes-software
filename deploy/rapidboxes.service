@@ -8,6 +8,12 @@ User=@USER@
 WorkingDirectory=@BACK_DIR@
 EnvironmentFile=/etc/rapidboxes.env
 ExecStart=@VENV@/bin/python -m rapidboxes
+# Private 0700 directory under /run for the transient CIFS credentials file
+# (remote sync). systemd creates it on start and removes it on stop; /run is
+# tmpfs, so nothing can survive a reboot. The path is pinned by the
+# /etc/sudoers.d/rapidboxes rule -- keep the two in step.
+RuntimeDirectory=rapidboxes-cifs
+RuntimeDirectoryMode=0700
 Restart=always
 RestartSec=1
 # Hard-kill promptly: graceful stop can hang on open WebSockets / MJPEG.
