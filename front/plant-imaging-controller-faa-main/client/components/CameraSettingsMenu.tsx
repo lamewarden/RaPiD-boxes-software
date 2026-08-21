@@ -34,10 +34,9 @@ const DEFAULT_CAMERA: CameraSettings = {
   height: 1296,
   exposureMicroseconds: 100_000,
   iso: 100,
-  autofocusEnabled: true,
-  focusDistance: 0.0,
+  autofocusEnabled: false,
+  focusDistance: 6.0,
   grayscale: true,
-  jpegQuality: 92,
   zoom: 1.0,
 };
 
@@ -180,20 +179,6 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
                   onClick: () => patch({ grayscale: false }),
                 },
               ]}
-            />
-
-            <ParameterControl
-              label="JPEG Quality"
-              value={`${camera.jpegQuality}%`}
-              valueColor="#F0B100"
-              sliderColor="#F0B100"
-              sliderValue={camera.jpegQuality}
-              sliderMin={40}
-              sliderMax={100}
-              sliderStep={1}
-              onSliderChange={(v) => patch({ jpegQuality: v })}
-              onIncrement={() => patch({ jpegQuality: clamp(camera.jpegQuality + 1, 40, 100) })}
-              onDecrement={() => patch({ jpegQuality: clamp(camera.jpegQuality - 1, 40, 100) })}
             />
 
             {/* Range and curve follow the illumination source: IR snaps 0.2–10 s

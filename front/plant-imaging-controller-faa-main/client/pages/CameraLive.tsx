@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { api } from "@/lib/api";
 
-type BacklightMode = "off" | "white" | "ir";
+type BacklightMode = "off" | "white";
 
 export default function CameraLive() {
   const navigate = useNavigate();
@@ -43,8 +43,8 @@ export default function CameraLive() {
     }
   };
 
-  const toggle = (mode: "white" | "ir") => {
-    void applyBacklight(backlight === mode ? "off" : mode);
+  const toggleWhite = () => {
+    void applyBacklight(backlight === "white" ? "off" : "white");
   };
 
   const handleClose = async () => {
@@ -86,7 +86,7 @@ export default function CameraLive() {
         <button
           type="button"
           disabled={busy}
-          onClick={() => toggle("white")}
+          onClick={toggleWhite}
           className={`flex flex-1 items-center justify-center py-2 rounded-[10px] text-[13px] font-semibold transition-colors disabled:opacity-50 ${
             backlight === "white"
               ? "bg-app-green text-white"
@@ -94,18 +94,6 @@ export default function CameraLive() {
           }`}
         >
           White backlight
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => toggle("ir")}
-          className={`flex flex-1 items-center justify-center py-2 rounded-[10px] text-[13px] font-semibold transition-colors disabled:opacity-50 ${
-            backlight === "ir"
-              ? "bg-app-violet text-white"
-              : "bg-app-bg-tertiary border border-app-border-primary text-white hover:bg-app-border-primary"
-          }`}
-        >
-          IR backlight
         </button>
       </div>
     </div>

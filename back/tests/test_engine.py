@@ -47,6 +47,34 @@ def _runner(tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None) -> Ex
 
 
 @pytest.mark.asyncio
+async def test_start_reports_low_space_without_creating_experiment(tmp_path, monkeypatch):
+    """When the estimated footprint doesn't fit free disk space, start()
+    must report low_space and create nothing -- not even the folder."""
+    import rapidboxes.engine.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "estimate_experiment_bytes", lambda config, camera: 10**18)
+
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=180 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+    )
+
+    resp = await runner.start(config)
+
+    assert resp.status == "low_space"
+    assert resp.estimatedBytes == 10**18
+    assert resp.experimentId is None
+    assert runner.status.state == ExperimentState.idle
+    assert list((tmp_path / "exp").glob("*")) == []
+
+
+@pytest.mark.asyncio
 async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
     ft = FakeTime()
     runner = _runner(tmp_path, ft)
@@ -71,8 +99,8 @@ async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
 
     # Files actually written.
     exp = runner.current_experiment
-    jpgs = list(Path(exp.path).glob("*.jpg"))
-    assert len(jpgs) == 5
+    pngs = list(Path(exp.path).glob("*.png"))
+    assert len(pngs) == 5
 
     # Saved config XML written at start, named after the experiment.
     xmls = list(Path(exp.path).glob("*.xml"))
@@ -149,7 +177,7 @@ async def test_growth_protocol_baseline_day_night_rgbw_flash(tmp_path):
     assert runner.status.totalDays == 1
 
     exp = runner.current_experiment
-    files = sorted(p.name for p in Path(exp.path).glob("*.jpg"))
+    files = sorted(p.name for p in Path(exp.path).glob("*.png"))
     assert sum(f.startswith("baseline_") for f in files) == 1
     assert sum(f.startswith("day_") for f in files) == 1
     assert sum(f.startswith("night_") for f in files) == 6

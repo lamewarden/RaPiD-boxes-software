@@ -1,12 +1,21 @@
 """Experiment lifecycle + history."""
 from __future__ import annotations
 
+import shutil
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import config_xml
-from ..models import ExperimentConfig, ExperimentStatus, SavedExperimentConfig, StartResponse
+from ..models import (
+    ExperimentConfig,
+    ExperimentStatus,
+    FreeSpaceRequest,
+    FreeSpaceResponse,
+    SavedExperimentConfig,
+    StartResponse,
+)
+from ..storage import ExperimentDir
 from .deps import AppState, get_state
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
@@ -15,6 +24,40 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 @router.post("", response_model=StartResponse)
 async def start_experiment(config: ExperimentConfig, state: AppState = Depends(get_state)):
     return await state.runner.start(config, state.settings.camera)
+
+
+@router.post("/free-space", response_model=FreeSpaceResponse)
+async def free_space(body: FreeSpaceRequest, state: AppState = Depends(get_state)):
+    """Delete experiment folders to make room for a "low_space" start retry.
+
+    Ownership is re-checked server-side against each folder's own username
+    (never trusts the client's id list), and the active run -- if any -- is
+    never a candidate, so this can only ever remove the requesting user's own,
+    not-currently-running experiments."""
+    requested = set(body.experimentIds)
+    active_id = (
+        state.runner.status.experimentId
+        if state.runner.status.state in ("running", "paused", "finishing")
+        else None
+    )
+    want_user = body.username.strip().lower()
+
+    deleted: List[str] = []
+    freed = 0
+    for d in state.storage.list_experiments():
+        exp = ExperimentDir(d)
+        if exp.experiment_id not in requested or exp.experiment_id == active_id:
+            continue
+        owner = exp.username()
+        if not owner or owner.strip().lower() != want_user:
+            continue
+        size = exp.size_bytes()
+        if state.storage.delete_experiment(exp.experiment_id):
+            deleted.append(exp.experiment_id)
+            freed += size
+
+    available = shutil.disk_usage(state.storage.root).free
+    return FreeSpaceResponse(deletedIds=deleted, freedBytes=freed, availableBytes=available)
 
 
 @router.get("/current", response_model=ExperimentStatus)
@@ -51,18 +94,18 @@ async def abort(state: AppState = Depends(get_state)):
 async def history(state: AppState = Depends(get_state)) -> List[dict]:
     out = []
     for d in state.storage.list_experiments():
-        from ..storage import ExperimentDir
-
         exp = ExperimentDir(d)
         meta = exp.read_metadata() or {}
         out.append(
             {
                 "id": exp.experiment_id,
                 "name": meta.get("experimentName"),
-                "username": meta.get("username"),
+                "username": exp.username(),
                 "startedAt": meta.get("startedAt"),
                 "state": meta.get("state"),
-                "imagesCaptured": meta.get("imagesCaptured", len(exp.list_images())),
+                "imagesCaptured": meta.get(
+                    "imagesCaptured", len(exp.list_capture_images())
+                ),
             }
         )
     return out

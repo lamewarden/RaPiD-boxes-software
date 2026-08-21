@@ -4,21 +4,36 @@ import type {
   DeviceSettings,
   ExperimentConfig,
   ExperimentStatus,
+  FreeSpaceResponse,
   HistoryEntry,
   ImageListResponse,
+  PlantMaskStatus,
   SavedExperimentConfig,
   StartResponse,
   SystemInfo,
 } from "@shared/api";
 
 async function errorDetail(res: Response): Promise<string> {
-  let detail = res.statusText;
   try {
-    detail = (await res.json()).detail ?? detail;
+    const body = await res.json();
+    const detail = body?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item: { msg?: string; loc?: unknown[] }) => {
+          const loc = Array.isArray(item.loc)
+            ? item.loc.filter((p) => p !== "body").join(".")
+            : "";
+          const msg = item.msg ?? JSON.stringify(item);
+          return loc ? `${loc}: ${msg}` : msg;
+        })
+        .join("; ");
+    }
+    if (detail != null) return JSON.stringify(detail);
   } catch {
     /* ignore */
   }
-  return detail;
+  return res.statusText;
 }
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -38,6 +53,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(config),
     }),
+  /** Deletes the given experiment ids -- backend re-checks ownership against
+   *  `username` server-side, so only the requesting user's own folders are
+   *  ever removed. Used to resolve a "low_space" startExperiment response. */
+  freeSpace: (username: string, experimentIds: string[]) =>
+    jsonFetch<FreeSpaceResponse>("/api/experiments/free-space", {
+      method: "POST",
+      body: JSON.stringify({ username, experimentIds }),
+    }),
   currentStatus: () => jsonFetch<ExperimentStatus>("/api/experiments/current"),
   pause: () => jsonFetch<ExperimentStatus>("/api/experiments/current/pause", { method: "POST" }),
   resume: () => jsonFetch<ExperimentStatus>("/api/experiments/current/resume", { method: "POST" }),
@@ -48,6 +71,15 @@ export const api = {
     jsonFetch<SavedExperimentConfig>(`/api/experiments/${id}/config`),
   images: (experimentId?: string) =>
     jsonFetch<ImageListResponse>(experimentId ? `/api/images/${experimentId}` : "/api/images"),
+  /** Growth heatmap JPEG URL; `v` cache-busts when the frame set grows. */
+  growthUrl: (experimentId: string, imageCount: number) =>
+    `/api/images/${encodeURIComponent(experimentId)}/growth?v=${imageCount}`,
+  startPlantMask: (experimentId: string) =>
+    jsonFetch<PlantMaskStatus>(`/api/images/${encodeURIComponent(experimentId)}/plant-mask/start`, {
+      method: "POST",
+    }),
+  plantMaskStatus: (experimentId: string) =>
+    jsonFetch<PlantMaskStatus>(`/api/images/${encodeURIComponent(experimentId)}/plant-mask/status`),
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
@@ -67,9 +99,9 @@ export const api = {
     }
     return res.blob();
   },
-  /** Live-view assist light: RGBW fill (10,10,10,10), IR boards high, or off. */
-  setLiveBacklight: (mode: "off" | "white" | "ir") =>
-    jsonFetch<{ mode: "off" | "white" | "ir" }>("/api/preview/backlight", {
+  /** Live-view assist light: RGBW fill (10,10,10,10) or off. IR is Settings test-photo only. */
+  setLiveBacklight: (mode: "off" | "white") =>
+    jsonFetch<{ mode: "off" | "white" }>("/api/preview/backlight", {
       method: "POST",
       body: JSON.stringify({ mode }),
     }),

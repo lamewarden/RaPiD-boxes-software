@@ -11,10 +11,17 @@ import logging
 from typing import List, Literal, Optional
 
 from ..config import AppConfig
-from ..models import CameraSettings, DeviceSettings, IrSettings, LedSettings
+from ..models import (
+    CameraSettings,
+    DeviceSettings,
+    IrSettings,
+    LedSettings,
+    exposure_for_source,
+)
 from .base import (
     CameraBackend,
     CameraUnavailableError,
+    HardwareTimeoutError,
     IrBackend,
     LedBackend,
     NullCamera,
@@ -29,7 +36,16 @@ log = logging.getLogger("rapidboxes.hw")
 
 # Fixed dim fill for Live "White backlight" (R,G,B,W). All channels = 10.
 LIVE_WHITE_BACKLIGHT: RGBW = (10, 10, 10, 10)
-LiveBacklightMode = Literal["off", "white", "ir"]
+# Live assist is RGBW-only; IR focusing stays on Settings → test photo.
+LiveBacklightMode = Literal["off", "white"]
+
+# LED/IR calls are GPIO/SPI and should always return in well under a second;
+# 5s is a generous margin before we treat one as stuck.
+DEFAULT_TIMEOUT = 5.0
+# Camera calls can legitimately take a while: up to a 10s IR exposure plus a
+# 2s settle plus readout/encode/save overhead. 20s covers the slowest real
+# capture with room to spare.
+CAMERA_TIMEOUT = 20.0
 
 
 class HardwareManager:
@@ -48,7 +64,9 @@ class HardwareManager:
         self._lock = asyncio.Lock()
         self.light_desc = "off"
         self.camera_available = camera_available
-        self._live_backlight: Optional[Literal["white", "ir"]] = None
+        self._live_backlight: Optional[Literal["white"]] = None
+        # Live uses short RGBW exposure; invalidated when still/test config is applied.
+        self._preview_camera_ready = False
 
         # Let the simulated camera annotate frames with the current light state.
         from .simulation import SimCamera
@@ -56,16 +74,40 @@ class HardwareManager:
         if isinstance(camera, SimCamera):
             camera._probe = lambda: self.light_desc
 
-    async def _run(self, fn, *args):
+    async def _run(self, fn, *args, timeout: float = DEFAULT_TIMEOUT):
         loop = asyncio.get_event_loop()
         async with self._lock:
-            return await loop.run_in_executor(None, fn, *args)
+            try:
+                return await asyncio.wait_for(loop.run_in_executor(None, fn, *args), timeout=timeout)
+            except asyncio.TimeoutError:
+                name = getattr(fn, "__qualname__", repr(fn))
+                log.error("hardware call %s timed out after %.0fs; treating as failed", name, timeout)
+                raise HardwareTimeoutError(f"{name} timed out after {timeout:.0f}s") from None
+
+    def _live_preview_settings(self) -> CameraSettings:
+        """Still framing/focus from device settings, but always RGBW-speed exposure.
+
+        Live must stay snappy even when photoIlluminationSource is IR (multi-second
+        stills). IR exposure is only used for Settings test photos / experiments.
+        """
+        cam = self._settings.camera
+        exp = exposure_for_source("rgbw", cam.exposureMicroseconds)
+        if exp == cam.exposureMicroseconds:
+            return cam
+        return cam.model_copy(update={"exposureMicroseconds": exp})
+
+    async def _ensure_live_preview_camera(self) -> None:
+        if not self.camera_available or self._preview_camera_ready:
+            return
+        await self._run(self._camera.configure, self._live_preview_settings(), timeout=CAMERA_TIMEOUT)
+        self._preview_camera_ready = True
 
     # --- lifecycle -------------------------------------------------------
     async def configure_camera(self) -> None:
         if not self.camera_available:
             return
-        await self._run(self._camera.configure, self._settings.camera)
+        await self._run(self._camera.configure, self._settings.camera, timeout=CAMERA_TIMEOUT)
+        self._preview_camera_ready = False
 
     async def shutdown(self) -> None:
         """Best-effort: turn everything off, then release devices. Never raises."""
@@ -81,10 +123,11 @@ class HardwareManager:
 
     # --- camera ----------------------------------------------------------
     async def capture(self, path: str) -> None:
-        await self._run(self._camera.capture_file, path)
+        await self._run(self._camera.capture_file, path, timeout=CAMERA_TIMEOUT)
 
     async def preview_frame(self, zoom: int = 1) -> bytes:
-        return await self._run(self._camera.capture_jpeg, zoom)
+        await self._ensure_live_preview_camera()
+        return await self._run(self._camera.capture_jpeg, zoom, timeout=CAMERA_TIMEOUT)
 
     async def capture_test_jpeg(self, settings: CameraSettings) -> bytes:
         """Camera Settings test photo: same illumination a real dark/baseline/night
@@ -92,15 +135,16 @@ class HardwareManager:
         camera's colour mode. Camera settings themselves may be unsaved edits."""
         from ..models import PHOTO_FLASH_INTENSITY
 
+        self._preview_camera_ready = False
         if self.photo_illumination_source == "ir":
             await self.ir_on()
             try:
-                return await self._run(self._camera.capture_test_jpeg, settings)
+                return await self._run(self._camera.capture_test_jpeg, settings, timeout=CAMERA_TIMEOUT)
             finally:
                 await self.ir_off()
         await self.top_white(PHOTO_FLASH_INTENSITY)
         try:
-            return await self._run(self._camera.capture_test_jpeg, settings)
+            return await self._run(self._camera.capture_test_jpeg, settings, timeout=CAMERA_TIMEOUT)
         finally:
             await self.all_off()
 
@@ -118,8 +162,8 @@ class HardwareManager:
         from .camera import Picamera2Camera
 
         try:
-            camera = await self._run(Picamera2Camera)
-        except CameraUnavailableError:
+            camera = await self._run(Picamera2Camera, timeout=CAMERA_TIMEOUT)
+        except (CameraUnavailableError, HardwareTimeoutError):
             return False
         self._camera = camera
         self.camera_available = True
@@ -181,21 +225,15 @@ class HardwareManager:
         return self._settings.ir
 
     async def set_live_backlight(self, mode: LiveBacklightMode) -> LiveBacklightMode:
-        """Live-view assist lights. Mutually exclusive white fill vs IR boards."""
+        """Live-view assist light: dim RGBW fill, or off. No IR on Live."""
         if mode == "off":
             await self.clear_live_backlight()
             return "off"
-        if mode == "white":
-            await self.ir_off()
-            await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT, self._stride)
-            self._live_backlight = "white"
-            self.light_desc = "live-white"
-            return "white"
-        # ir
-        await self.leds_off()
-        await self.ir_on()
-        self._live_backlight = "ir"
-        return "ir"
+        await self.ir_off()
+        await self._run(self._leds.fill, LIVE_WHITE_BACKLIGHT, self._stride)
+        self._live_backlight = "white"
+        self.light_desc = "live-white"
+        return "white"
 
     async def clear_live_backlight(self) -> None:
         """Turn off Live assist lights if any were armed; no-op otherwise."""

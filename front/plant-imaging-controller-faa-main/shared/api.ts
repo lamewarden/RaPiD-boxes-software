@@ -47,6 +47,12 @@ export type ExperimentPhase =
   | "day"
   | "night";
 
+export interface StorageNotice {
+  kind: "expiring" | "info";
+  message: string;
+  experiments: Array<{ id: string; name: string | null; daysRemaining: number }>;
+}
+
 export interface ExperimentStatus {
   state: ExperimentState;
   phase: ExperimentPhase | null;
@@ -66,11 +72,27 @@ export interface ExperimentStatus {
   config: ExperimentConfig | null;
   dayIndex: number | null;
   totalDays: number | null;
+  storageNotice: StorageNotice | null;
+}
+
+export interface StorageSuggestion {
+  experimentIds: string[];
+  count: number;
+  freedBytes: number;
 }
 
 export interface StartResponse {
-  status: "started" | "busy" | "no_camera";
+  status: "started" | "busy" | "no_camera" | "low_space";
   experimentId: string | null;
+  estimatedBytes?: number | null;
+  availableBytes?: number | null;
+  suggestion?: StorageSuggestion | null;
+}
+
+export interface FreeSpaceResponse {
+  deletedIds: string[];
+  freedBytes: number;
+  availableBytes: number;
 }
 
 export interface HistoryEntry {
@@ -96,6 +118,17 @@ export interface ImageListResponse {
   images: ImageInfo[];
 }
 
+export interface PlantMaskStatus {
+  status: "idle" | "running" | "done" | "error";
+  current: number;
+  total: number;
+  message: string;
+  percent?: number;
+  error?: string;
+  maskUrl?: string;
+  overlayUrl?: string;
+}
+
 export interface SystemInfo {
   hostname: string;
   ip: string;
@@ -115,7 +148,6 @@ export interface CameraSettings {
   autofocusEnabled: boolean;
   focusDistance: number;
   grayscale: boolean;
-  jpegQuality: number;
   /** Digital zoom 1-5x: center-crop to 1/zoom of the frame, scaled back up to
    *  width x height. Applied to every capture, not just a preview. */
   zoom: number;
@@ -156,8 +188,8 @@ export interface ExposureProfile {
  * back/rapidboxes/models.py, which enforces default/min/max server-side.
  */
 export const EXPOSURE_PROFILES: Record<PhotoIlluminationSource, ExposureProfile> = {
-  // Default 3.6 s sits on the 0.2 s IR notch grid (3.5 s would fall between notches).
-  ir: { default: 3_600_000, min: 200_000, max: 10_000_000, scale: "linear" },
+  // Default 1.0 s sits on the 0.2 s IR notch grid.
+  ir: { default: 1_000_000, min: 200_000, max: 10_000_000, scale: "linear" },
   rgbw: { default: 100_000, min: 10_000, max: 500_000, scale: "log" },
 };
 

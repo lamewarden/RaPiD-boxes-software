@@ -87,7 +87,7 @@ export function stepExposure(
   return positionToExposure(source, exposureToPosition(source, microseconds) + steps);
 }
 
-/** Short human label: "3.6 s" / "0.2 s" for IR-scale values, "85 ms" for short RGBW. */
+/** Short human label: "1.0 s" / "0.2 s" for IR-scale values, "85 ms" for short RGBW. */
 export function formatExposure(microseconds: number): string {
   if (microseconds >= 1_000_000) {
     return `${(microseconds / 1_000_000).toFixed(2).replace(/\.?0+$/, "")} s`;

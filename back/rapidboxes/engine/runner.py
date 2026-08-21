@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Awaitable, Callable, List, Optional, Set, Union
@@ -23,7 +24,14 @@ from ..models import (
     GrowthConfig,
     SavedExperimentConfig,
     StartResponse,
+    StorageNotice,
     TropismConfig,
+)
+from ..retention import (
+    cleanup_expired_experiments,
+    estimate_experiment_bytes,
+    experiments_near_expiration,
+    suggest_deletions_for_space,
 )
 from ..storage import ExperimentDir, Storage
 from .scheduler import advance_deadline, planned_captures
@@ -75,6 +83,17 @@ def build_phases(config: Config) -> List[_Phase]:
     if isinstance(config, GrowthConfig):
         return _build_growth_phases(config)
     return _build_tropism_phases(config)
+
+
+def images_planned_for(config: Config) -> int:
+    """Total capture count for `config`, without running anything -- used both
+    to drive the live progress bar and to pre-flight a storage estimate
+    before the experiment is created (see retention.estimate_experiment_bytes)."""
+    interval_s = config.intervalMinutes * 60.0
+    total = sum(planned_captures(p.duration_s, interval_s) for p in build_phases(config) if p.capture)
+    if isinstance(config, GrowthConfig):
+        total += 1  # one-off baseline photo
+    return total
 
 
 def _build_tropism_phases(config: TropismConfig) -> List[_Phase]:
@@ -154,8 +173,24 @@ class ExperimentRunner:
             return StartResponse(status="busy", experimentId=self.status.experimentId)
         if not self._hw.camera_available:
             return StartResponse(status="no_camera")
+
+        cam_settings = camera or CameraSettings()
+        estimated = estimate_experiment_bytes(config, cam_settings)
+        available = shutil.disk_usage(self._storage.root).free
+        if estimated > available:
+            suggestion = suggest_deletions_for_space(self._storage, config.username, estimated, available)
+            return StartResponse(
+                status="low_space",
+                estimatedBytes=estimated,
+                availableBytes=available,
+                suggestion=suggestion,
+            )
+
         exp = self._storage.create_experiment(config.username, config.experimentName)
         self._exp_dir = exp
+
+        cleanup_expired_experiments(self._storage, exclude_id=exp.experiment_id)
+        storage_notice = self._build_storage_notice(config.username, exp.experiment_id)
         if isinstance(config, TropismConfig):
             saved = SavedExperimentConfig(
                 protocol="tropism",
@@ -195,10 +230,28 @@ class ExperimentRunner:
             username=config.username,
             startedAt=datetime.now(),
             config=config,
+            storageNotice=storage_notice,
         )
         self._task = asyncio.create_task(self._run(config, exp))
         await self._broadcast()
         return StartResponse(status="started", experimentId=exp.experiment_id)
+
+    def _build_storage_notice(self, username: str, exclude_id: str) -> StorageNotice:
+        """Advance warning if any of this user's own folders will be
+        auto-deleted soon (see retention.RETENTION_DAYS), else a standing
+        notice about the retention policy so backups aren't a surprise."""
+        near = experiments_near_expiration(self._storage, username, exclude_id=exclude_id)
+        if near:
+            names = ", ".join(f"'{e['name'] or e['id']}' ({e['daysRemaining']}d)" for e in near)
+            return StorageNotice(
+                kind="expiring",
+                message=f"Back up soon -- auto-deleted in ≤30 days: {names}",
+                experiments=near,
+            )
+        return StorageNotice(
+            kind="info",
+            message="Device storage is automatically cleaned every 90 days -- back up your experiments in advance.",
+        )
 
     async def pause(self) -> None:
         if self.status.state == ExperimentState.running and self._clock:
@@ -264,11 +317,7 @@ class ExperimentRunner:
         phases = build_phases(config)
         is_growth = isinstance(config, GrowthConfig)
         self.status.totalSeconds = sum(p.duration_s for p in phases)
-        self.status.imagesPlanned = sum(
-            planned_captures(p.duration_s, interval_s) for p in phases if p.capture
-        )
-        if is_growth:
-            self.status.imagesPlanned += 1  # one-off baseline photo
+        self.status.imagesPlanned = images_planned_for(config)
         try:
             await self._hw.configure_camera()
             if is_growth:

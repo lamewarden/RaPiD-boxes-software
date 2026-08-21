@@ -1,6 +1,6 @@
 """Simulated hardware backends so the full stack runs on a laptop (no Pi).
 
-The camera synthesizes labelled JPEG frames; LEDs and IR just record state and log.
+The camera synthesizes labelled PNG frames; LEDs and IR just record state and log.
 """
 from __future__ import annotations
 
@@ -16,6 +16,10 @@ from ..models import CameraSettings
 from .base import RGBW, BLACK, CameraBackend, IrBackend, LedBackend, zoom_crop_box
 
 log = logging.getLogger("rapidboxes.sim")
+
+# See hardware/camera.py: real captures are lossless PNG, so this only bounds
+# the simulated preview/test-photo JPEG size.
+PREVIEW_JPEG_QUALITY = 90
 
 
 class SimCamera(CameraBackend):
@@ -64,7 +68,7 @@ class SimCamera(CameraBackend):
     def capture_file(self, path: str) -> None:
         time.sleep(0.05)  # pretend a capture takes a moment
         img = self._zoomed_frame(self._settings)
-        img.save(path, "JPEG", quality=self._settings.jpegQuality)
+        img.save(path, "PNG")
         self._frame += 1
         log.info("sim capture -> %s", path)
 
@@ -86,7 +90,7 @@ class SimCamera(CameraBackend):
         time.sleep(0.05)
         img = self._zoomed_frame(settings)
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=settings.jpegQuality)
+        img.save(buf, "JPEG", quality=PREVIEW_JPEG_QUALITY)
         return buf.getvalue()
 
     def close(self) -> None:

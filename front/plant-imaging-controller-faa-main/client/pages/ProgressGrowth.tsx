@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Folder, Home, Pause, Play, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+import StorageNoticeBanner from "@/components/StorageNoticeBanner";
 import type { ExperimentPhase } from "@shared/api";
 
 const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
@@ -130,6 +131,8 @@ export default function ProgressGrowth() {
         <div className="h-2 w-full rounded-full bg-app-bg-tertiary flex-shrink-0">
           <div className="h-2 rounded-full bg-app-green transition-all" style={{ width: `${progressPct}%` }} />
         </div>
+
+        <StorageNoticeBanner notice={status?.storageNotice ?? null} />
 
         <div className="flex flex-1 gap-3 min-h-0">
           {/* Last captured image */}

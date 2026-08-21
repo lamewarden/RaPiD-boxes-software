@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..hardware.base import CameraUnavailableError
+from ..hardware.base import CameraUnavailableError, HardwareTimeoutError
 from ..models import CameraSettings, ExperimentState
 from .deps import AppState, get_state
 
@@ -20,13 +20,13 @@ _BOUNDARY = "frame"
 
 
 class LiveBacklightRequest(BaseModel):
-    mode: Literal["off", "white", "ir"] = Field(
-        description="Live assist light: off, RGBW fill (10,10,10,10), or IR boards high"
+    mode: Literal["off", "white"] = Field(
+        description="Live assist light: off, or RGBW fill (10,10,10,10). IR is Settings test-photo only."
     )
 
 
 class LiveBacklightResponse(BaseModel):
-    mode: Literal["off", "white", "ir"]
+    mode: Literal["off", "white"]
 
 
 def _busy_if_experiment(state: AppState) -> None:
@@ -78,7 +78,10 @@ async def set_live_backlight(
 ):
     """Arm/disarm Live-view assist lights. Cleared automatically when Live ends."""
     _busy_if_experiment(state)
-    mode = await state.hw.set_live_backlight(body.mode)
+    try:
+        mode = await state.hw.set_live_backlight(body.mode)
+    except HardwareTimeoutError as exc:
+        raise HTTPException(504, f"backlight did not respond in time: {exc}")
     return LiveBacklightResponse(mode=mode)
 
 
@@ -88,6 +91,8 @@ async def preview_frame(state: AppState = Depends(get_state)):
         frame = await state.hw.preview_frame()
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
+    except HardwareTimeoutError as exc:
+        raise HTTPException(504, f"camera did not respond in time: {exc}")
     return Response(
         frame,
         media_type="image/jpeg",
@@ -113,5 +118,7 @@ async def test_photo_with_settings(settings: CameraSettings, state: AppState = D
         frame = await state.hw.capture_test_jpeg(settings)
     except CameraUnavailableError:
         raise HTTPException(503, "camera not connected")
+    except HardwareTimeoutError as exc:
+        raise HTTPException(504, f"camera did not respond in time: {exc}")
     return Response(frame, media_type="image/jpeg")
 

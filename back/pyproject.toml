@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "pillow>=10.0",
+    "numpy>=1.24",
     "python-multipart>=0.0.9",
 ]
 

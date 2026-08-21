@@ -43,7 +43,7 @@ interface SpectrumPanelProps {
 }
 
 export default function SpectrumPanel({
-  label = "Spectrum (Optional)",
+  label = "Spectrum",
   selected,
   onToggle,
   compact = false,

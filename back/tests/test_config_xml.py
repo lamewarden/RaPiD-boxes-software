@@ -30,7 +30,6 @@ def test_round_trip_custom_values():
             autofocusEnabled=False,
             focusDistance=4.5,
             grayscale=False,
-            jpegQuality=80,
             zoom=2.4,
         ),
     )
@@ -55,7 +54,6 @@ def test_round_trip_growth_values():
             autofocusEnabled=True,
             focusDistance=0.0,
             grayscale=True,
-            jpegQuality=90,
             zoom=1.0,
         ),
     )
@@ -81,8 +79,8 @@ def test_parse_growth_legacy_light_intensity_field():
         assert restored.protocol == "growth"
         assert restored.dayIntensity == 35
         assert restored.photoIlluminationSource == "rgbw"
-        assert restored.camera.autofocusEnabled is True
-        assert restored.camera.focusDistance == 0.0
+        assert restored.camera.autofocusEnabled is False
+        assert restored.camera.focusDistance == 6.0
 
 
 def test_parse_v2_file_without_illumination_or_leds_elements():

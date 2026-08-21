@@ -86,7 +86,6 @@ def serialize(config: SavedExperimentConfig) -> bytes:
         autofocusEnabled=str(cam.autofocusEnabled).lower(),
         focusDistance=str(cam.focusDistance),
         grayscale=str(cam.grayscale).lower(),
-        jpegQuality=str(cam.jpegQuality),
         zoom=str(cam.zoom),
     )
 
@@ -162,7 +161,6 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         ),
         focusDistance=float(cam_el.get("focusDistance", str(defaults.focusDistance))),
         grayscale=_BOOL.get(cam_el.get("grayscale", str(defaults.grayscale).lower()), defaults.grayscale),
-        jpegQuality=int(cam_el.get("jpegQuality", str(defaults.jpegQuality))),
         zoom=float(cam_el.get("zoom", str(defaults.zoom))),
     )
 

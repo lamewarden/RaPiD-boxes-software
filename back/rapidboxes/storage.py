@@ -2,8 +2,8 @@
 
 Layout (flat, easy to resolve from a URL):
     {storage_root}/{YYYY-MM-DD}_{username}_{name}/
-        dark_00000.jpg ...
-        bending_00000.jpg ...
+        dark_00000.png ...
+        bending_00000.png ...
         thumbs/<image_id>.jpg
         metadata.json
 """
@@ -13,7 +13,7 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -35,7 +35,7 @@ class ExperimentDir:
     # --- writing during a run -------------------------------------------
     def image_path(self, phase: str, index: int) -> Tuple[Path, str]:
         image_id = f"{phase}_{index:05d}"
-        return self.path / f"{image_id}.jpg", image_id
+        return self.path / f"{image_id}.png", image_id
 
     def write_metadata(self, data: dict) -> None:
         """Atomic write so a crash mid-write can't corrupt the file."""
@@ -66,12 +66,34 @@ class ExperimentDir:
         found = next(self.path.glob("*.xml"), None)
         return found.read_bytes() if found else None
 
+    # --- ownership / lifecycle -------------------------------------------
+    def username(self) -> Optional[str]:
+        """Owning username: metadata.json if present, else the folder-name
+        segment set at creation time ({YYYY-MM-DD}_{username}_{name...})."""
+        meta = self.read_metadata() or {}
+        name = meta.get("username")
+        if name:
+            return name
+        parts = self.experiment_id.split("_")
+        return parts[1] if len(parts) >= 3 else None
+
+    def started_date(self) -> Optional[date]:
+        """Start date parsed from the folder name's leading YYYY-MM-DD."""
+        try:
+            return datetime.strptime(self.experiment_id[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def size_bytes(self) -> int:
+        return sum(f.stat().st_size for f in self.path.rglob("*") if f.is_file())
+
     # --- reading for the gallery ----------------------------------------
-    def list_images(self) -> List[dict]:
+    def list_capture_images(self) -> List[dict]:
+        """Camera capture frames only (excludes growth/plant-mask artifacts)."""
         out = []
-        for p in sorted(self.path.glob("*.jpg")):
+        for p in sorted(self.path.glob("*.png")):
             name = p.stem
-            if "_" not in name:
+            if name in ("growth", "plant_overlay") or "_" not in name:
                 continue
             phase, _, idx = name.rpartition("_")
             try:
@@ -91,8 +113,52 @@ class ExperimentDir:
         out.sort(key=lambda d: (d["timestamp"], d["index"]))
         return out
 
+    def list_images(self) -> List[dict]:
+        out = self.list_capture_images()
+        # Derived artifacts appear at the end of the gallery when present.
+        artifacts = [
+            ("plant_mask", self.path / "plant_mask.png", "image/png"),
+            ("plant_overlay", self.path / "plant_overlay.jpg", "image/jpeg"),
+        ]
+        for art_id, path, _media in artifacts:
+            if not path.is_file():
+                continue
+            out.append(
+                {
+                    "id": art_id,
+                    "phase": "artifact",
+                    "index": 10_000_000,
+                    "timestamp": datetime.fromtimestamp(path.stat().st_mtime),
+                    "url": f"/api/images/{self.experiment_id}/artifacts/{art_id}",
+                    "thumbUrl": f"/api/images/{self.experiment_id}/artifacts/{art_id}/thumb",
+                }
+            )
+        return out
+
+    def artifact_file(self, artifact_id: str) -> Optional[Path]:
+        mapping = {
+            "plant_mask": self.path / "plant_mask.png",
+            "plant_overlay": self.path / "plant_overlay.jpg",
+        }
+        p = mapping.get(artifact_id)
+        return p if p is not None and p.is_file() else None
+
+    def artifact_thumb(self, artifact_id: str) -> Optional[Path]:
+        src = self.artifact_file(artifact_id)
+        if src is None:
+            return None
+        thumb = self.path / "thumbs" / f"{artifact_id}.jpg"
+        if not thumb.exists() or thumb.stat().st_mtime < src.stat().st_mtime:
+            try:
+                img = Image.open(src)
+                img.thumbnail((320, 240))
+                img.convert("RGB").save(thumb, "JPEG", quality=80)
+            except Exception:
+                return None
+        return thumb
+
     def image_file(self, image_id: str) -> Optional[Path]:
-        p = self.path / f"{_slug(image_id)}.jpg"
+        p = self.path / f"{_slug(image_id)}.png"
         return p if p.exists() else None
 
     def thumb_file(self, image_id: str) -> Optional[Path]:

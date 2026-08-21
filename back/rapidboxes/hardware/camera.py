@@ -14,6 +14,11 @@ from .base import CameraBackend, CameraUnavailableError, zoom_crop_box
 
 log = logging.getLogger("rapidboxes.camera")
 
+# Real captures are saved lossless (PNG); this only bounds preview/test-photo
+# JPEG size. Not user-tunable -- the previews exist to check focus/framing and
+# colour, not to preview compression artifacts of a file that's no longer JPEG.
+PREVIEW_JPEG_QUALITY = 90
+
 
 class Picamera2Camera(CameraBackend):
     def __init__(self):
@@ -92,7 +97,7 @@ class Picamera2Camera(CameraBackend):
             self._cam.capture_file(path)
         else:
             arr = self._cam.capture_array("main")
-            self._zoomed_frame(arr, self._settings).save(path, "JPEG", quality=self._settings.jpegQuality)
+            self._zoomed_frame(arr, self._settings).save(path, "PNG")
         log.info("captured %s", path)
 
     def capture_jpeg(self, zoom: int = 1) -> bytes:
@@ -117,7 +122,7 @@ class Picamera2Camera(CameraBackend):
         arr = self._cam.capture_array("main")
         img = self._zoomed_frame(arr, settings)
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=settings.jpegQuality)
+        img.save(buf, "JPEG", quality=PREVIEW_JPEG_QUALITY)
         return buf.getvalue()
 
     def close(self) -> None:

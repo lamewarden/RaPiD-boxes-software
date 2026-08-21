@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
+from .retention import cleanup_expired_experiments
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
 from .api import experiments, health, images, preview, settings as settings_api, system, ws
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
     config: AppConfig = app.state._config
     device_settings = load_device_settings_for_new_session(config.settings_path)
     storage = Storage(config.storage_root)
+    cleanup_expired_experiments(storage)
     hw = build_hardware(config, device_settings)
     runner = ExperimentRunner(hw, storage)
     runner.recover()

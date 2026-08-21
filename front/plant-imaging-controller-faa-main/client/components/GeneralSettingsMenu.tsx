@@ -1,12 +1,7 @@
 import { useSystemInfo } from "@/hooks/useSystemInfo";
+import { formatBytes } from "@/lib/format";
 
 const LOW_DISK_BYTES = 2 * 1024 * 1024 * 1024;
-
-function formatBytes(n: number): string {
-  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(0)} MB`;
-  return `${Math.round(n / 1024)} KB`;
-}
 
 export default function GeneralSettingsMenu() {
   const [system] = useSystemInfo();

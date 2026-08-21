@@ -53,6 +53,12 @@ class CameraUnavailableError(RuntimeError):
     """Raised when no camera hardware is detected (e.g. ribbon unplugged)."""
 
 
+class HardwareTimeoutError(RuntimeError):
+    """Raised when a device call (camera/LED/IR) doesn't return in time --
+    e.g. a stuck SPI/I2C transfer -- so it fails instead of blocking every
+    other hardware operation forever (they all share one lock)."""
+
+
 class CameraBackend(ABC):
     @abstractmethod
     def configure(self, settings: CameraSettings) -> None: ...

@@ -10,6 +10,7 @@ import SpectrumPanel from "@/components/SpectrumPanel";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
+import { useLowSpaceGuard } from "@/hooks/useLowSpaceGuard";
 import type { SavedExperimentConfig, Spectrum } from "@shared/api";
 
 const DAY_COLOR = "#F0B100";
@@ -43,6 +44,7 @@ export default function GrowthProgram() {
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
   const [checkingCamera, setCheckingCamera] = useState(false);
+  const { guardedStart, dialog: lowSpaceDialog } = useLowSpaceGuard();
 
   useEffect(() => {
     const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
@@ -50,7 +52,7 @@ export default function GrowthProgram() {
 
     setDayLengthHours(loaded.dayLengthHours);
     setExperimentLengthDays(loaded.experimentLengthDays);
-    setSelectedSpectra(new Set(loaded.spectra));
+    setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
     setDayIntensity(loaded.dayIntensity);
     setInterval(loaded.intervalMinutes);
 
@@ -95,7 +97,11 @@ export default function GrowthProgram() {
     }
     setStarting(true);
     try {
-      const res = await api.startExperiment({
+      if (selectedSpectra.size === 0) {
+        toast.error("Select at least one spectrum colour.");
+        return;
+      }
+      const res = await guardedStart({
         protocol: "growth",
         experimentName,
         username: getUsername(),
@@ -105,12 +111,17 @@ export default function GrowthProgram() {
         dayIntensity,
         intervalMinutes: interval,
       });
+      if (!res) return; // user cancelled the low-space dialog
       if (res.status === "busy") {
         toast.error("An experiment is already running.");
         return;
       }
       if (res.status === "no_camera") {
         toast.error("No camera connected.");
+        return;
+      }
+      if (res.status === "low_space") {
+        toast.error("Not enough storage for this experiment.");
         return;
       }
       navigate("/progress-growth");
@@ -124,6 +135,10 @@ export default function GrowthProgram() {
   const handleSpectrumToggle = (spectrum: string) => {
     const newSpectra = new Set(selectedSpectra);
     if (newSpectra.has(spectrum)) {
+      if (newSpectra.size <= 1) {
+        toast.error("Keep at least one spectrum colour selected.");
+        return;
+      }
       newSpectra.delete(spectrum);
     } else {
       newSpectra.add(spectrum);
@@ -266,6 +281,7 @@ export default function GrowthProgram() {
           }}
         />
       )}
+      {lowSpaceDialog}
     </div>
   );
 }

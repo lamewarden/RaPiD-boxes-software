@@ -32,8 +32,8 @@ PHOTO_FLASH_INTENSITY = 10
 # (which adds the slider scale — a UI-only concern).
 EXPOSURE_PROFILES = {
     # IR UI: discrete 0.2 s notches from 0.2–10 s (see front exposure.ts).
-    # Default 3.6 s sits on that grid (3.5 s would fall between notches).
-    "ir": {"default": 3_600_000, "min": 200_000, "max": 10_000_000},
+    # Default 1.0 s sits on that grid.
+    "ir": {"default": 1_000_000, "min": 200_000, "max": 10_000_000},
     "rgbw": {"default": 100_000, "min": 10_000, "max": 500_000},
 }
 
@@ -144,6 +144,14 @@ class ExperimentPhase(str, Enum):
     night = "night"
 
 
+class StorageNotice(BaseModel):
+    """Retention-policy reminder shown on the experiment progress screen."""
+
+    kind: Literal["expiring", "info"]
+    message: str
+    experiments: List[dict] = Field(default_factory=list)
+
+
 class ExperimentStatus(BaseModel):
     state: ExperimentState = ExperimentState.idle
     phase: Optional[ExperimentPhase] = None
@@ -163,6 +171,7 @@ class ExperimentStatus(BaseModel):
     config: Optional[ExperimentConfig] = None
     dayIndex: Optional[int] = None
     totalDays: Optional[int] = None
+    storageNotice: Optional[StorageNotice] = None
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +184,9 @@ class CameraSettings(BaseModel):
     height: int = Field(default=1296, ge=240, le=2592)
     exposureMicroseconds: int = Field(default=100_000, ge=100, le=10_000_000)
     iso: int = Field(default=100, ge=50, le=1600)
-    autofocusEnabled: bool = True
-    focusDistance: float = Field(default=0.0, ge=0.0, le=32.0)
+    autofocusEnabled: bool = False
+    focusDistance: float = Field(default=6.0, ge=0.0, le=32.0)
     grayscale: bool = True
-    jpegQuality: int = Field(default=92, ge=40, le=100)
     # Digital zoom: center-crop to 1/zoom of the frame, then scale back up to
     # width x height, so every image stays the configured size regardless of
     # framing. Applied to every capture -- experiment images and test photos
@@ -305,6 +313,30 @@ class SystemInfo(BaseModel):
     cameraAvailable: bool = True
 
 
+class StorageSuggestion(BaseModel):
+    """Oldest-first folders (of the requesting user only) whose deletion would
+    free enough room for a new experiment that doesn't currently fit."""
+
+    experimentIds: List[str]
+    count: int
+    freedBytes: int
+
+
 class StartResponse(BaseModel):
-    status: str  # "started" | "busy" | "no_camera"
+    status: str  # "started" | "busy" | "no_camera" | "low_space"
     experimentId: Optional[str] = None
+    # Populated only when status == "low_space".
+    estimatedBytes: Optional[int] = None
+    availableBytes: Optional[int] = None
+    suggestion: Optional[StorageSuggestion] = None
+
+
+class FreeSpaceRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=40)
+    experimentIds: List[str]
+
+
+class FreeSpaceResponse(BaseModel):
+    deletedIds: List[str]
+    freedBytes: int
+    availableBytes: int
