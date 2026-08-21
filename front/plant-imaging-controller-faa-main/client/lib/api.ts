@@ -52,6 +52,10 @@ export const api = {
   history: () => jsonFetch<HistoryEntry[]>("/api/experiments/history"),
   experimentConfig: (id: string) =>
     jsonFetch<SavedExperimentConfig>(`/api/experiments/${id}/config`),
+  /** URL for the zipped experiment folder (images + metadata + config XML).
+   * No fetch needed -- an <a href> download or window.location navigation
+   * lets the browser handle the actual save. */
+  experimentDownloadUrl: (id: string) => `/api/experiments/${id}/download`,
   images: (experimentId?: string) =>
     jsonFetch<ImageListResponse>(experimentId ? `/api/images/${experimentId}` : "/api/images"),
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),

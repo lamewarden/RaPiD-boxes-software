@@ -303,6 +303,8 @@ From left to right:
   This does **not** stop the backend service.
 - **Import**: opens the import menu and lets the user load a previous experiment
   configuration.
+- **Downloads**: opens the downloads menu and lets the user grab a ZIP of their
+  own past experiment folders (images + metadata + saved config).
 - **User**: opens the on-screen keyboard to change the saved researcher name.
 - **Gallery**: opens the image gallery.
 - **Live**: opens the live camera preview.
@@ -322,6 +324,25 @@ The import menu lists previous experiments from history.
   - a Growth config opens the **Growth** screen
   - a Tropism config opens the **Tropism** screen
 - The **X** button closes the import menu without loading anything.
+
+### Downloads menu
+
+The downloads menu lists previous experiments from history, filtered to the
+ones whose saved `username` matches the current researcher name (the same
+name shown on the **User** button, and the same one baked into each
+experiment's folder name). This box has no login/auth, so the filter is a
+convenience for finding your own runs quickly, not an access-control
+boundary — any experiment folder is reachable by anyone on the LAN who knows
+its ID.
+
+- Each row shows the experiment name, start date, and image count, plus a
+  **Download ZIP** button.
+- Tapping **Download ZIP** downloads a `.zip` of that experiment's entire
+  folder — every captured image, `metadata.json`, and the saved `.xml`
+  protocol config — via `GET /api/experiments/{id}/download`. The browser
+  saves it like any other file download; no separate tool (SSH, Samba, etc.)
+  is required.
+- The **X** button closes the downloads menu.
 
 ### Settings menu
 
@@ -501,3 +522,5 @@ Compared with the old single-purpose UI flow, the current system now includes:
   off the capture path, so a dead share can never stall or fail a running
   experiment. The share password is session-only and never written to disk, and
   the UI says so plainly both while it is typed and after a restart clears it.
+- a **downloads menu** for grabbing a ZIP of your own experiment files
+  (images + metadata + config) straight from the browser, no SSH/Samba needed

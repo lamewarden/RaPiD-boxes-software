@@ -1,6 +1,8 @@
 """FastAPI integration tests with simulated hardware."""
 from __future__ import annotations
 
+import io
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -316,6 +318,46 @@ async def test_abort_stops_and_deletes_experiment(client: AsyncClient, app_confi
     assert body["state"] == "idle"
     assert not exp_dir.exists()
     assert (await client.get("/api/experiments/history")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_zip_contains_all_files(app_config: AppConfig):
+    """The download endpoint should zip everything under the experiment's
+    folder (images, metadata.json, saved config xml) and offer it as a
+    downloadable attachment, without loading the whole archive into memory
+    at once (see the comment on download_experiment for why)."""
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        storage = app.state.app.storage
+        exp = storage.create_experiment("alice", "zip-test")
+        (exp.path / "dark_00000.jpg").write_bytes(b"fake-jpeg-bytes-1")
+        (exp.path / "bending_00000.jpg").write_bytes(b"fake-jpeg-bytes-2")
+        exp.write_metadata({"experimentName": "zip-test", "username": "alice", "imagesCaptured": 2})
+        exp.write_config_xml(b"<config></config>", "zip-test")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get(f"/api/experiments/{exp.experiment_id}/download")
+
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert f'filename="{exp.experiment_id}.zip"' in res.headers["content-disposition"]
+    assert "attachment" in res.headers["content-disposition"]
+
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert zf.testzip() is None  # no corrupt members
+        names = set(zf.namelist())
+        assert "dark_00000.jpg" in names
+        assert "bending_00000.jpg" in names
+        assert "metadata.json" in names
+        assert "zip-test.xml" in names
+        assert zf.read("dark_00000.jpg") == b"fake-jpeg-bytes-1"
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_404_for_missing_experiment(client: AsyncClient):
+    res = await client.get("/api/experiments/does-not-exist/download")
+    assert res.status_code == 404
 
 
 @pytest.mark.asyncio
