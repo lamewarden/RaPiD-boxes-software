@@ -25,6 +25,9 @@ def app_config(tmp_path: Path) -> AppConfig:
         simulation=True,
         storage_root=tmp_path / "experiments",
         settings_path=tmp_path / "settings.json",
+        # Keep remote-sync state in the tmpdir too, so tests never read or
+        # write the developer's real ~/rapidboxes/remote_sync.json.
+        remote_sync_path=tmp_path / "remote_sync.json",
         spa_dir=None,
     )
 

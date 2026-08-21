@@ -143,6 +143,108 @@ currently active, the box's LAN IP, and the exact command to run —
 `ssh <user>@<ip>`. Handy since the box normally only has a touchscreen
 attached, not a keyboard.
 
+## Remote storage sync (CIFS/SMB)
+
+The box can mount an institutional SMB/CIFS share and copy experiment images to
+it automatically as they are captured, replacing the legacy hand-run
+`sudo mount -t cifs //ds.asuch.cas.cz/ueb/lhr /mnt/Shared -o user=…,pass=…`.
+
+Settings → General → **Remote Sync** card:
+
+- **On/off toggle**: arms syncing for the researcher currently set on the home
+  screen.
+- **Server / share**: pre-filled with `//ds.asuch.cas.cz/ueb/lhr` and freely
+  editable. The value is checked against a strict allowlist
+  (`//host/share[/folder]`, letters, digits, dots, hyphens and underscores
+  only) before it can reach the mount command; anything else is rejected with
+  a clear message.
+- **Username** and **Password** for the share account. The password field is
+  masked, and when a password is already set the field shows a fixed-width
+  placeholder — the UI is never told the real password or its length.
+- **Check Connection**: enabled only once a username and password are both
+  present. It mounts the share (if it isn't already), proves the destination
+  folder is actually writable, and reports the real error text if not —
+  "wrong password" and "host unreachable" need different fixes.
+- **Sync Entire Folder**: a one-shot bulk copy of *every* local experiment
+  belonging to the current researcher, not just newly captured images.
+- **Status**: mounted / not mounted / credentials needed, the destination path,
+  the last successful sync time, and a count of files still waiting to be
+  copied.
+
+**Remote layout** mirrors the legacy convention: the mounted share, then a
+subfolder named after the researcher (created if missing), then one folder per
+experiment:
+
+```
+/mnt/rapidboxes-remote/<researcher>/<YYYY-MM-DD>_<researcher>_<name>/
+    dark_00000.jpg
+    metadata.json
+    <name>.xml
+```
+
+Thumbnails are not copied — they are regenerated locally on demand.
+
+**Sync stops** when the toggle is switched off, or when the researcher name
+changes (starting an experiment under a different name switches sync off and
+says so, rather than quietly writing into someone else's folder).
+
+**The local experiment always wins.** Copying happens on a background queue,
+never on the capture path, so a slow, hung or dead share cannot delay the
+capture schedule. A failed copy is logged, counted as pending, and retried on
+the next capture; it never aborts or errors a running experiment.
+
+### The password is deliberately never written to disk
+
+This is a design decision, not an oversight: the password is held in memory for
+the lifetime of the backend process and is written nowhere — not to
+`settings.json`, not to `remote_sync.json`, not to logs, and not to any
+credentials file that outlives the mount call itself. It is also never returned
+by any API endpoint (this box has no authentication and binds `0.0.0.0`, so
+anything it serves is readable by anyone on the LAN); the API exposes only a
+`passwordSet` boolean.
+
+**The operational consequence: after any restart the password is gone and must
+be re-entered.** That includes a reboot, a power blip, and the monthly
+`rapidboxes-update.timer` OTA restart. In that state sync does not quietly
+pretend to work — the Remote Sync card turns orange and reads **"Inactive —
+credentials needed after restart"** until someone re-enters the password and
+presses Check Connection. The same tradeoff is stated as helper text next to
+the password field and confirmed by a toast when credentials are accepted, so
+it is known *before* anyone leaves the box on a long unattended run. Server,
+username and the on/off setting all persist normally; only the password does
+not.
+
+### What the sudoers entry grants
+
+Mounting needs root, so `deploy/install.sh` installs
+`/etc/sudoers.d/rapidboxes` (mode 0440, validated with `visudo -c` **before**
+installation — a malformed sudoers file can lock the account out of `sudo`
+entirely). It grants the service account exactly two commands and nothing else:
+
+```
+Cmnd_Alias RAPIDBOXES_CIFS = \
+  /usr/bin/mount -t cifs //* /mnt/rapidboxes-remote -o credentials=/run/rapidboxes-cifs/cred-*\,nosuid\,nodev\,noexec\,uid=1000\,gid=1000\,file_mode=0664\,dir_mode=0775, \
+  /usr/bin/umount /mnt/rapidboxes-remote
+<user> ALL=(root) NOPASSWD: RAPIDBOXES_CIFS
+```
+
+That is: one fixed mount point, one fixed trailing option string, and no
+blanket `ALL`. The hardening options (`nosuid,nodev,noexec` and the
+unprivileged uid/gid) come last on purpose — mount options are last-one-wins.
+`deploy/uninstall.sh` removes the rule, the mount point and the mount.
+
+The password reaches `mount` through a `credentials=` file created 0600 with
+`tempfile.mkstemp` in the service's private `/run/rapidboxes-cifs` directory
+(systemd `RuntimeDirectory=`, on tmpfs), and that file is unlinked in a
+`finally` the instant `mount` returns, success or failure. It is never passed
+as `-o pass=…`, because `ps aux` is world-readable. Every subprocess call uses
+a fixed argument list; `shell=True` is never used anywhere in the backend, and
+a test enforces that.
+
+**Simulation mode** (`RAPIDBOXES_SIMULATION=1`, i.e. laptop development) never
+attempts a real mount: the share is emulated by a local directory so the whole
+sync path stays exercisable with no CIFS server present.
+
 ## What the programs do
 
 ### Tropism program
@@ -227,9 +329,11 @@ The settings menu has two tabs:
 
 - **Camera**: opens the full camera settings panel.
 - **General**: system info (hostname, version, disk space), LED strip segment
-  editor, IR pin display, software update / rollback controls, and SSH access
-  info. See [Software updates & version rollback](#software-updates--version-rollback)
-  and [SSH access](#ssh-access) below.
+  editor, IR pin display, remote CIFS sync configuration, software update /
+  rollback controls, and SSH access info. See
+  [Software updates & version rollback](#software-updates--version-rollback),
+  [SSH access](#ssh-access) and
+  [Remote storage sync](#remote-storage-sync-cifssmb) below.
 
 The **X** button closes the settings menu.
 
@@ -392,3 +496,8 @@ Compared with the old single-purpose UI flow, the current system now includes:
 - **one-click rollback** to the previously-running version, with how-long-it-ran
   tracked automatically
 - an in-app **SSH access** panel (username, status, IP, ready-to-run command)
+- **remote CIFS/SMB sync**: images copied to an institutional share as they are
+  captured, plus a one-shot bulk copy of a researcher's whole back catalogue —
+  off the capture path, so a dead share can never stall or fail a running
+  experiment. The share password is session-only and never written to disk, and
+  the UI says so plainly both while it is typed and after a restart clears it.

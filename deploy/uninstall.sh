@@ -10,8 +10,14 @@ sudo systemctl disable --now rapidboxes-update.timer 2>/dev/null || true
 sudo rm -f /etc/systemd/system/rapidboxes.service /etc/rapidboxes.env
 sudo rm -f /etc/systemd/system/rapidboxes-update.service /etc/systemd/system/rapidboxes-update.timer
 sudo systemctl daemon-reload
+
+# Remote CIFS sync: drop the mount, the narrow sudo grant, and the mount point.
+sudo umount /mnt/rapidboxes-remote 2>/dev/null || true
+sudo rm -f /etc/sudoers.d/rapidboxes
+sudo rmdir /mnt/rapidboxes-remote 2>/dev/null || true
+sudo rm -rf /run/rapidboxes-cifs
 rm -f "$HOME_DIR/.config/autostart/rapidboxes-kiosk.desktop"
 rm -f "$HOME_DIR/.config/autostart/rapidboxes-idle.desktop"
 
-echo "Removed service + kiosk/idle-screen autostart."
+echo "Removed service + kiosk/idle-screen autostart, and the remote-sync sudoers rule."
 echo "Experiment data under ~/rapidboxes was kept; delete it manually if desired."
