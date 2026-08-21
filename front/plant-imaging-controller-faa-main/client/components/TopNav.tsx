@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { X, User, Folder, Radio, Settings, Download } from "lucide-react";
+import { X, User, Folder, Radio, Settings, Download, FolderDown } from "lucide-react";
 import { toast } from "sonner";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import SettingsMenu from "@/components/SettingsMenu";
 import ImportConfigMenu from "@/components/ImportConfigMenu";
+import DownloadsMenu from "@/components/DownloadsMenu";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
@@ -16,6 +17,7 @@ export default function TopNav() {
   const [editingUser, setEditingUser] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [username, setUser] = useState(getUsername());
   const [system, setSystem] = useSystemInfo();
   const cameraAvailable = system?.cameraAvailable ?? true;
@@ -76,6 +78,11 @@ export default function TopNav() {
         <span className="text-white text-center text-[13px] font-semibold leading-5">Import</span>
       </button>
 
+      <button className={btn} onClick={() => setDownloadsOpen(true)}>
+        <FolderDown className="w-[18px] h-[18px]" strokeWidth={1.5} />
+        <span className="text-white text-center text-[13px] font-semibold leading-5">Downloads</span>
+      </button>
+
       <button className={btn} onClick={() => setEditingUser(true)}>
         <User className="w-[18px] h-[18px]" strokeWidth={1.5} />
         <span className="text-white text-center text-[13px] font-semibold leading-5">
@@ -127,6 +134,8 @@ export default function TopNav() {
       {importOpen && (
         <ImportConfigMenu onClose={() => setImportOpen(false)} onLoad={handleImportLoad} />
       )}
+
+      {downloadsOpen && <DownloadsMenu onClose={() => setDownloadsOpen(false)} />}
 
       {editingUser && (
         <OnScreenKeyboard

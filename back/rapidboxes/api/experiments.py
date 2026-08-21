@@ -1,9 +1,13 @@
 """Experiment lifecycle + history."""
 from __future__ import annotations
 
+import os
+import tempfile
+import zipfile
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from .. import config_xml
 from ..models import ExperimentConfig, ExperimentStatus, SavedExperimentConfig, StartResponse
@@ -85,3 +89,45 @@ async def get_config(experiment_id: str, state: AppState = Depends(get_state)):
         return config_xml.parse(data)
     except Exception:
         raise HTTPException(500, "could not parse saved config")
+
+
+@router.get("/{experiment_id}/download")
+async def download_experiment(
+    experiment_id: str, background_tasks: BackgroundTasks, state: AppState = Depends(get_state)
+):
+    """Zip an experiment's whole folder (images + metadata.json + saved config
+    XML) and hand it back as a downloadable attachment.
+
+    An experiment can accumulate hundreds of JPEGs over a multi-day run, and
+    this runs on a Pi with as little as 2GB of RAM. Building the archive in an
+    `io.BytesIO()` would hold the *entire* zip in memory at once (easily
+    hundreds of MB), which risks real memory pressure -- possibly enough to
+    OOM a box that's unattended and mid-protocol on another experiment. There
+    is plenty of disk under storage_root by comparison, so instead we stream
+    the archive to a temp file on disk (bounded, constant memory regardless of
+    experiment size) and hand that off to FileResponse, which streams it to
+    the client in chunks. The temp file is removed by a background task once
+    the response has been sent.
+    """
+    exp = state.storage.get_experiment(experiment_id)
+    if exp is None:
+        raise HTTPException(404, "experiment not found")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=f"{exp.experiment_id}-")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted(exp.path.rglob("*")):
+                if f.is_file():
+                    zf.write(f, arcname=f.relative_to(exp.path))
+    except Exception:
+        os.remove(tmp_path)
+        raise
+
+    background_tasks.add_task(os.remove, tmp_path)
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename=f"{exp.experiment_id}.zip",
+        background=background_tasks,
+    )
