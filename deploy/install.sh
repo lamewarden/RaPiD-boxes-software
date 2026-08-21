@@ -32,7 +32,8 @@ sudo apt-get update
 sudo apt-get install -y \
   python3-venv python3-picamera2 python3-lgpio \
   chromium nodejs npm curl \
-  swayidle wlopm
+  swayidle wlopm \
+  cifs-utils
 
 echo "==> Enabling SPI + camera (and pinning core clock on Pi 4)..."
 CONFIG=/boot/firmware/config.txt
@@ -76,6 +77,53 @@ RAPIDBOXES_STORAGE_ROOT=$HOME_DIR/rapidboxes/experiments
 RAPIDBOXES_SETTINGS_PATH=$HOME_DIR/rapidboxes/settings.json
 RAPIDBOXES_UPDATE_BRANCH=$UPDATE_BRANCH
 EOF
+
+echo "==> Installing sudoers rule for remote CIFS sync..."
+# Remote sync (Settings -> General) mounts an institutional SMB share, which
+# needs root. The grant below is deliberately as narrow as it can be made:
+#
+#   * exactly two commands, mount -t cifs and umount -- never a blanket ALL
+#   * a FIXED mount point, so no other path can be mounted or unmounted
+#   * a FIXED trailing option string; the only wildcards are the //host/share
+#     (validated against a strict allowlist server-side before it can get here)
+#     and the random credentials filename inside the service's own private
+#     /run directory
+#   * the hardening options come LAST in the option string. mount options are
+#     last-one-wins, so even if something unexpected slipped in earlier,
+#     nosuid/nodev/noexec and the unprivileged uid/gid still take effect.
+#
+# Commas inside a sudoers command argument must be escaped (an unescaped comma
+# would end the command and start a new list entry).
+SUDOERS_FILE=/etc/sudoers.d/rapidboxes
+MOUNT_BIN="$( [ -x /usr/bin/mount ] && echo /usr/bin/mount || command -v mount )"
+UMOUNT_BIN="$( [ -x /usr/bin/umount ] && echo /usr/bin/umount || command -v umount )"
+RUN_UID="$(id -u "$RUN_USER")"
+RUN_GID="$(id -g "$RUN_USER")"
+MOUNT_OPTS="nosuid\,nodev\,noexec\,uid=$RUN_UID\,gid=$RUN_GID\,file_mode=0664\,dir_mode=0775"
+
+sudo install -d -m 0755 /mnt/rapidboxes-remote
+
+SUDOERS_TMP="$(mktemp)"
+cat > "$SUDOERS_TMP" <<EOF
+# Installed by RaPiD-boxes deploy/install.sh -- remote CIFS sync.
+# Scoped to one mount point and one option string; see back/rapidboxes/remote_sync.py.
+Cmnd_Alias RAPIDBOXES_CIFS = \\
+  $MOUNT_BIN -t cifs //* /mnt/rapidboxes-remote -o credentials=/run/rapidboxes-cifs/cred-*\,$MOUNT_OPTS, \\
+  $UMOUNT_BIN /mnt/rapidboxes-remote
+$RUN_USER ALL=(root) NOPASSWD: RAPIDBOXES_CIFS
+EOF
+
+# NEVER install an unvalidated sudoers file: a syntax error in /etc/sudoers.d
+# can lock this account out of sudo entirely.
+if sudo visudo -c -f "$SUDOERS_TMP" >/dev/null; then
+  sudo install -m 0440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"
+  echo "    installed $SUDOERS_FILE (validated with visudo -c)"
+else
+  echo "    !! generated sudoers file failed validation -- NOT installed." >&2
+  echo "    !! Remote CIFS sync will be unavailable; everything else still works." >&2
+  sudo visudo -c -f "$SUDOERS_TMP" >&2 || true
+fi
+rm -f "$SUDOERS_TMP"
 
 echo "==> Installing systemd service..."
 sed -e "s|@USER@|$RUN_USER|g" \

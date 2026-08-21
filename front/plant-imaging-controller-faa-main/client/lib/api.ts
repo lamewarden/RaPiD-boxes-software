@@ -6,6 +6,9 @@ import type {
   ExperimentStatus,
   HistoryEntry,
   ImageListResponse,
+  RemoteSyncCheckResult,
+  RemoteSyncStatus,
+  RemoteSyncUpdate,
   SavedExperimentConfig,
   StartResponse,
   SystemInfo,
@@ -54,6 +57,20 @@ export const api = {
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
+  remoteSync: () => jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync"),
+  /** Patch the remote-sync config. `password` is write-only and never comes back. */
+  saveRemoteSync: (update: RemoteSyncUpdate) =>
+    jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync", {
+      method: "PUT",
+      body: JSON.stringify(update),
+    }),
+  checkRemoteSync: () =>
+    jsonFetch<RemoteSyncCheckResult>("/api/settings/remote-sync/check", { method: "POST" }),
+  syncAllRemote: (researcher: string) =>
+    jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync/sync-all", {
+      method: "POST",
+      body: JSON.stringify({ researcher }),
+    }),
   health: () => jsonFetch<{ ok: boolean; version: string }>("/api/health"),
   system: () => jsonFetch<SystemInfo>("/api/system"),
   recheckCamera: () => jsonFetch<SystemInfo>("/api/system/recheck-camera", { method: "POST" }),

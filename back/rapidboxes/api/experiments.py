@@ -14,6 +14,11 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
 @router.post("", response_model=StartResponse)
 async def start_experiment(config: ExperimentConfig, state: AppState = Depends(get_state)):
+    # This is how the backend learns who the active researcher is: the name is
+    # client-side state (localStorage, see client/lib/session.ts) that arrives
+    # with every experiment config. Remote sync uses it as the destination
+    # subfolder, and switches itself off if it changes mid-stream.
+    state.sync.note_active_researcher(config.username)
     return await state.runner.start(config, state.settings.camera)
 
 

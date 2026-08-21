@@ -17,11 +17,16 @@ export default function OnScreenKeyboard({
   initialValue,
   onConfirm,
   onCancel,
+  masked = false,
 }: {
   title: string;
   initialValue: string;
   onConfirm: (value: string) => void;
   onCancel: () => void;
+  /** Render the entry field as a password box (remote-sync credentials).
+   *  The kiosk screen is in a shared lab, so a password must not sit on it
+   *  in plain text while it is being typed. */
+  masked?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
   const [shift, setShift] = useState(false);
@@ -41,6 +46,7 @@ export default function OnScreenKeyboard({
         </div>
 
         <input
+          type={masked ? "password" : "text"}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           className="mb-3 w-full rounded-lg border border-app-border-primary bg-app-bg-primary px-3 py-2 text-lg text-white outline-none focus:border-app-green"

@@ -1,6 +1,7 @@
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
+import RemoteSyncPanel from "@/components/RemoteSyncPanel";
 import UpdatePanel from "@/components/UpdatePanel";
 
 const LOW_DISK_BYTES = 2 * 1024 * 1024 * 1024;
@@ -137,6 +138,8 @@ export default function GeneralSettingsMenu() {
               )
             )}
           </div>
+
+          <RemoteSyncPanel />
 
           <UpdatePanel />
         </div>

@@ -217,6 +217,64 @@ export interface DeviceSettings {
   photoIlluminationSource: PhotoIlluminationSource;
 }
 
+// ---------------------------------------------------------------------------
+// Remote CIFS/SMB sync (Settings -> General -> Remote Sync).
+// Mirrors RemoteSyncStatus / RemoteSyncUpdate in back/rapidboxes/models.py.
+//
+// SECURITY: there is deliberately no `password` field on RemoteSyncStatus. The
+// backend never returns it, and the UI must never try to display or infer it —
+// including its length. `passwordSet` is all there is.
+// ---------------------------------------------------------------------------
+
+/** Pre-filled default, from the institutional share the legacy script mounted. */
+export const DEFAULT_REMOTE_SERVER = "//ds.asuch.cas.cz/ueb/lhr";
+
+export interface RemoteSyncStatus {
+  enabled: boolean;
+  /** //host/share[/path] — strictly validated server-side before it can reach mount. */
+  server: string;
+  /** The CIFS/SMB account used to mount the share. */
+  username: string;
+  /** Whether a password is held in the backend's memory. Never the password itself. */
+  passwordSet: boolean;
+  mounted: boolean;
+  /**
+   * Switched on, but the in-memory password is gone — i.e. the backend has
+   * restarted (reboot, power blip, or the monthly OTA update). Sync can do
+   * nothing at all in this state, so the UI must say so loudly rather than
+   * showing an "on" toggle that silently copies nothing.
+   */
+  credentialsRequired: boolean;
+  /** Destination subfolder on the share; sync stops if the researcher changes. */
+  researcher: string;
+  remotePath: string | null;
+  /** Images captured but not yet copied (queued + failed-and-awaiting-retry). */
+  pendingCount: number;
+  lastSyncAt: string | null; // ISO 8601
+  lastResult: "ok" | "error" | null;
+  lastError: string | null;
+  bulkInProgress: boolean;
+  bulkMessage: string | null;
+  /** True on a dev laptop: no real CIFS mount is attempted. */
+  simulation: boolean;
+}
+
+/** PUT body. Every field optional so the UI can patch one thing at a time.
+ *  `password` is write-only — it is never returned by any endpoint. */
+export interface RemoteSyncUpdate {
+  enabled?: boolean;
+  server?: string;
+  username?: string;
+  password?: string;
+  researcher?: string;
+}
+
+export interface RemoteSyncCheckResult {
+  ok: boolean;
+  message: string;
+  status: RemoteSyncStatus;
+}
+
 /** The saved/loaded per-experiment <name>.xml: phases + light + illumination + camera, no identity fields. */
 export interface SavedExperimentConfig {
   protocol: "tropism" | "growth";

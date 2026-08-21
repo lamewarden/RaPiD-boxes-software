@@ -73,6 +73,12 @@ class AppConfig(BaseSettings):
     # convention as settings_path.
     update_history_path: Path = Path.home() / "rapidboxes" / "update_history.json"
 
+    # Remote CIFS sync (Settings -> General -> Remote Sync). Only the
+    # non-secret half lives here -- server, CIFS username, on/off, researcher.
+    # The password is session-only and is never written to this (or any) file;
+    # see rapidboxes/remote_sync.py.
+    remote_sync_path: Path = Path.home() / "rapidboxes" / "remote_sync.json"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)

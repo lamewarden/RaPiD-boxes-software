@@ -9,6 +9,7 @@ from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..hardware.manager import HardwareManager, build_hardware
 from ..models import DeviceSettings
+from ..remote_sync import RemoteSyncService
 from ..storage import Storage
 
 
@@ -19,6 +20,9 @@ class AppState:
     storage: Storage
     hw: HardwareManager
     runner: ExperimentRunner
+    # Remote CIFS sync. Holds the session-only password in memory; see
+    # rapidboxes/remote_sync.py for why it lives here and nowhere else.
+    sync: RemoteSyncService
 
     async def rebuild_hardware(self, settings: DeviceSettings) -> None:
         """Swap in fresh hardware after a settings change (idle only).

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Set, Union
 
 from .. import config_xml
@@ -112,12 +113,19 @@ class ExperimentRunner:
         now: Optional[Callable[[], float]] = None,
         sleep: Optional[Callable[[float], Awaitable[None]]] = None,
         tick_seconds: float = 1.0,
+        on_image_captured: Optional[Callable[[Path, str, str], None]] = None,
     ):
         self._hw = hw
         self._storage = storage
         self._now = now or (lambda: asyncio.get_event_loop().time())
         self._sleep = sleep or asyncio.sleep
         self._tick = tick_seconds
+        # Notified (path, experiment_id, username) right after each capture, so
+        # remote sync can queue a copy. MUST be synchronous, non-blocking and
+        # non-throwing -- see _capture, where its failure is swallowed: the
+        # local experiment's schedule is paramount, the remote copy is
+        # best-effort.
+        self._on_image_captured = on_image_captured
 
         self.status = ExperimentStatus()
         self._task: Optional[asyncio.Task] = None
@@ -396,6 +404,17 @@ class ExperimentRunner:
         self.status.imagesCaptured = idx + 1
         self.status.lastImageId = image_id
         self._write_metadata(exp)
+
+        # Hand the new image to remote sync (if configured). This only drops a
+        # job on an in-memory queue -- no I/O, no await, no exception escapes:
+        # a hung or dead network share must never delay the next capture or
+        # fail the run.
+        if self._on_image_captured is not None:
+            try:
+                self._on_image_captured(path, exp.experiment_id, config.username)
+            except Exception:
+                log.warning("remote sync notification failed; experiment continues", exc_info=True)
+
         await self._broadcast()
 
     def _write_metadata(self, exp: ExperimentDir) -> None:
