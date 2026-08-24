@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import RecoveryNoticeBanner from "@/components/RecoveryNoticeBanner";
 import StorageNoticeBanner from "@/components/StorageNoticeBanner";
+import IssueDetectedBanner from "@/components/IssueDetectedBanner";
 import ExperimentDetailModal from "@/components/ExperimentDetailModal";
 import { formatElapsedShort } from "@/lib/progress";
 import { formatBytes } from "@/lib/format";
@@ -136,6 +137,10 @@ export default function ProgressTropism() {
 
         <RecoveryNoticeBanner notice={status?.recoveryNotice ?? null} />
         <StorageNoticeBanner notice={status?.storageNotice ?? null} />
+        <IssueDetectedBanner
+          detected={status?.issueDetected ?? false}
+          detail={status?.issueDetail ?? null}
+        />
 
         <div className="flex flex-1 gap-3 min-h-0">
           {/* Last captured image */}
