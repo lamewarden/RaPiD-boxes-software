@@ -476,6 +476,48 @@ async def test_download_experiment_404_for_missing_experiment(client: AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_download_all_zips_every_experiment_under_its_own_prefix(app_config: AppConfig):
+    """Each experiment gets its own top-level folder inside the archive, so
+    same-named files (metadata.json, dark_00000.jpg) across experiments don't
+    collide -- and only the requested user's experiments are included."""
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        storage = app.state.app.storage
+        run_a = storage.create_experiment("alice", "run-a")
+        (run_a.path / "dark_00000.jpg").write_bytes(b"alice-a")
+        run_a.write_metadata({"experimentName": "run-a", "username": "alice"})
+        run_b = storage.create_experiment("Alice", "run-b")
+        (run_b.path / "dark_00000.jpg").write_bytes(b"alice-b")
+        run_b.write_metadata({"experimentName": "run-b", "username": "Alice"})
+        bob = storage.create_experiment("bob", "run-c")
+        (bob.path / "dark_00000.jpg").write_bytes(b"bobs-file")
+        bob.write_metadata({"experimentName": "run-c", "username": "bob"})
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/api/experiments/download-all", params={"username": "alice"})
+
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert 'filename="alice-experiments.zip"' in res.headers["content-disposition"]
+
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert zf.testzip() is None
+        names = set(zf.namelist())
+        assert f"{run_a.experiment_id}/dark_00000.jpg" in names
+        assert f"{run_a.experiment_id}/metadata.json" in names
+        assert f"{run_b.experiment_id}/dark_00000.jpg" in names
+        assert not any(bob.experiment_id in n for n in names)
+        assert zf.read(f"{run_a.experiment_id}/dark_00000.jpg") == b"alice-a"
+
+
+@pytest.mark.asyncio
+async def test_download_all_404_when_user_has_no_experiments(client: AsyncClient):
+    res = await client.get("/api/experiments/download-all", params={"username": "nobody"})
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_cannot_change_settings_while_running(client: AsyncClient, app_config: AppConfig):
     config = TropismConfig(
         experimentName="lock-test",

@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from .. import config_xml
@@ -172,5 +172,49 @@ async def download_experiment(
         tmp_path,
         media_type="application/zip",
         filename=f"{exp.experiment_id}.zip",
+        background=background_tasks,
+    )
+
+
+@router.get("/download-all")
+async def download_all_experiments(
+    background_tasks: BackgroundTasks,
+    username: str = Query(min_length=1, max_length=40),
+    state: AppState = Depends(get_state),
+):
+    """Zip every experiment folder belonging to `username` into one archive,
+    each under its own top-level entry (experiment_id/...) so same-named
+    files across different experiments -- metadata.json, dark_00000.png --
+    don't collide. Same disk-streamed approach as download_experiment, for
+    the same reason: a user's total footprint can run into the hundreds of
+    MB to GB range (see GET /api/users), well past what's safe to hold in
+    memory at once.
+    """
+    want = username.strip().lower()
+    exps = [
+        ExperimentDir(d)
+        for d in state.storage.list_experiments()
+        if (ExperimentDir(d).username() or "").strip().lower() == want
+    ]
+    if not exps:
+        raise HTTPException(404, "no experiments found for this user")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="download-all-")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for exp in exps:
+                for f in sorted(exp.path.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, arcname=f"{exp.experiment_id}/{f.relative_to(exp.path)}")
+    except Exception:
+        os.remove(tmp_path)
+        raise
+
+    background_tasks.add_task(os.remove, tmp_path)
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename=f"{want}-experiments.zip",
         background=background_tasks,
     )

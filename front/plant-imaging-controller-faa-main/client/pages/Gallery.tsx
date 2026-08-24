@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Folder, Sprout, X } from "lucide-react";
+import { Activity, Download, Folder, Sprout, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
 import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
+import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import type { HistoryEntry, ImageInfo, PlantMaskStatus } from "@shared/api";
 
 type GalleryNavState = {
@@ -55,6 +57,19 @@ export default function Gallery() {
   const [growth, setGrowth] = useState<GrowthView>({ kind: "idle" });
   const [plant, setPlant] = useState<PlantView>({ kind: "idle" });
   const pollRef = useRef<number | null>(null);
+  const { status } = useExperimentStatus();
+  const runningId =
+    status?.state === "running" || status?.state === "paused" ? status.experimentId : null;
+
+  // Two-tap delete: first tap arms (turns red), a second tap within the
+  // window actually deletes. Auto-disarms so an armed button doesn't stay a
+  // trap if the user wanders off -- this is real, irreversible data loss on
+  // a shared kiosk, worth the extra tap.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const disarmTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setActiveExperimentId(navExperimentId);
@@ -85,6 +100,7 @@ export default function Gallery() {
   useEffect(() => {
     return () => {
       if (pollRef.current != null) window.clearInterval(pollRef.current);
+      if (disarmTimer.current != null) window.clearTimeout(disarmTimer.current);
     };
   }, []);
 
@@ -178,6 +194,64 @@ export default function Gallery() {
     }
   };
 
+  const disarmDelete = () => {
+    if (disarmTimer.current != null) window.clearTimeout(disarmTimer.current);
+    setConfirmDeleteId(null);
+    setConfirmDeleteAll(false);
+  };
+
+  const armDelete = (id: string | "all") => {
+    if (disarmTimer.current != null) window.clearTimeout(disarmTimer.current);
+    setConfirmDeleteId(id === "all" ? null : id);
+    setConfirmDeleteAll(id === "all");
+    disarmTimer.current = window.setTimeout(disarmDelete, 4000);
+  };
+
+  const handleDeleteOne = async (id: string) => {
+    if (confirmDeleteId !== id) {
+      armDelete(id);
+      return;
+    }
+    disarmDelete();
+    setDeletingId(id);
+    try {
+      await api.freeSpace(username, [id]);
+      await queryClient.invalidateQueries({ queryKey: ["history"] });
+      if (activeExperimentId === id) setActiveExperimentId(undefined);
+      toast.success("Folder deleted.");
+    } catch (e) {
+      toast.error(`Could not delete: ${(e as Error).message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!confirmDeleteAll) {
+      armDelete("all");
+      return;
+    }
+    disarmDelete();
+    const ids = userFolders.map((e) => e.id);
+    if (ids.length === 0) return;
+    setDeletingAll(true);
+    try {
+      const res = await api.freeSpace(username, ids);
+      await queryClient.invalidateQueries({ queryKey: ["history"] });
+      setActiveExperimentId(undefined);
+      const skipped = ids.length - res.deletedIds.length;
+      toast.success(
+        skipped > 0
+          ? `Deleted ${res.deletedIds.length} folder(s) — ${skipped} skipped (currently running).`
+          : `Deleted ${res.deletedIds.length} folder(s).`,
+      );
+    } catch (e) {
+      toast.error(`Could not delete all: ${(e as Error).message}`);
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   return (
     <div className="flex w-[800px] h-[452px] flex-col bg-app-bg-primary">
       <div className="flex p-0.5 justify-between items-center self-stretch border-b border-app-border-primary bg-app-bg-secondary">
@@ -233,13 +307,43 @@ export default function Gallery() {
             <span className="text-[15px] font-bold uppercase tracking-wide text-white">
               Experiments · {username}
             </span>
-            <button
-              type="button"
-              onClick={() => setFolderPickerOpen(false)}
-              className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
-            >
-              <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <a
+                href={userFolders.length > 0 ? api.experimentDownloadAllUrl(username) : undefined}
+                download
+                title={userFolders.length === 0 ? "No folders to download" : "Download everything as one ZIP"}
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors ${
+                  userFolders.length === 0
+                    ? "pointer-events-none bg-app-bg-tertiary opacity-40"
+                    : "bg-app-bg-tertiary hover:bg-app-border-primary"
+                }`}
+              >
+                <Download className="h-[14px] w-[14px]" strokeWidth={1.5} />
+                Download All
+              </a>
+              <button
+                type="button"
+                disabled={userFolders.length === 0 || deletingAll}
+                onClick={() => void handleDeleteAll()}
+                title={confirmDeleteAll ? "Tap again to permanently delete everything" : "Delete all folders"}
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  confirmDeleteAll ? "bg-red-600 hover:bg-red-500" : "bg-app-bg-tertiary hover:bg-app-border-primary"
+                }`}
+              >
+                <Trash2 className="h-[14px] w-[14px]" strokeWidth={1.5} />
+                {deletingAll ? "Deleting…" : confirmDeleteAll ? "Confirm Delete?" : "Delete All"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  disarmDelete();
+                  setFolderPickerOpen(false);
+                }}
+                className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
+              >
+                <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2">
             {historyLoading ? (
@@ -254,31 +358,60 @@ export default function Gallery() {
               <div className="flex flex-col gap-1.5">
                 {userFolders.map((entry) => {
                   const active = entry.id === resolvedId;
+                  const isRunning = entry.id === runningId;
+                  const armed = confirmDeleteId === entry.id;
                   return (
-                    <button
+                    <div
                       key={entry.id}
-                      type="button"
-                      onClick={() => pickFolder(entry.id)}
-                      className={`flex items-center justify-between gap-2 rounded-[10px] border p-2.5 text-left transition-colors ${
+                      className={`flex items-center gap-2 rounded-[10px] border p-2.5 transition-colors ${
                         active
                           ? "border-app-green bg-app-bg-tertiary"
                           : "border-app-border-primary bg-app-bg-secondary hover:border-app-green"
                       }`}
                     >
-                      <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => pickFolder(entry.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
                         <div className="truncate text-[13px] font-bold text-white">
                           {entry.name ?? entry.id}
                         </div>
                         <div className="truncate text-[10px] text-app-text-muted">
                           {formatWhen(entry.startedAt)} · {entry.imagesCaptured} images · {entry.id}
                         </div>
-                      </div>
+                      </button>
                       {active && (
                         <span className="flex-shrink-0 text-[10px] font-semibold text-app-green">
                           Open
                         </span>
                       )}
-                    </button>
+                      <a
+                        href={api.experimentDownloadUrl(entry.id)}
+                        download
+                        title="Download this folder as a ZIP"
+                        className="flex-shrink-0 rounded-md bg-app-bg-tertiary p-1.5 text-white transition-colors hover:bg-app-border-primary"
+                      >
+                        <Download className="h-[14px] w-[14px]" strokeWidth={1.5} />
+                      </a>
+                      <button
+                        type="button"
+                        disabled={isRunning || deletingId === entry.id}
+                        onClick={() => void handleDeleteOne(entry.id)}
+                        title={
+                          isRunning
+                            ? "Cannot delete the currently running experiment"
+                            : armed
+                              ? "Tap again to permanently delete"
+                              : "Delete this folder"
+                        }
+                        className={`flex-shrink-0 rounded-md p-1.5 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          armed ? "bg-red-600 hover:bg-red-500" : "bg-app-bg-tertiary hover:bg-app-border-primary"
+                        }`}
+                      >
+                        <Trash2 className="h-[14px] w-[14px]" strokeWidth={1.5} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>

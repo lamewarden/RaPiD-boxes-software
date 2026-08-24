@@ -80,6 +80,11 @@ export const api = {
    * No fetch needed -- an <a href> download or window.location navigation
    * lets the browser handle the actual save. */
   experimentDownloadUrl: (id: string) => `/api/experiments/${id}/download`,
+  /** URL for one zip of every experiment belonging to `username`, each under
+   *  its own folder inside the archive. Same "just let the browser save it"
+   *  pattern as experimentDownloadUrl. */
+  experimentDownloadAllUrl: (username: string) =>
+    `/api/experiments/download-all?username=${encodeURIComponent(username)}`,
   images: (experimentId?: string) =>
     jsonFetch<ImageListResponse>(experimentId ? `/api/images/${experimentId}` : "/api/images"),
   /** Growth heatmap JPEG URL; `v` cache-busts when the frame set grows. */
