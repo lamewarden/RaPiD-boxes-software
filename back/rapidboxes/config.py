@@ -49,6 +49,12 @@ class AppConfig(BaseSettings):
     # Persisted, user-editable device settings (camera/leds/ir). Created on first run.
     settings_path: Path = Path.home() / "rapidboxes" / "settings.json"
 
+    # Per-researcher saved camera baseline (Settings -> Camera -> "Save Mine"),
+    # keyed by username. Distinct from settings_path: that one is reset to the
+    # system default every process start; this one only changes when a user
+    # explicitly saves over it. See rapidboxes/camera_defaults.py.
+    camera_defaults_path: Path = Path.home() / "rapidboxes" / "camera_user_defaults.json"
+
     # Built React SPA (dist/spa). When set and present, it is served at "/".
     # In dev we leave this unset and use the Vite dev server + proxy instead.
     spa_dir: Optional[Path] = None

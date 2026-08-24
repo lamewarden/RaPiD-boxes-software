@@ -80,7 +80,7 @@ def test_parse_growth_legacy_light_intensity_field():
         assert restored.dayIntensity == 35
         assert restored.photoIlluminationSource == "rgbw"
         assert restored.camera.autofocusEnabled is False
-        assert restored.camera.focusDistance == 6.0
+        assert restored.camera.focusDistance == 10.0
 
 
 def test_parse_v2_file_without_illumination_or_leds_elements():

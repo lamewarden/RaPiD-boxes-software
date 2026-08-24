@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Camera, Check, RotateCcw, X } from "lucide-react";
+import { Bookmark, Camera, Check, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
 import ParameterControl from "@/components/ParameterControl";
 import SegmentedCard from "@/components/SegmentedCard";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+import { getUsername } from "@/lib/session";
 import {
   EXPOSURE_SLIDER_STEPS,
   exposureToPosition,
@@ -21,10 +22,16 @@ import {
 } from "@shared/api";
 
 /**
- * The "standard" camera settings. Mirrors the pydantic field defaults in
- * back/rapidboxes/models.py CameraSettings — keep the two in sync.
- * The backend also resets the persisted camera settings to these values at
- * every process start, so in-session tweaks never carry over to a new session.
+ * The fixed "system default" camera settings. Mirrors the pydantic field
+ * defaults in back/rapidboxes/models.py CameraSettings — keep the two in
+ * sync. Nothing in the app can overwrite this; it's what the "Default"
+ * button resets to and what the backend resets the active session to at
+ * every process start (see settings_store.load_device_settings_for_new_session).
+ *
+ * Distinct from a researcher's own saved baseline ("Mine", saved/restored via
+ * api.saveMyCameraDefaults / api.myCameraDefaults) -- that one is optional,
+ * per-username, and persists across restarts until the user next saves over it.
+ *
  * AWB and settle time are not here: AWB is fixed in the backend (the sensor
  * doesn't need per-experiment tuning), and settle time is derived from
  * exposure — neither is user-configurable any more.
@@ -35,7 +42,7 @@ const DEFAULT_CAMERA: CameraSettings = {
   exposureMicroseconds: 100_000,
   iso: 100,
   autofocusEnabled: false,
-  focusDistance: 6.0,
+  focusDistance: 10.0,
   grayscale: true,
   zoom: 1.0,
 };
@@ -68,11 +75,15 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
   const [source, setSource] = useState<PhotoIlluminationSource>("ir");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingMine, setSavingMine] = useState(false);
   const [takingPhoto, setTakingPhoto] = useState(false);
   const [testPhotoUrl, setTestPhotoUrl] = useState<string | null>(null);
+  // This researcher's own saved baseline ("Mine") -- null until they save one.
+  const [myDefaults, setMyDefaults] = useState<CameraSettings | null>(null);
   const { status } = useExperimentStatus();
   const locked = status?.state === "running" || status?.state === "paused";
   const manualFocusDisabled = camera.autofocusEnabled;
+  const username = getUsername();
 
   useEffect(() => {
     api
@@ -84,7 +95,8 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
       })
       .catch((e) => toast.error(`Could not load camera settings: ${(e as Error).message}`))
       .finally(() => setLoading(false));
-  }, []);
+    api.myCameraDefaults(username).then(setMyDefaults).catch(() => setMyDefaults(null));
+  }, [username]);
 
   // Revoke the previous blob URL whenever it's replaced or the menu unmounts.
   useEffect(() => {
@@ -120,6 +132,29 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
       toast.error(`Could not save: ${(e as Error).message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Applies the current settings to this session (like Save) and also
+   *  remembers them as this researcher's personal baseline, so "Mine" has
+   *  something to reset to next time -- including after a reboot, unlike
+   *  the session settings above. */
+  const handleSaveMine = async () => {
+    if (!deviceSettings) return;
+    setSavingMine(true);
+    try {
+      const [saved, mine] = await Promise.all([
+        api.saveSettings({ ...deviceSettings, camera }),
+        api.saveMyCameraDefaults(username, camera),
+      ]);
+      setDeviceSettings(saved);
+      setCamera(saved.camera);
+      setMyDefaults(mine);
+      toast.success("Saved as your settings.");
+    } catch (e) {
+      toast.error(`Could not save: ${(e as Error).message}`);
+    } finally {
+      setSavingMine(false);
     }
   };
 
@@ -302,13 +337,40 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
         <button
           onClick={() => setCamera(defaultCameraFor(source))}
           disabled={loading}
+          title="Reset to the fixed system default"
           className="flex items-center gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RotateCcw className="h-[16px] w-[16px]" strokeWidth={1.5} />
           <span className="text-[12px] font-bold uppercase tracking-[1px]">Default</span>
         </button>
 
+        <button
+          onClick={() => myDefaults && setCamera(myDefaults)}
+          disabled={loading || !myDefaults}
+          title={myDefaults ? `Reset to ${username}'s saved settings` : "No saved settings yet — use Save Mine first"}
+          className="flex items-center gap-2 rounded-[10px] border border-app-border-primary bg-app-bg-tertiary px-4 py-2 text-white transition-colors hover:bg-app-border-primary disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Bookmark className="h-[16px] w-[16px]" strokeWidth={1.5} />
+          <span className="text-[12px] font-bold uppercase tracking-[1px]">Mine</span>
+        </button>
+
         <div className="flex-1" />
+
+        <button
+          onClick={handleSaveMine}
+          disabled={loading || savingMine || locked}
+          title={
+            locked
+              ? "Cannot change settings while an experiment is running"
+              : `Save these settings as ${username}'s personal baseline (survives a reboot)`
+          }
+          className="flex items-center gap-2 rounded-[10px] border border-app-green/60 bg-app-green/10 px-4 py-2 text-white transition-colors hover:bg-app-green/20 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Bookmark className="h-[16px] w-[16px]" strokeWidth={1.5} />
+          <span className="text-[12px] font-bold uppercase tracking-[1px]">
+            {savingMine ? "Saving…" : "Save Mine"}
+          </span>
+        </button>
 
         <button
           onClick={handleSave}

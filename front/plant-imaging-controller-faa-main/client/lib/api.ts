@@ -93,6 +93,16 @@ export const api = {
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
+  /** This researcher's saved camera baseline ("Mine"), or null if they've never saved one. */
+  myCameraDefaults: (username: string) =>
+    jsonFetch<CameraSettings | null>(
+      `/api/settings/camera/mine?username=${encodeURIComponent(username)}`,
+    ),
+  saveMyCameraDefaults: (username: string, camera: CameraSettings) =>
+    jsonFetch<CameraSettings>("/api/settings/camera/mine", {
+      method: "PUT",
+      body: JSON.stringify({ username, camera }),
+    }),
   remoteSync: () => jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync"),
   /** Patch the remote-sync config. `password` is write-only and never comes back. */
   saveRemoteSync: (update: RemoteSyncUpdate) =>

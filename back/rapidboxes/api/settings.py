@@ -1,9 +1,12 @@
 """Device settings (camera / LEDs / IR)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
 
-from ..models import DeviceSettings, ExperimentState
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from .. import camera_defaults
+from ..models import CameraDefaultsUpdate, CameraSettings, DeviceSettings, ExperimentState
 from ..settings_store import save_device_settings
 from .deps import AppState, get_state
 
@@ -22,3 +25,15 @@ async def put_settings(settings: DeviceSettings, state: AppState = Depends(get_s
     save_device_settings(state.config.settings_path, settings)
     await state.rebuild_hardware(settings)
     return state.settings
+
+
+@router.get("/camera/mine", response_model=Optional[CameraSettings])
+async def get_my_camera_defaults(
+    username: str = Query(min_length=1, max_length=40), state: AppState = Depends(get_state)
+):
+    return camera_defaults.load_for(state.config.camera_defaults_path, username)
+
+
+@router.put("/camera/mine", response_model=CameraSettings)
+async def put_my_camera_defaults(body: CameraDefaultsUpdate, state: AppState = Depends(get_state)):
+    return camera_defaults.save_for(state.config.camera_defaults_path, body.username, body.camera)

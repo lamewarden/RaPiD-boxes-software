@@ -31,6 +31,7 @@ def app_config(tmp_path: Path) -> AppConfig:
         # Keep remote-sync state in the tmpdir too, so tests never read or
         # write the developer's real ~/rapidboxes/remote_sync.json.
         remote_sync_path=tmp_path / "remote_sync.json",
+        camera_defaults_path=tmp_path / "camera_user_defaults.json",
         spa_dir=None,
     )
 
@@ -260,7 +261,7 @@ async def test_settings_round_trip(client: AsyncClient):
     defaults = res.json()
     assert defaults["camera"]["width"] == 2304
     assert defaults["camera"]["autofocusEnabled"] is False
-    assert defaults["camera"]["focusDistance"] == 6.0
+    assert defaults["camera"]["focusDistance"] == 10.0
 
     updated = {
         **defaults,
@@ -276,6 +277,35 @@ async def test_settings_round_trip(client: AsyncClient):
     assert res.json()["leds"]["pixelCount"] == 80
     assert res.json()["camera"]["autofocusEnabled"] is True
     assert res.json()["camera"]["focusDistance"] == 4.5
+
+
+@pytest.mark.asyncio
+async def test_my_camera_defaults_round_trip(client: AsyncClient):
+    res = await client.get("/api/settings/camera/mine", params={"username": "lev"})
+    assert res.status_code == 200
+    assert res.json() is None  # nothing saved yet
+
+    res = await client.get("/api/settings")
+    camera = {**res.json()["camera"], "iso": 800, "focusDistance": 12.5}
+
+    res = await client.put("/api/settings/camera/mine", json={"username": "lev", "camera": camera})
+    assert res.status_code == 200
+    assert res.json()["iso"] == 800
+    assert res.json()["focusDistance"] == 12.5
+
+    res = await client.get("/api/settings/camera/mine", params={"username": "lev"})
+    assert res.status_code == 200
+    assert res.json()["iso"] == 800
+
+    # A different researcher's saved defaults are untouched.
+    res = await client.get("/api/settings/camera/mine", params={"username": "someone-else"})
+    assert res.status_code == 200
+    assert res.json() is None
+
+    # Saving Mine does not touch the active session settings (that's the
+    # separate PUT /api/settings save).
+    res = await client.get("/api/settings")
+    assert res.json()["camera"]["iso"] != 800
 
 
 @pytest.mark.asyncio

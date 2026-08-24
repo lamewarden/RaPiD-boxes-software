@@ -200,13 +200,29 @@ class CameraSettings(BaseModel):
     exposureMicroseconds: int = Field(default=100_000, ge=100, le=10_000_000)
     iso: int = Field(default=100, ge=50, le=1600)
     autofocusEnabled: bool = False
-    focusDistance: float = Field(default=6.0, ge=0.0, le=32.0)
+    # LensPosition is in diopters (1/metres): 10.0 focuses at 1/10 m = 10 cm.
+    focusDistance: float = Field(default=10.0, ge=0.0, le=32.0)
     grayscale: bool = True
     # Digital zoom: center-crop to 1/zoom of the frame, then scale back up to
     # width x height, so every image stays the configured size regardless of
     # framing. Applied to every capture -- experiment images and test photos
     # alike -- not just a preview convenience.
     zoom: float = Field(default=1.0, ge=1.0, le=5.0)
+
+
+class CameraDefaultsUpdate(BaseModel):
+    """PUT /api/settings/camera/mine body: save the current camera settings as
+    this researcher's personal baseline (Settings -> Camera -> "Save Mine").
+
+    Distinct from CameraSettings' own field defaults (the fixed system
+    default, which nothing in the app can overwrite) and from the active
+    session's settings (always reset to the system default on process start,
+    see settings_store.load_device_settings_for_new_session) -- this one is
+    keyed by username and persists across restarts until the user next saves
+    over it."""
+
+    username: str = Field(min_length=1, max_length=40)
+    camera: CameraSettings
 
 
 # AWB and per-shot settle time used to be user-tunable, but the sensor is

@@ -210,6 +210,13 @@ export interface CameraSettings {
   zoom: number;
 }
 
+/** PUT /api/settings/camera/mine body -- save the current camera settings as
+ *  this researcher's personal baseline. See back/rapidboxes/camera_defaults.py. */
+export interface CameraDefaultsUpdate {
+  username: string;
+  camera: CameraSettings;
+}
+
 export interface LedSettings {
   pixelCount: number;
   pixelOrder: string;
