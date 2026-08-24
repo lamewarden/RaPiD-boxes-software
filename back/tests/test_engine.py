@@ -9,20 +9,23 @@ from pathlib import Path
 
 import pytest
 
+from rapidboxes import config_xml
 from rapidboxes.config import AppConfig
 from rapidboxes.engine.runner import ExperimentRunner
 from rapidboxes.hardware.base import BLACK, spectra_to_color, white
 from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.models import (
     PHOTO_FLASH_INTENSITY,
+    CameraSettings,
     DeviceSettings,
     ExperimentPhase,
     ExperimentState,
     ExperimentStatus,
     GrowthConfig,
+    SavedExperimentConfig,
     TropismConfig,
 )
-from rapidboxes.storage import Storage
+from rapidboxes.storage import ExperimentDir, Storage
 
 
 class FakeTime:
@@ -156,6 +159,75 @@ async def test_recover_resumes_mid_phase_after_outage_and_reports_skipped_images
     assert any(f.startswith("bending_") for f in files)
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_recover_restores_this_experiments_own_camera_settings(tmp_path):
+    """Regression: the session's camera settings reset to the system default
+    on every process start (by design, for a *fresh* start) -- but recover()
+    used to leave that fresh-default hardware config in place for a *resumed*
+    run too, so a restart mid-experiment silently swapped a real run's color
+    mode/zoom/exposure to whatever the new session defaulted to. Caught live
+    on a real device: a multi-day run went from color+zoomed to
+    grayscale+wide-angle exactly at a restart."""
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=7200 / 3600,
+        lateralIlluminationHours=3600 / 3600,
+        spectra=["red"],
+        intervalMinutes=10.0,
+    )
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.running,
+        phase=ExperimentPhase.dark,
+        elapsed_seconds=1000.0,
+        images_captured=2,
+        offline_for=timedelta(seconds=1850),
+    )
+    exp = ExperimentDir(storage.list_experiments()[0])
+    # This experiment actually started in color, zoomed in, on RGBW --
+    # distinct from every field's own default (grayscale=True, zoom=1.0,
+    # source="ir"), so a test that only checked "not None" couldn't pass by
+    # accident.
+    saved_camera = CameraSettings(grayscale=False, zoom=2.5, exposureMicroseconds=50_000)
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseEnabled=config.darkPhaseEnabled,
+        darkPhaseHours=config.darkPhaseHours,
+        lateralIlluminationHours=config.lateralIlluminationHours,
+        spectra=config.spectra,
+        intervalMinutes=config.intervalMinutes,
+        intensity=config.intensity,
+        photoIlluminationSource="rgbw",
+        camera=saved_camera,
+    )
+    exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
+
+    ft = FakeTime()
+    # The live session's hardware is on the fresh system defaults, as it
+    # would be after any real restart -- grayscale, no zoom, IR.
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+
+    restored = runner._hw._settings.camera
+    assert restored.grayscale is False
+    assert restored.zoom == 2.5
+    assert restored.exposureMicroseconds == 50_000
+    assert runner._hw._settings.photoIlluminationSource == "rgbw"
 
 
 @pytest.mark.asyncio

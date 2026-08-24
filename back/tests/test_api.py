@@ -3,23 +3,28 @@ from __future__ import annotations
 
 import io
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from rapidboxes import config_xml
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
 from rapidboxes.models import (
+    CameraSettings,
     ExperimentState,
+    ExperimentStatus,
+    SavedExperimentConfig,
     TropismConfig,
     UpdateApplyResult,
     UpdateCheckResult,
     UpdateHistoryEntry,
     VersionStatus,
 )
+from rapidboxes.storage import Storage
 
 
 @pytest.fixture
@@ -252,6 +257,61 @@ async def test_update_rollback_allowed_while_experiment_not_active(
             res = await ac.post("/api/system/update/rollback")
             assert res.status_code == 200
             assert res.json()["status"] == "nothing_to_roll_back_to"
+
+
+@pytest.mark.asyncio
+async def test_settings_reflect_a_resumed_experiments_restored_camera_on_boot(
+    app_config: AppConfig,
+):
+    """End-to-end regression through the real startup path (main.lifespan):
+    GET /api/settings must show what recover() actually restored the
+    hardware to, not the pre-recover() fresh-session defaults it was built
+    with a moment earlier -- see HardwareManager.restore_experiment_settings
+    and main.py's `hw.settings` (not `device_settings`) fix."""
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=2.0,
+        lateralIlluminationHours=1.0,
+        intervalMinutes=10.0,
+    )
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment(config.username, config.experimentName)
+    status = ExperimentStatus(
+        state=ExperimentState.running,
+        phase="dark",
+        experimentId=exp.experiment_id,
+        experimentName=config.experimentName,
+        username=config.username,
+        elapsedSeconds=100.0,
+        phaseElapsedSeconds=100.0,
+        imagesCaptured=0,
+        imagesPlanned=100,
+        config=config,
+        updatedAt=datetime.now() - timedelta(seconds=30),
+    )
+    exp.write_metadata(status.model_dump(mode="json"))
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseHours=config.darkPhaseHours,
+        lateralIlluminationHours=config.lateralIlluminationHours,
+        intervalMinutes=config.intervalMinutes,
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(grayscale=False, zoom=3.0),
+    )
+    exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/api/settings")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["camera"]["grayscale"] is False
+    assert body["camera"]["zoom"] == 3.0
+    assert body["photoIlluminationSource"] == "rgbw"
 
 
 @pytest.mark.asyncio

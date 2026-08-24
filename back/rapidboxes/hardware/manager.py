@@ -16,6 +16,7 @@ from ..models import (
     DeviceSettings,
     IrSettings,
     LedSettings,
+    PhotoIlluminationSource,
     exposure_for_source,
 )
 from .base import (
@@ -101,6 +102,32 @@ class HardwareManager:
             return
         await self._run(self._camera.configure, self._live_preview_settings(), timeout=CAMERA_TIMEOUT)
         self._preview_camera_ready = True
+
+    def restore_experiment_settings(
+        self, camera: CameraSettings, photo_illumination_source: PhotoIlluminationSource
+    ) -> None:
+        """Override the camera + illumination-source half of the live session
+        settings with what one specific experiment was actually using.
+
+        The session's camera settings reset to the system default on every
+        process start (see settings_store.load_device_settings_for_new_session)
+        -- deliberately, for a fresh start, but wrong for engine.runner.recover()
+        resuming an already-running experiment: without this, the very next
+        configure_camera() would silently swap a resumed run's exposure/zoom/
+        color mode to whatever the fresh session defaults to. LEDs/IR pin
+        wiring is deliberately left alone: that's a device property, not a
+        per-experiment choice, and restoring an old experiment's copy of it
+        would revert a legitimate rewiring made since.
+
+        Caller must still await configure_camera() to apply this to the
+        physical camera.
+        """
+        self._settings = DeviceSettings(
+            camera=camera,
+            leds=self._settings.leds,
+            ir=self._settings.ir,
+            photoIlluminationSource=photo_illumination_source,
+        )
 
     # --- lifecycle -------------------------------------------------------
     async def configure_camera(self) -> None:
@@ -212,6 +239,17 @@ class HardwareManager:
         self._live_backlight = None
 
     # --- settings snapshots (for status/history) --------------------------
+    @property
+    def settings(self) -> DeviceSettings:
+        """The live settings actually driving the hardware right now -- not
+        necessarily identical to what was passed at construction, since
+        restore_experiment_settings() can override the camera/source half
+        afterwards (see engine.runner.recover()). main.py reads this after
+        recover() to keep AppState.settings (GET /api/settings, the Camera
+        Settings UI) in step with the hardware instead of showing whatever
+        was true before that override."""
+        return self._settings
+
     @property
     def photo_illumination_source(self) -> str:
         return self._settings.photoIlluminationSource

@@ -393,10 +393,11 @@ class ExperimentRunner:
         self.status.phases = phase_infos_for(config)
         try:
             xml_bytes = latest.read_config_xml()
-            saved_camera = config_xml.parse(xml_bytes).camera if xml_bytes else CameraSettings()
+            saved_cfg = config_xml.parse(xml_bytes) if xml_bytes else None
         except Exception:
-            log.warning("could not read saved config for %s; using default camera for the storage estimate", latest.experiment_id)
-            saved_camera = CameraSettings()
+            log.warning("could not read saved config for %s; using system defaults", latest.experiment_id)
+            saved_cfg = None
+        saved_camera = saved_cfg.camera if saved_cfg else CameraSettings()
         self.status.estimatedTotalBytes = estimate_experiment_bytes(config, saved_camera)
 
         if located is None:
@@ -425,6 +426,19 @@ class ExperimentRunner:
         if is_growth:
             expected += 1  # baseline
         images_skipped = max(0, expected - prev.imagesCaptured)
+
+        # The very next configure_camera() (unconditional, at the top of
+        # _run()) would otherwise apply the fresh-session camera defaults --
+        # silently swapping a resumed run's exposure/zoom/color mode and
+        # illumination source mid-experiment. Restore what this specific
+        # experiment actually started with instead.
+        if saved_cfg is not None:
+            self._hw.restore_experiment_settings(saved_cfg.camera, saved_cfg.photoIlluminationSource)
+        else:
+            log.warning(
+                "%s has no saved config to restore camera settings from on resume",
+                latest.experiment_id,
+            )
 
         self._stop = False
         self._clock = PausableClock(self._now, initial_elapsed=elapsed_at_resume)
