@@ -65,7 +65,7 @@ export default function TopNav() {
   };
 
   return (
-    <div className="flex p-0.5 gap-1 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
+    <div className="flex p-0.5 gap-1 justify-center items-stretch self-stretch border-b border-app-border-primary bg-app-bg-secondary">
       <button className={btn} onClick={handleClose} disabled={closingKiosk}>
         <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
         <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">
