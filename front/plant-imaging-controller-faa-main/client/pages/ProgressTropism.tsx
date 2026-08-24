@@ -118,8 +118,13 @@ export default function ProgressTropism() {
         </div>
 
         {/* Progress bar */}
-        <div className="h-2 w-full rounded-full bg-app-bg-tertiary flex-shrink-0">
-          <div className="h-2 rounded-full bg-app-green transition-all" style={{ width: `${progressPct}%` }} />
+        <div className="h-4 w-full rounded-full bg-app-bg-tertiary flex-shrink-0 overflow-hidden">
+          <div
+            className="relative h-4 overflow-hidden rounded-full bg-app-green transition-all"
+            style={{ width: `${progressPct}%` }}
+          >
+            <div className="absolute inset-y-0 w-1/4 animate-progress-wave bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+          </div>
         </div>
 
         <RecoveryNoticeBanner notice={status?.recoveryNotice ?? null} />
