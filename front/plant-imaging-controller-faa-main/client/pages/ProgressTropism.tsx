@@ -108,7 +108,7 @@ export default function ProgressTropism() {
         </button>
       </div>
 
-      <div className="flex-1 flex flex-col w-full p-4 gap-3 overflow-hidden">
+      <div className="flex-1 flex flex-col w-full p-3 gap-2 overflow-hidden">
         <div className="flex items-center justify-between flex-shrink-0">
           <h1 className="text-lg font-bold text-white">Tropism Program</h1>
           <span className={`text-xs font-semibold ${connected ? "text-app-green" : "text-app-orange"}`}>
@@ -139,23 +139,27 @@ export default function ProgressTropism() {
           </div>
 
           {/* Info panel */}
-          <div className="flex flex-col gap-2 flex-shrink-0 w-36">
-            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-3 text-center">
-              <div className="text-2xl font-black text-app-green tabular-nums">{formatElapsed(elapsed)}</div>
-              <p className="text-app-text-muted text-[10px] mt-1">Elapsed</p>
-            </div>
-
-            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-2 text-center">
-              <div className="text-xl font-black text-app-orange">
-                {captured}
-                <span className="text-app-text-muted text-sm font-semibold"> / {planned}</span>
+          <div className="flex flex-col gap-1.5 flex-shrink-0 w-36">
+            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-1 flex items-center justify-center gap-2">
+              <div className="text-center">
+                <div className="text-base font-black text-app-green tabular-nums leading-none">
+                  {formatElapsed(elapsed)}
+                </div>
+                <p className="text-app-text-muted text-[9px] mt-0.5">Elapsed</p>
               </div>
-              <p className="text-app-text-muted text-[10px]">Images</p>
+              <div className="w-px self-stretch bg-app-border-primary" />
+              <div className="text-center">
+                <div className="text-base font-black text-app-orange leading-none">
+                  {captured}
+                  <span className="text-app-text-muted text-[10px] font-semibold">/{planned}</span>
+                </div>
+                <p className="text-app-text-muted text-[9px] mt-0.5">Images</p>
+              </div>
             </div>
 
-            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg p-2 text-center">
+            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-2 text-center">
               <p className="text-[11px] font-semibold text-app-blue">{phaseLabel}</p>
-              <p className="text-app-text-muted text-[10px]">
+              <p className="text-app-text-muted text-[9px]">
                 {isPaused ? "Paused" : status?.state === "done" ? "Finished" : "Phase"}
               </p>
             </div>
