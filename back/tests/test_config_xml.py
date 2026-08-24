@@ -121,6 +121,24 @@ def test_round_trip_ir_pins():
     assert restored == original
 
 
+def test_round_trip_report_on_issue_enabled():
+    original = SavedExperimentConfig(reportOnIssueEnabled=True)
+    restored = config_xml.parse(config_xml.serialize(original))
+    assert restored.reportOnIssueEnabled is True
+    assert restored == original
+
+
+def test_parse_v5_file_without_report_element_defaults_false():
+    """v5 files (written before Phase 4) have no <report> element at all --
+    must default to reportOnIssueEnabled=False rather than failing to parse."""
+    xml_bytes = b"""<?xml version='1.0' encoding='utf-8'?>
+<experimentConfig version="5" protocol="tropism"><phases><dark enabled="true" hours="90.0" /><bending hours="20.0" /></phases><light intervalMinutes="20.0" intensity="25"><spectrum>white</spectrum></light><illumination source="ir"/><ir pins="26,23"/><leds pixelCount="70" pixelOrder="GRBW" topSegment="22,64" lateralSegment="0,21" spiHz="6400000" stride="1"/><camera width="2304" height="1296" exposureMicroseconds="100000" iso="100" autofocusEnabled="false" focusDistance="10.0" grayscale="true" zoom="1.0" /></experimentConfig>"""
+
+    restored = config_xml.parse(xml_bytes)
+
+    assert restored.reportOnIssueEnabled is False
+
+
 def test_saved_config_covers_every_device_setting():
     """SavedExperimentConfig must mirror every DeviceSettings field, and each
     must survive the XML round trip.

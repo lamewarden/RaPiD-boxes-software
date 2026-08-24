@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .assistant import summary as assistant_summary
+from .assistant.mold_watch import MoldWatchService
 from .assistant.service import AssistantService
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
@@ -71,12 +72,32 @@ async def lifespan(app: FastAPI):
     async def on_experiment_finished(exp, status):
         await assistant_summary.generate_and_store(config, exp, status)
 
+    # Opt-in mid-run mold/anomaly watcher (see assistant/mold_watch.py). Fans
+    # out from the same on_image_captured hook remote sync already uses --
+    # `runner` isn't constructed yet at this point, but dispatch_image_captured
+    # isn't called until real captures happen, well after `runner` below is
+    # assigned, so the closure resolving it lazily is safe.
+    mold_watch = MoldWatchService(config, storage)
+    mold_watch.start()
+
+    def dispatch_image_captured(path, experiment_id: str, username: str) -> None:
+        sync.enqueue_image(path, experiment_id, username)
+        live = runner.status.config if runner.status.experimentId == experiment_id else None
+        mold_watch.enqueue_image(
+            path,
+            experiment_id,
+            username,
+            report_enabled=bool(getattr(live, "reportOnIssueEnabled", False)),
+            notify_email=getattr(live, "notifyEmail", None),
+        )
+
     runner = ExperimentRunner(
         hw,
         storage,
-        on_image_captured=sync.enqueue_image,
+        on_image_captured=dispatch_image_captured,
         on_experiment_finished=on_experiment_finished,
     )
+    mold_watch.attach_runner(runner)
     await runner.recover()
     # recover() may have overridden the camera/source half of hw's settings to
     # match a resumed experiment's own saved config (see
@@ -91,6 +112,7 @@ async def lifespan(app: FastAPI):
     finally:
         await runner.shutdown()
         await sync.shutdown()
+        await mold_watch.shutdown()
         await assistant.aclose()
         log.info("RaPiD-boxes stopped; hardware released")
 

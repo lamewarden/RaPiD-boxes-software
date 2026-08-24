@@ -603,6 +603,53 @@ async def test_on_experiment_finished_failure_does_not_break_shutdown(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_mark_issue_detected_sets_status_for_the_active_experiment(tmp_path):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=6000 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+    await runner.start(config)
+
+    await runner.mark_issue_detected(runner.status.experimentId, "possible mold: 3/5 frames")
+
+    assert runner.status.issueDetected is True
+    assert runner.status.issueDetail == "possible mold: 3/5 frames"
+    await runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_mark_issue_detected_ignores_a_stale_experiment_id(tmp_path):
+    """A slow anomaly check can resolve after the run it was checking for has
+    already finished/moved on -- must not stamp a flag onto whatever is
+    active now."""
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=6000 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+    await runner.start(config)
+
+    await runner.mark_issue_detected("some-other-experiment-id", "stale result")
+
+    assert runner.status.issueDetected is False
+    assert runner.status.issueDetail is None
+    await runner.abort()
+
+
+@pytest.mark.asyncio
 async def test_status_exposes_phase_plan_index_and_storage_tracking(tmp_path):
     ft = FakeTime()
     runner = _runner(tmp_path, ft)

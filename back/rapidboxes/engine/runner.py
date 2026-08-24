@@ -252,6 +252,7 @@ class ExperimentRunner:
                 leds=self._hw.led_settings,
                 ir=self._hw.ir_settings,
                 camera=camera or CameraSettings(),
+                reportOnIssueEnabled=config.reportOnIssueEnabled,
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
         else:
@@ -266,6 +267,7 @@ class ExperimentRunner:
                 leds=self._hw.led_settings,
                 ir=self._hw.ir_settings,
                 camera=camera or CameraSettings(),
+                reportOnIssueEnabled=config.reportOnIssueEnabled,
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
         exp.append_event(f"started protocol={config.protocol} username={config.username}")
@@ -304,6 +306,22 @@ class ExperimentRunner:
             kind="info",
             message="Device storage is automatically cleaned every 90 days -- back up your experiments in advance.",
         )
+
+    async def mark_issue_detected(self, experiment_id: str, detail: str) -> None:
+        """Called by MoldWatchService once a mid-run anomaly is confirmed.
+
+        Ignored if `experiment_id` is no longer the active run (the check that
+        found it can finish after the run itself has moved on) -- there is
+        nothing live left to flag. Going through `self.status` (broadcast +
+        the normal metadata heartbeat) rather than a direct file write avoids
+        racing the runner's own periodic full-status metadata.json writes."""
+        if self.status.experimentId != experiment_id:
+            return
+        self.status.issueDetected = True
+        self.status.issueDetail = detail
+        if self._exp_dir is not None:
+            self._write_metadata(self._exp_dir)
+        await self._broadcast()
 
     async def pause(self) -> None:
         if self.status.state == ExperimentState.running and self._clock:

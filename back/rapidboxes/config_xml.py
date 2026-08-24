@@ -19,6 +19,8 @@ element is missing from an older file:
       fixed, settle is derived from exposure, neither is user-tunable -- and
       added <camera zoom>. Older files' awb/settle attributes are simply
       ignored; a missing zoom defaults to 1.0 (no crop).
+  v6  added <report enabled=.../> (reportOnIssueEnabled). Deliberately does
+      NOT carry the notifyEmail address -- see SavedExperimentConfig.
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ _BOOL = {"true": True, "false": False}
 
 
 def serialize(config: SavedExperimentConfig) -> bytes:
-    root = ET.Element("experimentConfig", version="5", protocol=config.protocol)
+    root = ET.Element("experimentConfig", version="6", protocol=config.protocol)
 
     phases = ET.SubElement(root, "phases")
 
@@ -88,6 +90,8 @@ def serialize(config: SavedExperimentConfig) -> bytes:
         grayscale=str(cam.grayscale).lower(),
         zoom=str(cam.zoom),
     )
+
+    ET.SubElement(root, "report", enabled=str(config.reportOnIssueEnabled).lower())
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -169,6 +173,8 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
     source = _parse_illumination_source(root, growth)
     leds = _parse_leds(root)
     ir = _parse_ir(root)
+    report_el = root.find("report")
+    report_enabled = _BOOL.get(report_el.get("enabled", "false"), False) if report_el is not None else False
 
     if protocol == "growth" or growth is not None:
         return SavedExperimentConfig(
@@ -184,6 +190,7 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
             leds=leds,
             ir=ir,
             camera=camera,
+            reportOnIssueEnabled=report_enabled,
         )
 
     return SavedExperimentConfig(
@@ -198,4 +205,5 @@ def parse(xml_bytes: bytes) -> SavedExperimentConfig:
         leds=leds,
         ir=ir,
         camera=camera,
+        reportOnIssueEnabled=report_enabled,
     )
