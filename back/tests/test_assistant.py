@@ -122,13 +122,17 @@ async def test_chat_503_when_llm_unreachable(client: AsyncClient, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_409_while_experiment_running(client: AsyncClient, monkeypatch):
+async def test_chat_still_works_while_experiment_running(client: AsyncClient, monkeypatch):
+    """Chat runs against a remote API, not a local model -- no RAM/CPU
+    contention to guard against, so (unlike an earlier local-model version)
+    it stays available throughout a run, not just while idle."""
     _mock_llm(monkeypatch, content="hello there")
     res = await client.post("/api/experiments", json=_tropism_config().model_dump())
     assert res.status_code == 200
 
     res = await client.post("/api/assistant/chat", json={"message": "hi", "history": []})
-    assert res.status_code == 409
+    assert res.status_code == 200
+    assert res.json()["reply"] == "hello there"
 
     await client.post("/api/experiments/current/abort")
 
@@ -143,13 +147,13 @@ async def test_chat_resolves_a_real_tool_call(client: AsyncClient, monkeypatch):
     assert "No experiment is currently running" in res.json()["reply"]
 
 
-# --- interrupt-and-archive on experiment start ----------------------------
-
-
 @pytest.mark.asyncio
-async def test_start_experiment_archives_inflight_chat(
+async def test_starting_an_experiment_does_not_interrupt_chat(
     client: AsyncClient, monkeypatch, app_config: AppConfig
 ):
+    """Starting an experiment used to force-cancel and archive any in-flight
+    chat (see interrupt_and_archive's docstring for why that no longer
+    applies) -- confirms it's no longer wired up automatically."""
     _mock_llm(monkeypatch, content="hello there")
     res = await client.post("/api/assistant/chat", json={"message": "hi", "history": []})
     assert res.status_code == 200
@@ -157,11 +161,7 @@ async def test_start_experiment_archives_inflight_chat(
     res = await client.post("/api/experiments", json=_tropism_config().model_dump())
     assert res.status_code == 200
 
-    archives = list(app_config.assistant_archive_dir.glob("*.json"))
-    assert len(archives) == 1
-    data = json.loads(archives[0].read_text())
-    assert data["reason"] == "experiment_started"
-    assert [m["content"] for m in data["messages"]] == ["hi", "hello there"]
+    assert list(app_config.assistant_archive_dir.glob("*.json")) == []
 
     await client.post("/api/experiments/current/abort")
 
@@ -239,19 +239,55 @@ async def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig
 
 
 @pytest.mark.asyncio
-async def test_list_experiments_all_users_shows_everyone(app_config: AppConfig):
+async def test_list_experiments_no_username_defaults_to_requester(app_config: AppConfig):
+    """The real bug this guards against: "which experiment did I conduct"
+    used to default to showing every user's most recent experiment, not the
+    asker's own -- confusing on a shared device. Omitting `username` now
+    means "me", matching my_settings/my_storage/read_experiment_log."""
+    storage = Storage(app_config.storage_root)
+    for username, name in [("ivan", "run1"), ("sabol", "run2")]:
+        exp = storage.create_experiment(username, name)
+        exp.write_metadata({"username": username, "config": {"protocol": "tropism"}})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("list_experiments")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "for ivan" in reply
+    assert " — ivan — " in reply
+    assert "sabol" not in reply
+
+
+@pytest.mark.asyncio
+async def test_list_experiments_explicit_all_shows_everyone(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     for username, name in [("ivan", "run1"), ("sabol", "run2"), ("ivan", "run3")]:
         exp = storage.create_experiment(username, name)
         exp.write_metadata({"username": username, "config": {"protocol": "tropism"}})
 
     service = AssistantService(app_config, storage)
-    call = _tool_call("list_experiments")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    call = _tool_call("list_experiments", username="all")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "all users" in reply
     assert reply.count(" — ivan — ") == 2
     assert reply.count(" — sabol — ") == 1
+
+
+@pytest.mark.asyncio
+async def test_list_experiments_no_username_no_requester_shows_everyone(app_config: AppConfig):
+    """Degrade path: if we somehow don't know who's chatting either (should
+    be rare now that the username is always injected into context), fall
+    back to the old shared-visibility behavior rather than showing nothing."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "config": {"protocol": "tropism"}})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("list_experiments")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert proposal is None
+    assert "all users" in reply
 
 
 @pytest.mark.asyncio

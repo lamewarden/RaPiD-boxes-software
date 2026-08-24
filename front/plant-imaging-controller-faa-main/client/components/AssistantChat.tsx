@@ -50,14 +50,9 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
       if (res.proposal) setProposal(res.proposal);
     } catch (e) {
       const msg = (e as Error).message;
-      let content: string;
-      if (msg.startsWith("503")) {
-        content = "The assistant model isn't running right now — try again later.";
-      } else if (msg.startsWith("409")) {
-        content = "An experiment just started, so assistant chat is paused until it finishes.";
-      } else {
-        content = `Something went wrong: ${msg}`;
-      }
+      const content = msg.startsWith("503")
+        ? "The assistant model isn't running right now — try again later."
+        : `Something went wrong: ${msg}`;
       setMessages((m) => [...m, { role: "assistant", content }]);
     } finally {
       setSending(false);

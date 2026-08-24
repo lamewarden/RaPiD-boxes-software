@@ -7,10 +7,11 @@ saved config. The model itself never invents parameter values and never
 calls the start API; it only ever gets to point at a real past experiment,
 which this service then reads verbatim from disk.
 
-Chat is only ever reachable while idle (see api/assistant.py, gated on
-runner.status.state), and is immediately cut short -- generation cancelled,
-transcript archived -- the moment an experiment starts (see
-interrupt_and_archive(), called from api/experiments.py).
+Chat is reachable whether an experiment is running or not -- an earlier
+local-model version gated this to idle-only to avoid competing with a live
+run for the Pi's RAM/CPU, but a remote API has no such contention, so
+researchers can now ask about (or check on) a run while it's actually in
+progress.
 """
 from __future__ import annotations
 
@@ -108,7 +109,15 @@ _TOOLS = [
                 "properties": {
                     "username": {
                         "type": "string",
-                        "description": "name to filter by, omit for every user",
+                        "description": (
+                            "whose experiments to list. For \"I\"/\"my\"/\"me\" "
+                            "questions, use the real username you were told "
+                            "at the start of this conversation -- never a "
+                            "placeholder. For a named other person, use "
+                            "their name. To see every user's experiments, "
+                            "pass exactly 'all'. Omitting this defaults to "
+                            "the current user, not everyone."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
@@ -255,10 +264,9 @@ class AssistantService:
         self._storage = storage
         # Read-only: current experiment status and camera availability
         # (system_status tool). Never used to start/stop/change anything --
-        # see the module docstring and interrupt_and_archive() for the one
-        # direction this relationship goes (experiments interrupt the
-        # assistant, never the other way around). Optional so tests that
-        # never exercise system_status don't need to build a real runner.
+        # see the module docstring; the assistant only ever reads the
+        # runner's state, never controls it. Optional so tests that never
+        # exercise system_status don't need to build a real runner.
         # Deliberately reads camera state via runner._hw at call time (below)
         # rather than storing its own hw reference -- AppState.rebuild_hardware()
         # swaps in a fresh HardwareManager on settings changes and updates
@@ -286,14 +294,32 @@ class AssistantService:
     ) -> AssistantChatResponse:
         async with self._lock:
             self._transcript.append(AssistantMessage(role="user", content=message))
-            messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+            # _SYSTEM_PROMPT is a module-level constant (loaded once), so the
+            # requester's identity -- which varies per call -- has to be
+            # appended here instead. Without this the model has no way to
+            # resolve "I"/"my" to a real username at all; observed in
+            # production guessing a literal placeholder like "current_user"
+            # instead of leaving a tool argument to its real default.
+            # Folded into the one system message, not a second one -- the
+            # gateway rejects a request with more than one system-role
+            # message (400 Bad Request), confirmed by testing.
+            system_content = _SYSTEM_PROMPT
+            if username:
+                system_content += (
+                    f"\n\nThe person chatting with you right now is '{username}'. "
+                    "When they say \"I\", \"me\", or \"my\", they mean this exact "
+                    "username -- pass it directly to a tool if it needs one, "
+                    "never invent or guess a different value."
+                )
+            messages = [{"role": "system", "content": system_content}]
             messages += [{"role": m.role, "content": m.content} for m in history]
             messages.append({"role": "user", "content": message})
 
-            # Tracked for the whole method, not just the initial LLM call --
-            # check_my_images' vision call can itself take several seconds,
-            # and interrupt_and_archive() must be able to cancel that too if
-            # an experiment starts mid-check, not only during the first call.
+            # Tracked for the whole method (not just the initial LLM call, so
+            # a slow check_my_images vision call is covered too) so an
+            # explicit interrupt_and_archive() call -- currently unused, but
+            # available for e.g. a future "clear conversation" action --
+            # could still cancel whatever's in flight.
             self._task = asyncio.current_task()
             try:
                 try:
@@ -450,12 +476,23 @@ class AssistantService:
 
     def _resolve_list_experiments(self, args: dict, requesting_username: Optional[str]) -> str:
         """Read-only listing, most-recently-modified first (same ordering
-        Storage.list_experiments() already uses for Gallery/history) -- not
-        scoped to the requester by default, same shared-device visibility
-        rule as prefill_experiment: naming nobody means "every user", not
-        "only me", because Gallery/Import already show everyone's runs to
-        everyone on this box."""
-        target_user = (args.get("username") or "").strip().lower() or None
+        Storage.list_experiments() already uses for Gallery/history).
+
+        Naming nobody defaults to the CURRENT user (matches what "which
+        experiment did I conduct" actually expects), not everyone -- an
+        earlier version defaulted to "every user" to mirror Gallery/Import's
+        shared visibility, but real usage showed that reads as "wrong user"
+        for the much more common first-person question. Passing exactly
+        'all'/'everyone'/'everybody' still gets the full shared listing;
+        naming someone else still works as before (this box is shared, so
+        that's still allowed, unlike the strictly-self-only tools)."""
+        raw = (args.get("username") or "").strip()
+        if not raw:
+            target_user = requesting_username.strip().lower() if requesting_username else None
+        elif raw.lower() in ("all", "everyone", "everybody"):
+            target_user = None
+        else:
+            target_user = raw.lower()
         limit = args.get("limit")
         if not isinstance(limit, int) or limit <= 0:
             limit = 5
@@ -621,9 +658,14 @@ class AssistantService:
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:
-        """Called the moment an experiment starts: cancel any in-flight
-        generation and archive whatever was said so far so it isn't silently
-        lost -- then clear it for the next conversation."""
+        """Cancels any in-flight generation and archives whatever was said so
+        far so it isn't silently lost, then clears it for the next
+        conversation. Not called automatically anywhere right now -- an
+        earlier local-model version called this the moment an experiment
+        started, to protect the Pi's RAM/CPU; a remote API has no such
+        contention, so chat now stays available throughout a run. Kept as an
+        available capability (e.g. for a future explicit "clear
+        conversation" action) rather than removed outright."""
         if self._task is not None and not self._task.done():
             self._task.cancel()
 
