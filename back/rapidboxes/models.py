@@ -355,6 +355,43 @@ class SavedExperimentConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# QA assistant (local chat, see rapidboxes/assistant/service.py)
+# ---------------------------------------------------------------------------
+
+
+class AssistantMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    # Echoed back by the client so a page refresh doesn't lose context; the
+    # server also keeps its own copy for archiving, see AssistantService.
+    history: List[AssistantMessage] = Field(default_factory=list)
+    username: Optional[str] = None
+
+
+class ExperimentProposal(BaseModel):
+    """A concrete, ready-to-review config resolved from one specific past
+    experiment's own saved settings -- never invented by the model. The
+    caller (web UI or CLI) must show this to a human and get an explicit
+    confirmation before it is ever used to start anything; the assistant
+    itself never calls the start API."""
+
+    experimentId: str
+    protocol: Literal["tropism", "growth"]
+    sourceUsername: str
+    summary: str
+    config: SavedExperimentConfig
+
+
+class AssistantChatResponse(BaseModel):
+    reply: str
+    proposal: Optional[ExperimentProposal] = None
+
+
+# ---------------------------------------------------------------------------
 # Misc API payloads
 # ---------------------------------------------------------------------------
 
