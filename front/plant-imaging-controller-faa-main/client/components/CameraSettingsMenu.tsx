@@ -268,7 +268,7 @@ export default function CameraSettingsMenu({ onClose, embedded = false }: Camera
               onDecrement={() => patch({ zoom: applyZoomStickiness(camera.zoom - 0.1) })}
             />
 
-            <div className="flex h-[74px] flex-col justify-between gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
+            <div className="col-span-2 flex flex-col justify-center gap-1 rounded-[10px] border border-app-border-primary bg-app-bg-secondary p-2">
               <div className="text-[9px] font-bold uppercase tracking-[0.5px] text-app-text-muted">
                 Note
               </div>
