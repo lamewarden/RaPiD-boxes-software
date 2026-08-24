@@ -300,6 +300,7 @@ class UserSummary(BaseModel):
 
     username: str
     experimentCount: int
+    bytesUsed: int
 
 
 # ---------------------------------------------------------------------------

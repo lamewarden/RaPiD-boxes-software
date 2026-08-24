@@ -331,9 +331,9 @@ async def test_list_users_combines_experiment_history_and_saved_defaults(
     assert res.status_code == 200
     # case-insensitive alphabetical, with each user's experiment count
     assert res.json() == [
-        {"username": "bob", "experimentCount": 1},
-        {"username": "ivan", "experimentCount": 2},
-        {"username": "lev", "experimentCount": 0},
+        {"username": "bob", "experimentCount": 1, "bytesUsed": 0},
+        {"username": "ivan", "experimentCount": 2, "bytesUsed": 0},
+        {"username": "lev", "experimentCount": 0, "bytesUsed": 0},
     ]
 
 
@@ -348,7 +348,26 @@ async def test_list_users_folds_case_variants_into_one_lowercased_entry(
     await client.put("/api/settings/mine", json={"username": "IvAn", "settings": res.json()})
 
     res = await client.get("/api/users")
-    assert res.json() == [{"username": "ivan", "experimentCount": 3}]  # one entry, not four
+    assert res.json() == [
+        {"username": "ivan", "experimentCount": 3, "bytesUsed": 0}
+    ]  # one entry, not four
+
+
+@pytest.mark.asyncio
+async def test_list_users_sums_bytes_used_across_that_users_experiments(
+    client: AsyncClient, app_config: AppConfig
+):
+    run_a = app_config.storage_root / "2026-01-01_Ivan_run-a"
+    run_b = app_config.storage_root / "2026-01-02_ivan_run-b"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+    (run_a / "dark_00000.png").write_bytes(b"x" * 1000)
+    (run_b / "dark_00000.png").write_bytes(b"x" * 2500)
+
+    res = await client.get("/api/users")
+    [entry] = res.json()
+    assert entry["username"] == "ivan"
+    assert entry["bytesUsed"] == 3500
 
 
 @pytest.mark.asyncio

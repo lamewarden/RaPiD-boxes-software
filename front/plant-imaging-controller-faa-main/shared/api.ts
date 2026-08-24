@@ -273,6 +273,7 @@ export interface UserDefaultsUpdate {
 export interface UserSummary {
   username: string;
   experimentCount: number;
+  bytesUsed: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus, User, X } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 
 /**
  * Tapping the user name in the top nav opens this picker first, rather than
@@ -78,9 +79,12 @@ export default function UserSelectMenu({
                     }`}
                   >
                     <User className="h-[16px] w-[16px] flex-shrink-0" strokeWidth={1.5} />
-                    <span className="truncate text-[13px] font-semibold">{u.username}</span>
-                    <span className="flex-shrink-0 font-light text-[10px] tracking-wide text-app-text-muted">
-                      {u.experimentCount}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold">{u.username}</span>
+                      <span className="block truncate font-light text-[10px] tracking-wide text-app-text-muted">
+                        {u.experimentCount} experiment{u.experimentCount === 1 ? "" : "s"} ·{" "}
+                        {formatBytes(u.bytesUsed)}
+                      </span>
                     </span>
                     {active && (
                       <span className="ml-auto flex-shrink-0 text-[10px] font-bold uppercase text-app-green-light">
