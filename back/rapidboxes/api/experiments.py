@@ -32,6 +32,9 @@ async def start_experiment(config: ExperimentConfig, state: AppState = Depends(g
     # with every experiment config. Remote sync uses it as the destination
     # subfolder, and switches itself off if it changes mid-stream.
     state.sync.note_active_researcher(config.username)
+    # Cut short any in-flight assistant chat and force its model out of RAM
+    # before hardware ops start -- see AssistantService.interrupt_and_archive().
+    await state.assistant.interrupt_and_archive("experiment_started")
     return await state.runner.start(config, state.settings.camera)
 
 

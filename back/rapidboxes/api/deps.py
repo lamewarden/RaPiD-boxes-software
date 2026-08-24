@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from ..assistant.service import AssistantService
 from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..hardware.manager import HardwareManager, build_hardware
@@ -23,6 +24,8 @@ class AppState:
     # Remote CIFS sync. Holds the session-only password in memory; see
     # rapidboxes/remote_sync.py for why it lives here and nowhere else.
     sync: RemoteSyncService
+    # Local QA chat assistant (Ollama). See rapidboxes/assistant/service.py.
+    assistant: AssistantService
 
     async def rebuild_hardware(self, settings: DeviceSettings) -> None:
         """Swap in fresh hardware after a settings change (idle only).

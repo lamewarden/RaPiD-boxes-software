@@ -86,9 +86,19 @@ class AppConfig(BaseSettings):
     # see rapidboxes/remote_sync.py.
     remote_sync_path: Path = Path.home() / "rapidboxes" / "remote_sync.json"
 
+    # Local QA chat assistant (Ollama). keep_alive on individual requests is
+    # what actually controls model RAM residency (see AssistantService); this
+    # is just which local Ollama instance/model to talk to. Model choice
+    # matches the one benchmarked as usable on this Pi's CPU -- see
+    # PROJECT_BRIEFING.md before changing it or re-enabling ollama.service.
+    assistant_ollama_url: str = "http://127.0.0.1:11434"
+    assistant_model: str = "qwen2.5:1.5b-instruct-q4_K_M"
+    assistant_archive_dir: Path = Path.home() / "rapidboxes" / "assistant_archive"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.assistant_archive_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .assistant.service import AssistantService
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
@@ -23,6 +24,7 @@ from .retention import cleanup_expired_experiments
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
 from .api import (
+    assistant as assistant_api,
     experiments,
     health,
     images,
@@ -72,13 +74,15 @@ async def lifespan(app: FastAPI):
     # HardwareManager.restore_experiment_settings) -- read it back from hw
     # rather than the pre-recover() `device_settings`, so GET /api/settings
     # and the Camera Settings UI agree with what's actually driving captures.
-    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync)
+    assistant = AssistantService(config, storage)
+    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
         yield
     finally:
         await runner.shutdown()
         await sync.shutdown()
+        await assistant.aclose()
         log.info("RaPiD-boxes stopped; hardware released")
 
 
@@ -96,6 +100,7 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
     )
 
     for module in (
+        assistant_api,
         experiments,
         images,
         settings_api,
