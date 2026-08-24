@@ -1,4 +1,3 @@
-import { Activity } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { ExperimentPhase, ExperimentStatus } from "@shared/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
@@ -81,7 +80,6 @@ export default function RunningExperimentButton({ className = "" }: { className?
         />
       )}
 
-      <Activity className="relative z-10 h-[18px] w-[18px] text-app-green" strokeWidth={1.75} />
       <span className="relative z-10 whitespace-nowrap text-[12px] font-semibold leading-5">
         {protocolLabel}: {stateLabel}
       </span>
