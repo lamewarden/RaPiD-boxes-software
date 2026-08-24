@@ -34,6 +34,7 @@ pi = [
 
 [project.scripts]
 rapidboxes = "rapidboxes.__main__:main"
+rapidboxes-assistant = "rapidboxes.assistant.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

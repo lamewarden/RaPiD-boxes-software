@@ -1,5 +1,7 @@
 /** Thin typed client for the RaPiD-boxes FastAPI backend (same origin). */
 import type {
+  AssistantChatResponse,
+  AssistantMessage,
   CameraSettings,
   DeviceSettings,
   ExperimentConfig,
@@ -150,6 +152,15 @@ export const api = {
     jsonFetch<{ mode: "off" | "white" }>("/api/preview/backlight", {
       method: "POST",
       body: JSON.stringify({ mode }),
+    }),
+  /** 409s while an experiment is running/paused/finishing; 503 if the local
+   *  Ollama model isn't reachable. `history` is the client's own copy so a
+   *  page refresh doesn't lose context (the server keeps one too, for
+   *  archiving -- see AssistantService). */
+  assistantChat: (message: string, history: AssistantMessage[], username?: string) =>
+    jsonFetch<AssistantChatResponse>("/api/assistant/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, history, username }),
     }),
 };
 

@@ -19,6 +19,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from rapidboxes import config_xml
+from rapidboxes.assistant.cli import _build_start_payload
 from rapidboxes.assistant.service import AssistantService
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
@@ -187,3 +188,60 @@ def test_ordinary_reply_is_not_treated_as_action(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     assert service._try_resolve_action("just a normal conversational reply", None) is None
+
+
+# --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
+
+
+def test_build_start_payload_tropism():
+    config = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseEnabled=True,
+        darkPhaseHours=12.5,
+        lateralIlluminationHours=3.0,
+        spectra=["white", "red"],
+        intervalMinutes=15.0,
+        intensity=40,
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(grayscale=False, zoom=2.0),
+    ).model_dump()
+
+    payload = _build_start_payload(config, username="ivan", experiment_name="replay-1")
+
+    assert payload == {
+        "protocol": "tropism",
+        "experimentName": "replay-1",
+        "username": "ivan",
+        "darkPhaseEnabled": True,
+        "darkPhaseHours": 12.5,
+        "lateralIlluminationHours": 3.0,
+        "spectra": ["white", "red"],
+        "intervalMinutes": 15.0,
+        "intensity": 40,
+    }
+
+
+def test_build_start_payload_growth():
+    config = SavedExperimentConfig(
+        protocol="growth",
+        dayLengthHours=16,
+        experimentLengthDays=10,
+        spectra=["white"],
+        dayIntensity=30,
+        intervalMinutes=20.0,
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(grayscale=False, zoom=1.0),
+    ).model_dump()
+
+    payload = _build_start_payload(config, username="ivan", experiment_name="replay-2")
+
+    assert payload == {
+        "protocol": "growth",
+        "experimentName": "replay-2",
+        "username": "ivan",
+        "dayLengthHours": 16,
+        "experimentLengthDays": 10,
+        "spectra": ["white"],
+        "dayIntensity": 30,
+        "intervalMinutes": 20.0,
+    }

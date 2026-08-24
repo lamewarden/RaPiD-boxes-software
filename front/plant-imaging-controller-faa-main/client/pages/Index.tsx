@@ -1,14 +1,36 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Sprout, Sun } from "lucide-react";
+import { Flower2, Sparkles, Sprout, Sun } from "lucide-react";
 import TopNav from "@/components/TopNav";
+import AssistantChat from "@/components/AssistantChat";
+import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+
+const ACTIVE_STATES = new Set(["running", "paused", "finishing"]);
 
 export default function Index() {
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const { status } = useExperimentStatus();
+  // Optimistic default (true) before the first status frame arrives, same
+  // convention as cameraAvailable elsewhere -- the backend re-checks this
+  // itself (409) regardless, so a stale "available" here is harmless.
+  const assistantAvailable = !status || !ACTIVE_STATES.has(status.state);
+
   return (
     <div className="relative flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto">
       <TopNav />
-      
+
       <div className="flex h-[415px] p-2 flex-col justify-center items-start gap-6 flex-shrink-0 self-stretch bg-app-bg-primary overflow-hidden">
         <div className="text-center w-full">
+          <button
+            onClick={() => setAssistantOpen(true)}
+            disabled={!assistantAvailable}
+            title={assistantAvailable ? undefined : "Unavailable while an experiment is running"}
+            className="mb-3 inline-flex items-center gap-2 rounded-full border border-app-violet/50 bg-app-violet/15 px-4 py-1.5 text-white shadow-lg transition-colors hover:bg-app-violet/25 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Flower2 className="h-[16px] w-[16px] text-app-violet-light" strokeWidth={1.5} />
+            <span className="text-[12px] font-bold">QA Assistant</span>
+            <Sparkles className="h-[13px] w-[13px] text-app-violet-light" strokeWidth={1.5} />
+          </button>
           <h2 className="text-xl font-bold text-white mb-2">Select Your Program</h2>
           <p className="text-app-text-secondary text-sm mb-4">
             Choose a program and click to configure your imaging experiment
@@ -45,6 +67,8 @@ export default function Index() {
         aria-hidden="true"
         className="pointer-events-none absolute bottom-2 left-1/2 h-[80px] w-auto -translate-x-1/2 select-none opacity-20"
       />
+
+      {assistantOpen && <AssistantChat onClose={() => setAssistantOpen(false)} />}
     </div>
   );
 }

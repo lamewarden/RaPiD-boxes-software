@@ -368,3 +368,27 @@ export interface SavedExperimentConfig {
   ir: IrSettings;
   camera: CameraSettings;
 }
+
+// --- QA chat assistant (see rapidboxes/assistant/service.py) --------------
+
+export interface AssistantMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** A concrete, ready-to-review config resolved from one specific past
+ *  experiment's own saved settings -- never invented by the model. Only ever
+ *  used to pre-fill the setup screen (same mechanism as Import); a human
+ *  still has to press the real Start button. */
+export interface ExperimentProposal {
+  experimentId: string;
+  protocol: "tropism" | "growth";
+  sourceUsername: string;
+  summary: string;
+  config: SavedExperimentConfig;
+}
+
+export interface AssistantChatResponse {
+  reply: string;
+  proposal: ExperimentProposal | null;
+}
