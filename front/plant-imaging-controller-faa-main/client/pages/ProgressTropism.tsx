@@ -26,6 +26,7 @@ export default function ProgressTropism() {
       ? "Starting…"
       : "—";
   const elapsed = status?.elapsedSeconds ?? 0;
+  const remaining = status ? status.totalSeconds - status.elapsedSeconds : 0;
   const captured = status?.imagesCaptured ?? 0;
   const planned = status?.imagesPlanned ?? 0;
   const progressPct =
@@ -140,21 +141,31 @@ export default function ProgressTropism() {
 
           {/* Info panel */}
           <div className="flex flex-col gap-1.5 flex-shrink-0 w-36">
-            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-1 flex items-center justify-center gap-2">
-              <div className="text-center">
-                <div className="text-base font-black text-app-green tabular-nums leading-none">
-                  {formatElapsed(elapsed)}
+            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-1 flex flex-col gap-1">
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-center">
+                  <div className="text-base font-black text-app-green tabular-nums leading-none">
+                    {formatElapsed(elapsed)}
+                  </div>
+                  <p className="text-app-text-muted text-[9px] mt-0.5">Elapsed</p>
                 </div>
-                <p className="text-app-text-muted text-[9px] mt-0.5">Elapsed</p>
-              </div>
-              <div className="w-px self-stretch bg-app-border-primary" />
-              <div className="text-center">
-                <div className="text-base font-black text-app-orange leading-none">
-                  {captured}
-                  <span className="text-app-text-muted text-[10px] font-semibold">/{planned}</span>
+                <div className="w-px self-stretch bg-app-border-primary" />
+                <div className="text-center">
+                  <div className="text-base font-black text-app-orange leading-none">
+                    {captured}
+                    <span className="text-app-text-muted text-[10px] font-semibold">/{planned}</span>
+                  </div>
+                  <p className="text-app-text-muted text-[9px] mt-0.5">Images</p>
                 </div>
-                <p className="text-app-text-muted text-[9px] mt-0.5">Images</p>
               </div>
+              {isActive && (
+                <div className="border-t border-app-border-primary pt-1 text-center">
+                  <div className="text-sm font-bold text-app-text-secondary tabular-nums leading-none">
+                    {formatElapsed(remaining)}
+                  </div>
+                  <p className="text-app-text-muted text-[9px] mt-0.5">Remaining</p>
+                </div>
+              )}
             </div>
 
             <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-2 text-center">

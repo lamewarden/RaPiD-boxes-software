@@ -73,7 +73,7 @@ export default function RunningExperimentButton({ className = "" }: { className?
         <div className="absolute inset-y-0 w-1/4 animate-progress-wave bg-gradient-to-r from-transparent via-white/40 to-transparent" />
       </div>
 
-      <Activity className="relative z-10 h-[18px] w-[18px]" strokeWidth={1.5} />
+      <Activity className="relative z-10 h-7 w-7 shrink-0 text-app-green-bright" strokeWidth={3} />
       <span className="relative z-10 whitespace-nowrap text-[12px] font-semibold leading-5">
         {protocolLabel}: {stateLabel}
       </span>
