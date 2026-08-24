@@ -533,9 +533,15 @@ class AssistantService:
         if status.state == "idle":
             running = "No experiment is currently running."
         else:
+            # .value explicitly: str-mixin Enums changed their __str__/
+            # __format__ behavior in Python 3.11+ (prints "ClassName.member"
+            # instead of the plain value) -- invisible on a 3.9 dev venv,
+            # live on the Pi's 3.13, caught by testing against the real
+            # device.
+            phase = status.phase.value if status.phase else "none"
             running = (
-                f"Experiment '{status.experimentId}' ({status.username}) is {status.state}, "
-                f"phase {status.phase}, {status.imagesCaptured}/{status.imagesPlanned} images captured."
+                f"Experiment '{status.experimentId}' ({status.username}) is {status.state.value}, "
+                f"phase {phase}, {status.imagesCaptured}/{status.imagesPlanned} images captured."
             )
 
         usage = shutil.disk_usage(self._config.storage_root)
