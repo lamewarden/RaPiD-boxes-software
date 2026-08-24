@@ -43,6 +43,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["rapidboxes*"]
 
+# Non-.py data setuptools wouldn't otherwise bundle into the wheel --
+# knowledge.md is AssistantService's system prompt source (see
+# assistant/service.py's _load_knowledge()); without this it installs
+# silently missing, and the assistant runs with an empty knowledge base.
+[tool.setuptools.package-data]
+rapidboxes = ["assistant/knowledge.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
