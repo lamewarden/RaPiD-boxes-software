@@ -260,11 +260,19 @@ export interface DeviceSettings {
 }
 
 /** PUT /api/settings/mine body -- save the current camera + illumination
- *  settings as this researcher's personal baseline (shared across the
- *  Camera and Illumination tabs). See back/rapidboxes/user_defaults.py. */
+ *  settings as this user's personal baseline (shared across the Camera and
+ *  Illumination tabs). See back/rapidboxes/user_defaults.py. */
 export interface UserDefaultsUpdate {
   username: string;
   settings: DeviceSettings;
+}
+
+/** One entry in GET /api/users -- a username this device has seen, with how
+ *  many experiments are attributed to it. Matched case-insensitively, so
+ *  "Ivan"/"IVAN"/"ivan" fold into one lower-cased entry. */
+export interface UserSummary {
+  username: string;
+  experimentCount: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -5,10 +5,13 @@ import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 
 /**
- * Tapping the researcher name in the top nav opens this picker first, rather
- * than jumping straight to the keyboard -- most sessions are an existing
- * researcher picking themselves, not typing a name from scratch. Only "+ New
- * User" reaches the keyboard, and only for a genuinely new name.
+ * Tapping the user name in the top nav opens this picker first, rather than
+ * jumping straight to the keyboard -- most sessions are an existing user
+ * picking themselves, not typing a name from scratch. Only "+ New User"
+ * reaches the keyboard, and only for a genuinely new name. Names are
+ * case-insensitive (see lib/session.ts setUsername), so there's no separate
+ * "that name already exists" warning to show -- typing any case variant of
+ * an existing name just re-selects that same working folder.
  */
 export default function UserSelectMenu({
   currentUsername,
@@ -28,7 +31,7 @@ export default function UserSelectMenu({
   if (creatingNew) {
     return (
       <OnScreenKeyboard
-        title="New researcher name"
+        title="New user name"
         initialValue=""
         onCancel={() => setCreatingNew(false)}
         onConfirm={(v) => onSelect(v)}
@@ -41,7 +44,7 @@ export default function UserSelectMenu({
       <div className="flex max-h-[80%] w-full max-w-[420px] flex-col rounded-xl border border-app-border-primary bg-app-bg-secondary shadow-2xl">
         <div className="flex items-center justify-between border-b border-app-border-primary px-3 py-2">
           <span className="text-[13px] font-bold uppercase tracking-wide text-white">
-            Select Researcher
+            Select User
           </span>
           <button
             onClick={onClose}
@@ -58,16 +61,16 @@ export default function UserSelectMenu({
             </div>
           ) : !users || users.length === 0 ? (
             <p className="p-3 text-center text-[12px] text-app-text-muted">
-              No researchers on this device yet.
+              No users on this device yet.
             </p>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {users.map((name) => {
-                const active = name.toLowerCase() === currentUsername.toLowerCase();
+              {users.map((u) => {
+                const active = u.username.toLowerCase() === currentUsername.toLowerCase();
                 return (
                   <button
-                    key={name}
-                    onClick={() => onSelect(name)}
+                    key={u.username}
+                    onClick={() => onSelect(u.username)}
                     className={`flex items-center gap-2 rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
                       active
                         ? "border-app-green/60 bg-app-green/15 text-white"
@@ -75,7 +78,10 @@ export default function UserSelectMenu({
                     }`}
                   >
                     <User className="h-[16px] w-[16px] flex-shrink-0" strokeWidth={1.5} />
-                    <span className="truncate text-[13px] font-semibold">{name}</span>
+                    <span className="truncate text-[13px] font-semibold">{u.username}</span>
+                    <span className="flex-shrink-0 font-light text-[10px] tracking-wide text-app-text-muted">
+                      {u.experimentCount}
+                    </span>
                     {active && (
                       <span className="ml-auto flex-shrink-0 text-[10px] font-bold uppercase text-app-green-light">
                         Current

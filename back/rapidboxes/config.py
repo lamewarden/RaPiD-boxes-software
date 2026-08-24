@@ -49,7 +49,7 @@ class AppConfig(BaseSettings):
     # Persisted, user-editable device settings (camera/leds/ir). Created on first run.
     settings_path: Path = Path.home() / "rapidboxes" / "settings.json"
 
-    # Per-researcher saved settings baseline (Settings -> "Save Mine"), keyed
+    # Per-user saved settings baseline (Settings -> "Save Mine"), keyed
     # by username, covering camera + illumination as one bundle. Distinct
     # from settings_path: that one's camera half is reset to the system
     # default every process start; this one only changes when a user

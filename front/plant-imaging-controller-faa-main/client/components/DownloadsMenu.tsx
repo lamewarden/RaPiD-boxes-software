@@ -10,7 +10,7 @@ export default function DownloadsMenu({ onClose }: { onClose: () => void }) {
   });
   const username = getUsername();
   // No server-side auth on this box -- this filter is purely a UI convenience
-  // so a researcher sees "my experiments" rather than everyone's.
+  // so a user sees "my experiments" rather than everyone's.
   const entries = (data ?? []).filter((entry) => entry.username === username);
 
   return (

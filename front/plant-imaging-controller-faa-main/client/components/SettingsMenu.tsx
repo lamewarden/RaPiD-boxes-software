@@ -15,7 +15,7 @@ type SettingsSection = "camera" | "illumination" | "general";
 export default function SettingsMenu({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>("camera");
   const [deviceSettings, setDeviceSettings] = useState<DeviceSettings | null>(null);
-  // This researcher's own saved baseline ("Mine") -- null until they save one.
+  // This user's own saved baseline ("Mine") -- null until they save one.
   const [myDefaults, setMyDefaults] = useState<DeviceSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,7 +57,7 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
   };
 
   /** Applies the current settings to this session (like Save) and also
-   *  remembers them as this researcher's personal baseline, so "Mine" has
+   *  remembers them as this user's personal baseline, so "Mine" has
    *  something to reset to next time -- including after a reboot, unlike
    *  the session settings above. */
   const handleSaveMine = async () => {

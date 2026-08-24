@@ -14,7 +14,7 @@ import {
  * to, and what the backend resets the active session's camera half to at
  * every process start (see settings_store.load_device_settings_for_new_session).
  *
- * Distinct from a researcher's own saved baseline ("Mine", saved/restored
+ * Distinct from a user's own saved baseline ("Mine", saved/restored
  * via api.saveMyDefaults / api.myDefaults) — that one is optional, per
  * username, covers camera + illumination as one bundle, and persists across
  * restarts.

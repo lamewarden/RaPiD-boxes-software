@@ -319,32 +319,36 @@ async def test_list_users_combines_experiment_history_and_saved_defaults(
     client: AsyncClient, app_config: AppConfig
 ):
     (app_config.storage_root / "2026-01-01_Ivan_run-a").mkdir(parents=True)
-    (app_config.storage_root / "2026-01-02_bob_run-b").mkdir(parents=True)
+    (app_config.storage_root / "2026-01-02_Ivan_run-b").mkdir(parents=True)
+    (app_config.storage_root / "2026-01-03_bob_run-c").mkdir(parents=True)
 
     res = await client.get("/api/settings")
     settings = res.json()
-    res = await client.put(
-        "/api/settings/mine", json={"username": "lev", "settings": settings}
-    )
+    res = await client.put("/api/settings/mine", json={"username": "lev", "settings": settings})
     assert res.status_code == 200
 
     res = await client.get("/api/users")
     assert res.status_code == 200
-    assert res.json() == ["bob", "Ivan", "lev"]  # case-insensitive alphabetical
+    # case-insensitive alphabetical, with each user's experiment count
+    assert res.json() == [
+        {"username": "bob", "experimentCount": 1},
+        {"username": "ivan", "experimentCount": 2},
+        {"username": "lev", "experimentCount": 0},
+    ]
 
 
 @pytest.mark.asyncio
-async def test_list_users_prefers_experiment_casing_over_lowercased_mine_key(
+async def test_list_users_folds_case_variants_into_one_lowercased_entry(
     client: AsyncClient, app_config: AppConfig
 ):
     (app_config.storage_root / "2026-01-01_Ivan_run-a").mkdir(parents=True)
+    (app_config.storage_root / "2026-01-02_IVAN_run-b").mkdir(parents=True)
+    (app_config.storage_root / "2026-01-03_ivan_run-c").mkdir(parents=True)
     res = await client.get("/api/settings")
-    await client.put(
-        "/api/settings/mine", json={"username": "IVAN", "settings": res.json()}
-    )
+    await client.put("/api/settings/mine", json={"username": "IvAn", "settings": res.json()})
 
     res = await client.get("/api/users")
-    assert res.json() == ["Ivan"]  # not a separate "IVAN" entry
+    assert res.json() == [{"username": "ivan", "experimentCount": 3}]  # one entry, not four
 
 
 @pytest.mark.asyncio

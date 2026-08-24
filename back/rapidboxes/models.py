@@ -277,7 +277,7 @@ class DeviceSettings(BaseModel):
 
 class UserDefaultsUpdate(BaseModel):
     """PUT /api/settings/mine body: save the current camera + illumination
-    settings as this researcher's personal baseline (Settings -> "Save Mine",
+    settings as this user's personal baseline (Settings -> "Save Mine",
     shared across the Camera and Illumination tabs).
 
     Distinct from DeviceSettings' own field defaults (the fixed system
@@ -290,6 +290,16 @@ class UserDefaultsUpdate(BaseModel):
 
     username: str = Field(min_length=1, max_length=40)
     settings: DeviceSettings
+
+
+class UserSummary(BaseModel):
+    """One entry in GET /api/users -- a username this device has seen, with
+    how many experiments are attributed to it. Usernames are matched
+    case-insensitively (see api/users.py), so this count folds together any
+    historical "Ivan"/"IVAN"/"ivan" variants under one lower-cased identity."""
+
+    username: str
+    experimentCount: int
 
 
 # ---------------------------------------------------------------------------

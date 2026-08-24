@@ -16,6 +16,7 @@ import type {
   SystemInfo,
   UpdateApplyResult,
   UpdateCheckResult,
+  UserSummary,
   VersionStatus,
 } from "@shared/api";
 
@@ -93,11 +94,11 @@ export const api = {
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
   /** Usernames this device has seen -- from experiment history and saved
    *  "Mine" settings -- for the user-select picker. */
-  users: () => jsonFetch<string[]>("/api/users"),
+  users: () => jsonFetch<UserSummary[]>("/api/users"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
-  /** This researcher's saved baseline ("Mine") -- camera + illumination as
-   *  one bundle -- or null if they've never saved one. */
+  /** This user's saved baseline ("Mine") -- camera + illumination as one
+   *  bundle -- or null if they've never saved one. */
   myDefaults: (username: string) =>
     jsonFetch<DeviceSettings | null>(`/api/settings/mine?username=${encodeURIComponent(username)}`),
   saveMyDefaults: (username: string, settings: DeviceSettings) =>

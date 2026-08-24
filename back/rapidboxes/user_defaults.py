@@ -1,4 +1,4 @@
-"""Per-researcher saved settings baseline ("Save Mine") -- Settings menu.
+"""Per-user saved settings baseline ("Save Mine") -- Settings menu.
 
 Distinct from:
   - the fixed system defaults (CameraSettings()/LedSettings()/IrSettings()
