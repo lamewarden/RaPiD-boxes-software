@@ -40,7 +40,9 @@ class FakeTime:
         await asyncio.sleep(0)  # yield so listeners/captures run
 
 
-def _runner(tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None) -> ExperimentRunner:
+def _runner(
+    tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None, **runner_kwargs
+) -> ExperimentRunner:
     config = AppConfig(
         simulation=True,
         storage_root=tmp_path / "exp",
@@ -49,7 +51,9 @@ def _runner(tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None) -> Ex
     config.ensure_dirs()
     hw = build_hardware(config, settings or DeviceSettings())
     storage = Storage(config.storage_root)
-    return ExperimentRunner(hw, storage, now=ft.now, sleep=ft.sleep, tick_seconds=10_000)
+    return ExperimentRunner(
+        hw, storage, now=ft.now, sleep=ft.sleep, tick_seconds=10_000, **runner_kwargs
+    )
 
 
 def _leave_crashed_experiment(
@@ -519,6 +523,83 @@ async def test_crash_writes_failure_event_to_experiment_log(tmp_path, monkeypatc
     events = runner.current_experiment.read_events()
     assert "experiment failed: simulated capture failure" in events
     assert "finished state=error message=simulated capture failure" in events
+
+
+@pytest.mark.asyncio
+async def test_on_experiment_finished_fires_once_on_completion(tmp_path):
+    calls = []
+
+    async def on_finished(exp, status):
+        calls.append((exp.experiment_id, status.state))
+
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft, on_experiment_finished=on_finished)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    await runner.start(config)
+    await runner._task
+
+    assert len(calls) == 1
+    assert calls[0] == (runner.current_experiment.experiment_id, ExperimentState.done)
+
+
+@pytest.mark.asyncio
+async def test_on_experiment_finished_does_not_fire_on_abort(tmp_path):
+    calls = []
+
+    async def on_finished(exp, status):
+        calls.append(exp.experiment_id)
+
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft, on_experiment_finished=on_finished)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=600 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    await runner.start(config)
+    await runner.abort()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_experiment_finished_failure_does_not_break_shutdown(tmp_path):
+    """A slow/failing summary hook must never prevent the run from finishing
+    cleanly -- see ExperimentRunner._notify_finished's docstring."""
+
+    async def on_finished(exp, status):
+        raise RuntimeError("summary generation blew up")
+
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft, on_experiment_finished=on_finished)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    await runner.start(config)
+    await runner._task  # must not raise despite the hook failing
+
+    assert runner.status.state == ExperimentState.done
 
 
 @pytest.mark.asyncio

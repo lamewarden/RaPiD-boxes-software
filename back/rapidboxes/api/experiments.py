@@ -11,6 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from .. import config_xml
+from ..assistant import summary as assistant_summary
 from ..models import (
     ExperimentConfig,
     ExperimentStatus,
@@ -135,6 +136,23 @@ async def get_config(experiment_id: str, state: AppState = Depends(get_state)):
         return config_xml.parse(data)
     except Exception:
         raise HTTPException(500, "could not parse saved config")
+
+
+@router.get("/{experiment_id}/summary")
+async def get_summary(experiment_id: str, state: AppState = Depends(get_state)) -> dict:
+    """The AI-generated end-of-run summary (see assistant/summary.py),
+    written asynchronously once the run finishes -- 404 both when the
+    experiment doesn't exist and when it exists but no summary has been
+    generated yet (still running, just finished and the summary call is
+    still in flight, or generation failed). The frontend should treat 404
+    as "not available yet", not necessarily an error."""
+    exp = state.storage.get_experiment(experiment_id)
+    if exp is None:
+        raise HTTPException(404, "experiment not found")
+    data = assistant_summary.read_stored(exp)
+    if data is None:
+        raise HTTPException(404, "no AI summary available for this experiment yet")
+    return data
 
 
 @router.get("/{experiment_id}/download")

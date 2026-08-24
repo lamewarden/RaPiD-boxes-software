@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .assistant import summary as assistant_summary
 from .assistant.service import AssistantService
 from .config import AppConfig, get_config
 from .engine.runner import ExperimentRunner
@@ -67,7 +68,15 @@ async def lifespan(app: FastAPI):
             "it stays inactive until the password is re-entered in Settings"
         )
 
-    runner = ExperimentRunner(hw, storage, on_image_captured=sync.enqueue_image)
+    async def on_experiment_finished(exp, status):
+        await assistant_summary.generate_and_store(config, exp, status)
+
+    runner = ExperimentRunner(
+        hw,
+        storage,
+        on_image_captured=sync.enqueue_image,
+        on_experiment_finished=on_experiment_finished,
+    )
     await runner.recover()
     # recover() may have overridden the camera/source half of hw's settings to
     # match a resumed experiment's own saved config (see

@@ -4,6 +4,7 @@ import type {
   AssistantMessage,
   CameraSettings,
   DeviceSettings,
+  ExperimentAiSummary,
   ExperimentConfig,
   ExperimentStatus,
   FreeSpaceResponse,
@@ -78,6 +79,13 @@ export const api = {
   history: () => jsonFetch<HistoryEntry[]>("/api/experiments/history"),
   experimentConfig: (id: string) =>
     jsonFetch<SavedExperimentConfig>(`/api/experiments/${id}/config`),
+  /** The AI-generated end-of-run summary (assistant/summary.py), written
+   *  asynchronously a few seconds after the run finishes. 404s both when
+   *  the experiment doesn't exist and when the summary just isn't ready
+   *  yet -- callers should treat a thrown error here as "not available
+   *  yet", not necessarily a hard failure. */
+  experimentSummary: (id: string) =>
+    jsonFetch<ExperimentAiSummary>(`/api/experiments/${id}/summary`),
   /** URL for the zipped experiment folder (images + metadata + config XML).
    * No fetch needed -- an <a href> download or window.location navigation
    * lets the browser handle the actual save. */

@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Power } from "lucide-react";
+import { Bot, Power, TriangleAlert } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatElapsed } from "@/lib/progress";
@@ -38,6 +38,25 @@ export default function ExperimentSummary() {
     queryFn: () => api.images(experimentId ?? undefined),
   });
 
+  // The AI summary is written a few seconds after the run finishes (an LLM
+  // call happens in the background), so this screen may load before it
+  // exists yet -- poll until we have one, then stop. A 404 here means "not
+  // ready yet" (or the box couldn't reach the assistant API), not a hard
+  // error, so it's swallowed rather than surfaced as a query error.
+  const { data: aiSummary, isLoading: summaryLoading } = useQuery({
+    queryKey: ["summary-ai", experimentId],
+    queryFn: async () => {
+      if (!experimentId) return null;
+      try {
+        return await api.experimentSummary(experimentId);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!experimentId,
+    refetchInterval: (query) => (query.state.data ? false : 4000),
+  });
+
   const images = imageList?.images ?? [];
   const firstFrame: ImageInfo | null = images.length > 0 ? images[0] : null;
   const lastFrame: ImageInfo | null = images.length > 0 ? images[images.length - 1] : null;
@@ -66,7 +85,7 @@ export default function ExperimentSummary() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col w-full p-3 gap-2 overflow-hidden">
+      <div className="flex-1 flex flex-col w-full p-3 gap-2 overflow-y-auto">
         <div className="text-center">
           <h1 className="text-[18px] font-bold text-white">{programName} Completed</h1>
         </div>
@@ -114,6 +133,28 @@ export default function ExperimentSummary() {
               )}
             </div>
           </div>
+        </div>
+
+        <div className="rounded-[10px] border border-app-violet/40 bg-app-violet/10 px-3 py-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5 text-app-violet-light text-[10px] font-bold uppercase">
+            <Bot className="h-[13px] w-[13px]" strokeWidth={1.5} />
+            AI Summary
+          </div>
+          {summaryLoading || !aiSummary ? (
+            <p className="text-[11px] text-app-text-muted mt-1">
+              {summaryLoading ? "Generating summary…" : "Summary not available."}
+            </p>
+          ) : (
+            <>
+              <p className="text-[11px] text-app-text-secondary mt-1">{aiSummary.textSummary}</p>
+              {aiSummary.moldDetected && (
+                <p className="flex items-center gap-1 text-[11px] font-bold text-app-orange-light mt-1">
+                  <TriangleAlert className="h-[12px] w-[12px] flex-shrink-0" strokeWidth={2} />
+                  Possible mold in {aiSummary.moldFrameCount} of {aiSummary.framesChecked} checked frames.
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <div className="rounded-[10px] border border-app-border-primary bg-app-bg-secondary px-3 py-2 flex items-center gap-2">

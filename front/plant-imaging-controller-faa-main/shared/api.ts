@@ -392,3 +392,16 @@ export interface AssistantChatResponse {
   reply: string;
   proposal: ExperimentProposal | null;
 }
+
+/** AI-generated end-of-run summary (rapidboxes/assistant/summary.py),
+ *  written asynchronously once an experiment finishes. Mold detection uses
+ *  a >=3-frame confirmation rule -- see moldFrameCount vs framesChecked. */
+export interface ExperimentAiSummary {
+  generatedAt: string;
+  ranSmoothly: boolean;
+  textSummary: string;
+  moldDetected: boolean;
+  moldFrameCount: number;
+  imageCheckSummary: string | null;
+  framesChecked: number;
+}

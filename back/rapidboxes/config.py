@@ -97,6 +97,12 @@ class AppConfig(BaseSettings):
     assistant_api_base_url: str = "https://llm.ai.e-infra.cz/v1"
     assistant_api_key: str = ""
     assistant_model: str = "qwen3.5-122b"
+    # Separate model for image-anomaly checks (check_my_images tool, the
+    # end-of-experiment summary). Real testing showed qwen3.5-122b is
+    # noticeably slower at vision specifically (up to 7.6s) than command-a
+    # (consistently under 6s, equally or more accurate on real device
+    # images) -- different models are better at different jobs here.
+    assistant_vision_model: str = "command-a"
     assistant_archive_dir: Path = Path.home() / "rapidboxes" / "assistant_archive"
 
     def ensure_dirs(self) -> None:

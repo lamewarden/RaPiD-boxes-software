@@ -158,6 +158,7 @@ class ExperimentRunner:
         sleep: Optional[Callable[[float], Awaitable[None]]] = None,
         tick_seconds: float = 1.0,
         on_image_captured: Optional[Callable[[Path, str, str], None]] = None,
+        on_experiment_finished: Optional[Callable[[ExperimentDir, ExperimentStatus], Awaitable[None]]] = None,
     ):
         self._hw = hw
         self._storage = storage
@@ -170,10 +171,23 @@ class ExperimentRunner:
         # local experiment's schedule is paramount, the remote copy is
         # best-effort.
         self._on_image_captured = on_image_captured
+        # Notified once a run reaches done/error (never for abort() -- that
+        # path deletes the experiment and never goes through _run()'s finally
+        # or recover()'s whole-schedule-elapsed branch, the only two places
+        # this fires from). Unlike on_image_captured, this MAY be async and
+        # slow (an LLM summary call) -- a few extra seconds at end-of-run is
+        # fine, unlike mid-capture -- but must still never raise into caller.
+        self._on_experiment_finished = on_experiment_finished
 
         self.status = ExperimentStatus()
         self._task: Optional[asyncio.Task] = None
         self._stop = False
+        # abort() calls stop() internally, which lets _run() finish through
+        # its *normal* done path (not a CancelledError) before the folder
+        # gets deleted -- without this flag, on_experiment_finished would
+        # fire (wasting a real LLM call) for data about to vanish. Set only
+        # around abort()'s own stop() call.
+        self._aborting = False
         self._pause_event = asyncio.Event()
         self._pause_event.set()
         self._clock: Optional[PausableClock] = None
@@ -320,7 +334,11 @@ class ExperimentRunner:
         experiment_id = self.status.experimentId or (
             self._exp_dir.experiment_id if self._exp_dir else None
         )
-        await self.stop()
+        self._aborting = True
+        try:
+            await self.stop()
+        finally:
+            self._aborting = False
         if experiment_id:
             try:
                 self._storage.delete_experiment(experiment_id)
@@ -414,12 +432,16 @@ class ExperimentRunner:
             self.status.recoveryNotice = self._build_recovery_notice(
                 outage_s, max(0, expected - prev.imagesCaptured)
             )
+            latest.append_event(
+                f"finished state=done message={self.status.message} (recovered)"
+            )
             self._write_metadata(latest)
             await self._hw.all_off()
             log.warning(
                 "experiment %s finished its whole schedule while offline (%.0fs)",
                 latest.experiment_id, outage_s,
             )
+            await self._notify_finished(latest)
             return
 
         index, phase_elapsed = located
@@ -497,6 +519,7 @@ class ExperimentRunner:
         is_growth = isinstance(config, GrowthConfig)
         self.status.totalSeconds = sum(p.duration_s for p in phases)
         self.status.imagesPlanned = images_planned_for(config)
+        cancelled = False
         try:
             await self._hw.configure_camera()
             if is_growth and not skip_baseline:
@@ -513,6 +536,7 @@ class ExperimentRunner:
             self.status.message = "stopped by user" if self._stop else "completed"
             self.status.state = ExperimentState.done
         except asyncio.CancelledError:
+            cancelled = True
             self.status.state = ExperimentState.error
             self.status.message = "cancelled"
             exp.append_event("experiment cancelled")
@@ -536,6 +560,8 @@ class ExperimentRunner:
             )
             self._write_metadata(exp)
             await self._broadcast()
+            if not cancelled and not self._aborting:
+                await self._notify_finished(exp)
 
     async def _run_phase(
         self,
@@ -679,3 +705,13 @@ class ExperimentRunner:
         except Exception:
             log.exception("metadata write failed for %s", exp.experiment_id)
             exp.append_event("metadata write failed")
+
+    async def _notify_finished(self, exp: ExperimentDir) -> None:
+        """Best-effort: a slow or failing summary call must never break
+        shutdown/recovery. See on_experiment_finished's docstring above."""
+        if self._on_experiment_finished is None:
+            return
+        try:
+            await self._on_experiment_finished(exp, self.status)
+        except Exception:
+            log.exception("on_experiment_finished hook failed for %s", exp.experiment_id)

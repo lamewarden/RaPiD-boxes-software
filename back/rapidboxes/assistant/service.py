@@ -34,6 +34,7 @@ from ..models import (
     SavedExperimentConfig,
 )
 from ..storage import ExperimentDir, Storage, tally_by_user
+from . import vision
 
 log = logging.getLogger("rapidboxes.assistant")
 
@@ -183,6 +184,30 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_my_images",
+            "description": (
+                "Check a handful of images from one of the CURRENT user's "
+                "own experiments for visible anomalies -- mold, "
+                "contamination, lighting problems. Use for questions like "
+                "\"check my images for mold\" or \"does my last run look "
+                "ok\". This calls a vision model and can take several "
+                "seconds. Always scoped to whoever is chatting -- can only "
+                "check their own experiments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, omit for their most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -265,24 +290,29 @@ class AssistantService:
             messages += [{"role": m.role, "content": m.content} for m in history]
             messages.append({"role": "user", "content": message})
 
+            # Tracked for the whole method, not just the initial LLM call --
+            # check_my_images' vision call can itself take several seconds,
+            # and interrupt_and_archive() must be able to cancel that too if
+            # an experiment starts mid-check, not only during the first call.
             self._task = asyncio.current_task()
             try:
-                result = await self._call_llm(messages)
-            except asyncio.CancelledError:
-                raise
-            except httpx.HTTPError as exc:
-                log.warning("assistant model call failed: %s", exc)
-                raise AssistantUnavailable(
-                    "the assistant model isn't reachable right now"
-                ) from exc
+                try:
+                    result = await self._call_llm(messages)
+                except asyncio.CancelledError:
+                    raise
+                except httpx.HTTPError as exc:
+                    log.warning("assistant model call failed: %s", exc)
+                    raise AssistantUnavailable(
+                        "the assistant model isn't reachable right now"
+                    ) from exc
+
+                tool_calls = result.get("tool_calls") or []
+                if tool_calls:
+                    proposal, reply = await self._resolve_tool_call(tool_calls[0], username)
+                else:
+                    proposal, reply = None, (result.get("content") or "").strip()
             finally:
                 self._task = None
-
-            tool_calls = result.get("tool_calls") or []
-            if tool_calls:
-                proposal, reply = self._resolve_tool_call(tool_calls[0], username)
-            else:
-                proposal, reply = None, (result.get("content") or "").strip()
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
             return AssistantChatResponse(reply=reply, proposal=proposal)
@@ -301,7 +331,7 @@ class AssistantService:
         res.raise_for_status()
         return res.json()["choices"][0]["message"]
 
-    def _resolve_tool_call(
+    async def _resolve_tool_call(
         self, tool_call: dict, requesting_username: Optional[str]
     ) -> tuple[Optional[ExperimentProposal], str]:
         """Dispatches one native tool_calls entry to its resolver. Only
@@ -331,6 +361,8 @@ class AssistantService:
             return None, self._resolve_my_storage(requesting_username)
         if name == "read_experiment_log":
             return None, self._resolve_read_experiment_log(args, requesting_username)
+        if name == "check_my_images":
+            return None, await self._resolve_check_my_images(args, requesting_username)
         log.warning("model called unknown tool %r", name)
         return None, "Sorry, something went wrong handling that request."
 
@@ -555,6 +587,37 @@ class AssistantService:
         if not events:
             return f"{exp.experiment_id} has no logged events (nothing unusual was recorded)."
         return f"Events for {exp.experiment_id}:\n{events}"
+
+    async def _resolve_check_my_images(self, args: dict, requesting_username: Optional[str]) -> str:
+        """Read-only vision check on the requester's own experiment images.
+        Strictly scoped like read_experiment_log -- never another user's
+        images. Mold is only ever reported confirmed if
+        vision.MOLD_CONFIRM_THRESHOLD frames were individually flagged; see
+        vision.check_frames_for_anomalies for why."""
+        if not requesting_username:
+            return "I don't know who's chatting -- pick your username on the home screen first."
+
+        target_user = requesting_username.strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return (
+                f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
+                "Try being more specific about which run."
+            )
+
+        paths = vision.sample_image_paths(exp)
+        if not paths:
+            return f"{exp.experiment_id} has no images to check yet."
+
+        result = await vision.check_frames_for_anomalies(self._config, paths)
+        headline = (
+            f"Mold appears present in {result.mold_frame_count} of {result.frames_checked} "
+            f"checked frames from {exp.experiment_id}."
+            if result.mold_confirmed
+            else f"Checked {result.frames_checked} frames from {exp.experiment_id}: no confirmed mold."
+        )
+        return f"{headline} {result.summary}"
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

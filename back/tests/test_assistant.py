@@ -20,6 +20,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from rapidboxes import config_xml
+from rapidboxes.assistant import vision
 from rapidboxes.assistant.cli import _build_start_payload
 from rapidboxes.assistant.service import AssistantService
 from rapidboxes.config import AppConfig
@@ -187,7 +188,7 @@ async def test_prefill_resolves_real_past_experiment(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ivan", reference="yesterday")
-        proposal, _summary = service._resolve_tool_call(call, requesting_username=None)
+        proposal, _summary = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is not None
         assert proposal.experimentId == exp.experiment_id
         assert proposal.sourceUsername == "ivan"
@@ -205,29 +206,31 @@ async def test_prefill_no_match_returns_no_proposal(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ghost", reference="yesterday")
-        proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+        proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is None
         assert "couldn't find" in reply
     finally:
         await service.aclose()
 
 
-def test_unknown_tool_name_degrades_gracefully(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_unknown_tool_name_degrades_gracefully(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("delete_everything")
-    proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "went wrong" in reply
 
 
-def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     hw = build_hardware(app_config, DeviceSettings())
     runner = ExperimentRunner(hw, storage)
     service = AssistantService(app_config, storage, runner)
     call = {"function": {"name": "system_status", "arguments": "not valid json"}}
-    proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply  # empty args -> still resolves
 
@@ -235,7 +238,8 @@ def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig):
 # --- list_experiments tool resolution ---------------------------------------
 
 
-def test_list_experiments_all_users_shows_everyone(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_list_experiments_all_users_shows_everyone(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     for username, name in [("ivan", "run1"), ("sabol", "run2"), ("ivan", "run3")]:
         exp = storage.create_experiment(username, name)
@@ -243,14 +247,15 @@ def test_list_experiments_all_users_shows_everyone(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments")
-    proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "all users" in reply
     assert reply.count(" — ivan — ") == 2
     assert reply.count(" — sabol — ") == 1
 
 
-def test_list_experiments_filters_by_named_user(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_list_experiments_filters_by_named_user(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     for username, name in [("ivan", "run1"), ("sabol", "run2")]:
         exp = storage.create_experiment(username, name)
@@ -258,14 +263,15 @@ def test_list_experiments_filters_by_named_user(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="sabol")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "for sabol" in reply
     assert " — sabol — " in reply
     assert "ivan" not in reply.split("\n", 1)[1]  # ivan's own run excluded
 
 
-def test_list_experiments_respects_limit(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_list_experiments_respects_limit(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     for i in range(3):
         exp = storage.create_experiment("ivan", f"run{i}")
@@ -273,15 +279,16 @@ def test_list_experiments_respects_limit(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", limit=2)
-    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "Last 2 experiment(s)" in reply
 
 
-def test_list_experiments_no_match(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_list_experiments_no_match(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="ghost")
-    proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiments found" in reply
 
@@ -289,34 +296,36 @@ def test_list_experiments_no_match(app_config: AppConfig):
 # --- system_status tool resolution -------------------------------------------
 
 
-def test_system_status_reports_idle_storage_and_camera(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_system_status_reports_idle_storage_and_camera(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     hw = build_hardware(app_config, DeviceSettings())
     runner = ExperimentRunner(hw, storage)
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply
     assert "Storage:" in reply
     assert "Camera:" in reply
 
 
-def test_system_status_without_runner_degrades_gracefully(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_system_status_without_runner_degrades_gracefully(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)  # no runner passed
     call = _tool_call("system_status")
-    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "isn't available" in reply
 
 
 # --- my_settings / my_storage: strictly scoped to the requester ------------
 
 
-def test_my_settings_reports_persisted_settings_and_mine_baseline(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_settings_reports_persisted_settings_and_mine_baseline(app_config: AppConfig):
     from rapidboxes import settings_store, user_defaults
-    from rapidboxes.models import CameraSettings, DeviceSettings
 
     settings_store.save_device_settings(
         app_config.settings_path,
@@ -331,7 +340,7 @@ def test_my_settings_reports_persisted_settings_and_mine_baseline(app_config: Ap
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "RGBW" in reply  # current persisted setting
     assert "Your saved 'Mine' baseline (ivan)" in reply
@@ -339,35 +348,39 @@ def test_my_settings_reports_persisted_settings_and_mine_baseline(app_config: Ap
     assert "2.5x" in reply
 
 
-def test_my_settings_no_mine_baseline_says_so(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_settings_no_mine_baseline_says_so(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "No personal 'Mine' baseline saved yet" in reply
 
 
-def test_my_settings_requires_a_known_username(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_settings_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
-def test_my_settings_ignores_username_argument_from_model(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_settings_ignores_username_argument_from_model(app_config: AppConfig):
     """my_settings' schema takes no arguments -- even if the model tries to
     slip one in, the resolver must still use requesting_username, never a
     model-supplied one. This is the strict-scoping guarantee."""
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = {"function": {"name": "my_settings", "arguments": json.dumps({"username": "someone-else"})}}
-    _proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert "ivan" in reply.lower() or "No personal 'Mine' baseline saved yet for ivan" in reply
 
 
-def test_my_storage_reports_own_usage_only(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_storage_reports_own_usage_only(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     for username, name in [("ivan", "run1"), ("sabol", "run2")]:
         exp = storage.create_experiment(username, name)
@@ -375,34 +388,37 @@ def test_my_storage_reports_own_usage_only(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "ivan has 1 experiment(s)" in reply
     assert "sabol" not in reply
     assert "Device free space:" in reply
 
 
-def test_my_storage_no_experiments_yet(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_storage_no_experiments_yet(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no stored experiments yet" in reply
 
 
-def test_my_storage_requires_a_known_username(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_my_storage_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
 # --- read_experiment_log: strictly scoped to the requester's own runs ------
 
 
-def test_read_experiment_log_returns_own_events(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_read_experiment_log_returns_own_events(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     exp = storage.create_experiment("ivan", "run1")
     exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
@@ -411,14 +427,15 @@ def test_read_experiment_log_returns_own_events(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert exp.experiment_id in reply
     assert "started protocol=tropism username=ivan" in reply
     assert "phase dark started" in reply
 
 
-def test_read_experiment_log_never_reads_another_users_run(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_read_experiment_log_never_reads_another_users_run(app_config: AppConfig):
     """read_experiment_log's schema takes no username -- even if sabol has a
     run and ivan asks, only ivan's own experiments are ever candidates."""
     storage = Storage(app_config.storage_root)
@@ -428,12 +445,13 @@ def test_read_experiment_log_never_reads_another_users_run(app_config: AppConfig
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "couldn't find" in reply
 
 
-def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     exp = storage.create_experiment("ivan", "run1")
     exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
@@ -441,17 +459,112 @@ def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no logged events" in reply
 
 
-def test_read_experiment_log_requires_a_known_username(app_config: AppConfig):
+@pytest.mark.asyncio
+async def test_read_experiment_log_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
+
+
+# --- check_my_images: strictly scoped, mold needs >=3 flagged frames -------
+
+
+def _mock_vision(monkeypatch, raw: str = "", unreachable: bool = False) -> None:
+    async def fake_call_llm(config, model, prompt, image_paths=None):
+        if unreachable:
+            raise httpx.ConnectError("connection refused")
+        return raw
+
+    monkeypatch.setattr(vision, "call_llm", fake_call_llm)
+
+
+@pytest.mark.asyncio
+async def test_check_my_images_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("check_my_images")
+    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert "don't know who's chatting" in reply
+
+
+@pytest.mark.asyncio
+async def test_check_my_images_no_experiment_found(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("check_my_images")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "couldn't find" in reply
+
+
+@pytest.mark.asyncio
+async def test_check_my_images_no_images_yet(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    # No image files written -- sample_image_paths returns [].
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("check_my_images")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "no images to check yet" in reply
+
+
+@pytest.mark.asyncio
+async def test_check_my_images_below_threshold_not_confirmed(app_config: AppConfig, monkeypatch):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    _mock_vision(
+        monkeypatch,
+        raw="frame 0: MOLD\nSUMMARY: One frame looked unusual.",
+    )
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("check_my_images")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "no confirmed mold" in reply
+
+
+@pytest.mark.asyncio
+async def test_check_my_images_at_threshold_confirmed(app_config: AppConfig, monkeypatch):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    for i in range(5):
+        _write_fake_png(exp.path / f"dark_{i:05d}.png")
+
+    _mock_vision(
+        monkeypatch,
+        raw=(
+            "frame 0: MOLD\nframe 1: MOLD\nframe 2: MOLD\nframe 3: CLEAN\nframe 4: CLEAN\n"
+            "SUMMARY: Visible mold growth on several frames."
+        ),
+    )
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("check_my_images")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "Mold appears present in 3" in reply
+    assert "Visible mold growth" in reply
+
+
+def _write_fake_png(path: Path) -> None:
+    from PIL import Image
+
+    Image.new("RGB", (32, 32), color="white").save(path, "PNG")
 
 
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
