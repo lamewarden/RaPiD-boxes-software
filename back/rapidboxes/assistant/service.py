@@ -34,6 +34,18 @@ from ..storage import ExperimentDir, Storage
 
 log = logging.getLogger("rapidboxes.assistant")
 
+# How long Ollama keeps the model resident in RAM after the last request.
+# Shared by normal chat calls and the wake-time warm-up call below so a
+# freshly-woken model doesn't get evicted before the user finishes typing
+# their first real message. interrupt_and_archive() overrides this to 0
+# (immediate unload) the moment a real experiment starts, regardless.
+_KEEP_ALIVE = "10m"
+
+# Generous: covers systemd service start (~1-2s) plus cold model load into
+# RAM (~19s measured for qwen2.5:1.5b on this Pi 5's CPU), with headroom.
+_WAKE_TIMEOUT_S = 35.0
+_WAKE_POLL_INTERVAL_S = 0.5
+
 
 class AssistantUnavailable(Exception):
     """The local Ollama model could not be reached or errored a request.
@@ -120,6 +132,62 @@ class AssistantService:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    # --- wake-on-demand ------------------------------------------------------
+    async def ensure_awake(self) -> None:
+        """Starts the local Ollama systemd service if it isn't already
+        running, then pre-loads the configured model, so the chat window's
+        loading screen (not the user's first message) absorbs the cold-start
+        cost. Ollama is deliberately not autostarted at boot on this 4GB Pi
+        -- see PROJECT_BRIEFING.md's reboot incident -- so this is the one
+        path that ever starts it, and only in direct response to a human
+        tapping the QA Assistant button (see api/assistant.py's /wake,
+        gated the same idle-only way as chat)."""
+        if not await self._ollama_reachable():
+            await self._start_ollama_service()
+            deadline = asyncio.get_event_loop().time() + _WAKE_TIMEOUT_S
+            while not await self._ollama_reachable():
+                if asyncio.get_event_loop().time() > deadline:
+                    raise AssistantUnavailable(
+                        "the assistant service didn't start in time -- try again"
+                    )
+                await asyncio.sleep(_WAKE_POLL_INTERVAL_S)
+        await self._warm_model()
+
+    async def _ollama_reachable(self) -> bool:
+        try:
+            res = await self._client.get("/api/tags", timeout=2.0)
+            return res.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    async def _start_ollama_service(self) -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo",
+                "systemctl",
+                "start",
+                "ollama",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except FileNotFoundError:
+            # No systemd here (e.g. a dev laptop) -- fall through to the
+            # poll loop, which succeeds if Ollama is already running some
+            # other way, or times out with a clear message if not.
+            log.warning("no systemctl on this host; assuming Ollama is started some other way")
+
+    async def _warm_model(self) -> None:
+        try:
+            await self._client.post(
+                "/api/generate",
+                json={"model": self._config.assistant_model, "prompt": "", "stream": False, "keep_alive": _KEEP_ALIVE},
+                timeout=_WAKE_TIMEOUT_S,
+            )
+        except httpx.HTTPError as exc:
+            log.warning("assistant warm-up call failed: %s", exc)
+            raise AssistantUnavailable("the assistant model failed to load -- try again") from exc
+
     # --- chat --------------------------------------------------------------
     async def chat(
         self, message: str, history: List[AssistantMessage], username: Optional[str]
@@ -158,7 +226,7 @@ class AssistantService:
                 # Keep it warm for a normal chat session's pacing, but
                 # interrupt_and_archive() forces it out immediately the
                 # moment an experiment starts, regardless of this.
-                "keep_alive": "10m",
+                "keep_alive": _KEEP_ALIVE,
             },
         )
         res.raise_for_status()

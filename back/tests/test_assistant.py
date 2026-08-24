@@ -20,7 +20,7 @@ from httpx import ASGITransport, AsyncClient
 
 from rapidboxes import config_xml
 from rapidboxes.assistant.cli import _build_start_payload
-from rapidboxes.assistant.service import AssistantService
+from rapidboxes.assistant.service import AssistantService, AssistantUnavailable
 from rapidboxes.config import AppConfig
 from rapidboxes.main import create_app
 from rapidboxes.models import CameraSettings, SavedExperimentConfig, TropismConfig
@@ -72,6 +72,44 @@ def _tropism_config(**overrides) -> TropismConfig:
         intervalMinutes=1,
         **overrides,
     )
+
+
+def _mock_wake(monkeypatch, unreachable: bool = False) -> None:
+    async def fake_ensure_awake(self):  # noqa: ANN001 - matches ensure_awake's signature
+        if unreachable:
+            raise AssistantUnavailable("the assistant service didn't start in time -- try again")
+
+    monkeypatch.setattr(AssistantService, "ensure_awake", fake_ensure_awake)
+
+
+# --- wake-on-demand --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wake_ok_while_idle(client: AsyncClient, monkeypatch):
+    _mock_wake(monkeypatch)
+    res = await client.post("/api/assistant/wake")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_wake_503_when_ollama_fails_to_start(client: AsyncClient, monkeypatch):
+    _mock_wake(monkeypatch, unreachable=True)
+    res = await client.post("/api/assistant/wake")
+    assert res.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_wake_409_while_experiment_running(client: AsyncClient, monkeypatch):
+    _mock_wake(monkeypatch)
+    res = await client.post("/api/experiments", json=_tropism_config().model_dump())
+    assert res.status_code == 200
+
+    res = await client.post("/api/assistant/wake")
+    assert res.status_code == 409
+
+    await client.post("/api/experiments/current/abort")
 
 
 # --- chat gating ---------------------------------------------------------
