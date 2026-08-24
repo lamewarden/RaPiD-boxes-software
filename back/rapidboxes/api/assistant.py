@@ -19,21 +19,6 @@ router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 ACTIVE_STATES = ("running", "paused", "finishing")
 
 
-@router.post("/wake")
-async def wake(state: AppState = Depends(get_state)):
-    """Starts the local Ollama service (off by default at boot -- see
-    AssistantService.ensure_awake()) and pre-loads the model, so the chat
-    window's loading screen absorbs the cold-start cost rather than the
-    user's first message. Called when the QA Assistant button is tapped."""
-    if state.runner.status.state in ACTIVE_STATES:
-        raise HTTPException(409, "assistant is unavailable while an experiment is running")
-    try:
-        await state.assistant.ensure_awake()
-    except AssistantUnavailable as exc:
-        raise HTTPException(503, str(exc)) from exc
-    return {"status": "ready"}
-
-
 @router.post("/chat", response_model=AssistantChatResponse)
 async def chat(body: AssistantChatRequest, state: AppState = Depends(get_state)):
     if state.runner.status.state in ACTIVE_STATES:

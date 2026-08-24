@@ -1,21 +1,23 @@
-"""AssistantService: the local QA chat model (Ollama) plus the one piece of
-"tool use" it's allowed -- resolving a natural-language request like "start
-like Ivan's run from yesterday" into a concrete ExperimentProposal built from
-that run's own saved config. The model itself never invents parameter values
-and never calls the start API; it only ever gets to point at a real past
-experiment, which this service then reads verbatim from disk.
+"""AssistantService: the QA chat model, running against the institute's
+OpenAI-compatible LLM gateway (e-INFRA CZ) via real tool/function calling,
+plus the one piece of "tool use" it's allowed that can touch a real
+experiment -- resolving a request like "start like Ivan's run from
+yesterday" into a concrete ExperimentProposal built from that run's own
+saved config. The model itself never invents parameter values and never
+calls the start API; it only ever gets to point at a real past experiment,
+which this service then reads verbatim from disk.
 
 Chat is only ever reachable while idle (see api/assistant.py, gated on
 runner.status.state), and is immediately cut short -- generation cancelled,
-model unloaded, transcript archived -- the moment an experiment starts (see
-interrupt_and_archive(), called from api/experiments.py). That keeps the
-model from ever competing with an active run for this Pi's limited RAM/CPU.
+transcript archived -- the moment an experiment starts (see
+interrupt_and_archive(), called from api/experiments.py).
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -24,6 +26,7 @@ import httpx
 
 from .. import config_xml
 from ..config import AppConfig
+from ..engine.runner import ExperimentRunner
 from ..models import (
     AssistantChatResponse,
     AssistantMessage,
@@ -34,42 +37,16 @@ from ..storage import ExperimentDir, Storage
 
 log = logging.getLogger("rapidboxes.assistant")
 
-# How long Ollama keeps the model resident in RAM after the last request.
-# Shared by normal chat calls and the wake-time warm-up call below so a
-# freshly-woken model doesn't get evicted before the user finishes typing
-# their first real message. interrupt_and_archive() overrides this to 0
-# (immediate unload) the moment a real experiment starts, regardless.
-_KEEP_ALIVE = "10m"
-
-# Generous: covers systemd service start (~1-2s) plus cold model load into
-# RAM (~19s measured for qwen2.5:1.5b on this Pi 5's CPU), with headroom.
-_WAKE_TIMEOUT_S = 35.0
-_WAKE_POLL_INTERVAL_S = 0.5
+_KNOWLEDGE_PATH = Path(__file__).parent / "knowledge.md"
 
 
 class AssistantUnavailable(Exception):
-    """The local Ollama model could not be reached or errored a request.
+    """The remote assistant API could not be reached or errored a request.
 
     Distinct from a normal chat reply so api/assistant.py can turn it into a
-    503 instead of the app blowing up with a raw 500 whenever Ollama is off
-    (e.g. deliberately disabled per PROJECT_BRIEFING.md) or crashes.
+    503 instead of the app blowing up with a raw 500 whenever the gateway or
+    the network is down.
     """
-
-_KNOWLEDGE_PATH = Path(__file__).parent / "knowledge.md"
-
-_ACTION_PROTOCOL = """
-You can do exactly one thing beyond talking: if -- and only if -- the user is
-clearly asking to start, prepare, repeat, or reuse a *past* experiment (e.g.
-"start experiment like yesterday", "same settings Ivan used last time", "run
-the tropism protocol Sabol did Monday"), respond with ONLY this JSON object
-and nothing else, no code fence, no extra words:
-
-{"action": "prefill_experiment", "username": "<name they mentioned, or null>", "reference": "<their own words for which run, e.g. \\"yesterday\\", \\"last tropism run\\", or null if unspecified>"}
-
-For every other message -- questions, small talk, anything you're unsure
-about -- reply normally in plain conversational text. Never mix the two:
-either the raw JSON object alone, or plain text alone.
-"""
 
 
 def _load_knowledge() -> str:
@@ -80,7 +57,79 @@ def _load_knowledge() -> str:
         return ""
 
 
-_SYSTEM_PROMPT = _load_knowledge() + "\n\n" + _ACTION_PROTOCOL
+_SYSTEM_PROMPT = _load_knowledge()
+
+# Real OpenAI-style tool definitions. Real testing across several candidate
+# models on this gateway showed native tool_calls output is clean and
+# reliable, unlike asking the model to emit JSON in message text (which
+# needed code-fence-stripping workarounds and was still occasionally missed).
+_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "prefill_experiment",
+            "description": (
+                "Resolve a request to start, prepare, repeat, or reuse a "
+                "*past* experiment (e.g. \"start experiment like yesterday\", "
+                "\"same settings Ivan used last time\", \"run the tropism "
+                "protocol Sabol did Monday\") into a real proposal built from "
+                "that run's own saved config. Only call this for a clear "
+                "start/repeat/reuse intent, never for a plain question about "
+                "past experiments -- use list_experiments for that instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "description": "name they mentioned, omit if unspecified",
+                    },
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run'",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_experiments",
+            "description": (
+                "List what experiments exist, who ran what, or recent "
+                "history -- for plain informational questions like \"what "
+                "was my last experiment\" or \"what has Ivan run this "
+                "week\", WITHOUT any intent to start or reuse one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "description": "name to filter by, omit for every user",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "how many to return, omit for a default",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "system_status",
+            "description": (
+                "Get the box's current live state right now: is an "
+                "experiment running, how much storage is free, is the "
+                "camera working."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
 
 
 _KNOB_LABELS = [
@@ -117,76 +166,40 @@ def format_config_knobs(config: SavedExperimentConfig) -> str:
 
 
 class AssistantService:
-    def __init__(self, config: AppConfig, storage: Storage):
+    def __init__(
+        self,
+        config: AppConfig,
+        storage: Storage,
+        runner: Optional[ExperimentRunner] = None,
+    ):
         self._config = config
         self._storage = storage
+        # Read-only: current experiment status and camera availability
+        # (system_status tool). Never used to start/stop/change anything --
+        # see the module docstring and interrupt_and_archive() for the one
+        # direction this relationship goes (experiments interrupt the
+        # assistant, never the other way around). Optional so tests that
+        # never exercise system_status don't need to build a real runner.
+        # Deliberately reads camera state via runner._hw at call time (below)
+        # rather than storing its own hw reference -- AppState.rebuild_hardware()
+        # swaps in a fresh HardwareManager on settings changes and updates
+        # runner._hw, so a separately-held reference here would go stale.
+        self._runner = runner
         # Owns creating its own archive dir, same as Storage/settings_store do
         # for theirs -- AppConfig.ensure_dirs() only runs on the get_config()
         # singleton path, not for an AppConfig built directly (e.g. tests).
         config.assistant_archive_dir.mkdir(parents=True, exist_ok=True)
-        self._client = httpx.AsyncClient(base_url=config.assistant_ollama_url, timeout=120.0)
+        self._client = httpx.AsyncClient(
+            base_url=config.assistant_api_base_url,
+            headers={"Authorization": f"Bearer {config.assistant_api_key}"},
+            timeout=60.0,
+        )
         self._lock = asyncio.Lock()
         self._transcript: List[AssistantMessage] = []
         self._task: Optional[asyncio.Task] = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-    # --- wake-on-demand ------------------------------------------------------
-    async def ensure_awake(self) -> None:
-        """Starts the local Ollama systemd service if it isn't already
-        running, then pre-loads the configured model, so the chat window's
-        loading screen (not the user's first message) absorbs the cold-start
-        cost. Ollama is deliberately not autostarted at boot on this 4GB Pi
-        -- see PROJECT_BRIEFING.md's reboot incident -- so this is the one
-        path that ever starts it, and only in direct response to a human
-        tapping the QA Assistant button (see api/assistant.py's /wake,
-        gated the same idle-only way as chat)."""
-        if not await self._ollama_reachable():
-            await self._start_ollama_service()
-            deadline = asyncio.get_event_loop().time() + _WAKE_TIMEOUT_S
-            while not await self._ollama_reachable():
-                if asyncio.get_event_loop().time() > deadline:
-                    raise AssistantUnavailable(
-                        "the assistant service didn't start in time -- try again"
-                    )
-                await asyncio.sleep(_WAKE_POLL_INTERVAL_S)
-        await self._warm_model()
-
-    async def _ollama_reachable(self) -> bool:
-        try:
-            res = await self._client.get("/api/tags", timeout=2.0)
-            return res.status_code == 200
-        except httpx.HTTPError:
-            return False
-
-    async def _start_ollama_service(self) -> None:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "sudo",
-                "systemctl",
-                "start",
-                "ollama",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-        except FileNotFoundError:
-            # No systemd here (e.g. a dev laptop) -- fall through to the
-            # poll loop, which succeeds if Ollama is already running some
-            # other way, or times out with a clear message if not.
-            log.warning("no systemctl on this host; assuming Ollama is started some other way")
-
-    async def _warm_model(self) -> None:
-        try:
-            await self._client.post(
-                "/api/generate",
-                json={"model": self._config.assistant_model, "prompt": "", "stream": False, "keep_alive": _KEEP_ALIVE},
-                timeout=_WAKE_TIMEOUT_S,
-            )
-        except httpx.HTTPError as exc:
-            log.warning("assistant warm-up call failed: %s", exc)
-            raise AssistantUnavailable("the assistant model failed to load -- try again") from exc
 
     # --- chat --------------------------------------------------------------
     async def chat(
@@ -200,56 +213,69 @@ class AssistantService:
 
             self._task = asyncio.current_task()
             try:
-                raw = await self._call_ollama(messages)
+                result = await self._call_llm(messages)
             except asyncio.CancelledError:
                 raise
             except httpx.HTTPError as exc:
                 log.warning("assistant model call failed: %s", exc)
                 raise AssistantUnavailable(
-                    "the local assistant model isn't reachable right now"
+                    "the assistant model isn't reachable right now"
                 ) from exc
             finally:
                 self._task = None
 
-            proposal = self._try_resolve_action(raw, username)
-            reply = proposal[1] if proposal else raw
-            self._transcript.append(AssistantMessage(role="assistant", content=reply))
-            return AssistantChatResponse(reply=reply, proposal=proposal[0] if proposal else None)
+            tool_calls = result.get("tool_calls") or []
+            if tool_calls:
+                proposal, reply = self._resolve_tool_call(tool_calls[0], username)
+            else:
+                proposal, reply = None, (result.get("content") or "").strip()
 
-    async def _call_ollama(self, messages: list) -> str:
+            self._transcript.append(AssistantMessage(role="assistant", content=reply))
+            return AssistantChatResponse(reply=reply, proposal=proposal)
+
+    async def _call_llm(self, messages: list) -> dict:
         res = await self._client.post(
-            "/api/chat",
+            "/chat/completions",
             json={
                 "model": self._config.assistant_model,
                 "messages": messages,
+                "tools": _TOOLS,
+                "tool_choice": "auto",
                 "stream": False,
-                # Keep it warm for a normal chat session's pacing, but
-                # interrupt_and_archive() forces it out immediately the
-                # moment an experiment starts, regardless of this.
-                "keep_alive": _KEEP_ALIVE,
             },
         )
         res.raise_for_status()
-        return res.json()["message"]["content"].strip()
+        return res.json()["choices"][0]["message"]
 
-    def _try_resolve_action(
-        self, raw: str, requesting_username: Optional[str]
-    ) -> Optional[tuple[Optional[ExperimentProposal], str]]:
-        """Returns (proposal_or_None, reply_text) if `raw` was the
-        prefill_experiment action JSON, else None (meaning: treat raw as an
-        ordinary chat reply)."""
-        stripped = raw.strip()
-        if not stripped.startswith("{"):
-            return None
+    def _resolve_tool_call(
+        self, tool_call: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[ExperimentProposal], str]:
+        """Dispatches one native tool_calls entry to its resolver. Only
+        prefill_experiment ever carries a proposal -- list_experiments and
+        system_status are read-only lookups, answered directly, never a
+        setup-screen prefill."""
+        name = tool_call.get("function", {}).get("name")
         try:
-            parsed = json.loads(stripped)
+            args = json.loads(tool_call.get("function", {}).get("arguments") or "{}")
         except ValueError:
-            return None
-        if not isinstance(parsed, dict) or parsed.get("action") != "prefill_experiment":
-            return None
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
 
-        target_user = (parsed.get("username") or requesting_username or "").strip().lower()
-        reference = (parsed.get("reference") or "").strip().lower()
+        if name == "prefill_experiment":
+            return self._resolve_prefill_experiment(args, requesting_username)
+        if name == "list_experiments":
+            return None, self._resolve_list_experiments(args, requesting_username)
+        if name == "system_status":
+            return None, self._resolve_system_status()
+        log.warning("model called unknown tool %r", name)
+        return None, "Sorry, something went wrong handling that request."
+
+    def _resolve_prefill_experiment(
+        self, args: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[ExperimentProposal], str]:
+        target_user = (args.get("username") or requesting_username or "").strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
         match = self._find_experiment(target_user, reference)
         if match is None:
             who = f" for {target_user}" if target_user else ""
@@ -318,24 +344,77 @@ class AssistantService:
             return None
         return exp, saved
 
+    def _resolve_list_experiments(self, args: dict, requesting_username: Optional[str]) -> str:
+        """Read-only listing, most-recently-modified first (same ordering
+        Storage.list_experiments() already uses for Gallery/history) -- not
+        scoped to the requester by default, same shared-device visibility
+        rule as prefill_experiment: naming nobody means "every user", not
+        "only me", because Gallery/Import already show everyone's runs to
+        everyone on this box."""
+        target_user = (args.get("username") or "").strip().lower() or None
+        limit = args.get("limit")
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 5
+        limit = min(limit, 20)  # keep replies short on this small kiosk screen
+
+        rows = []
+        for d in self._storage.list_experiments():
+            exp = ExperimentDir(d)
+            username = exp.username() or "unknown"
+            if target_user and username.strip().lower() != target_user:
+                continue
+            meta = exp.read_metadata() or {}
+            protocol = (meta.get("config") or {}).get("protocol", "?")
+            started = exp.started_date()
+            rows.append((exp.experiment_id, username, protocol, started))
+            if len(rows) >= limit:
+                break
+
+        if not rows:
+            who = f" for {target_user}" if target_user else ""
+            return f"No experiments found{who}."
+
+        who = f" for {target_user}" if target_user else " (all users)"
+        lines = [f"Last {len(rows)} experiment(s){who}:"]
+        for experiment_id, username, protocol, started in rows:
+            date_str = started.isoformat() if started else "unknown date"
+            lines.append(f"- {experiment_id} — {username} — {protocol} — {date_str}")
+        return "\n".join(lines)
+
+    def _resolve_system_status(self) -> str:
+        """Read-only snapshot of live device state -- current experiment (if
+        any), free storage, camera. Never anything that changes state; see
+        the module docstring for why that boundary is deliberate."""
+        if self._runner is None:
+            return "System status isn't available right now."
+
+        status = self._runner.status
+        if status.state == "idle":
+            running = "No experiment is currently running."
+        else:
+            running = (
+                f"Experiment '{status.experimentId}' ({status.username}) is {status.state}, "
+                f"phase {status.phase}, {status.imagesCaptured}/{status.imagesPlanned} images captured."
+            )
+
+        usage = shutil.disk_usage(self._config.storage_root)
+        free_gb = usage.free / (1024**3)
+        total_gb = usage.total / (1024**3)
+        camera = "available" if self._runner._hw.camera_available else "not detected"
+
+        return (
+            f"{running}\n"
+            f"Storage: {free_gb:.1f} GB free of {total_gb:.1f} GB.\n"
+            f"Camera: {camera}."
+        )
+
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:
         """Called the moment an experiment starts: cancel any in-flight
-        generation, force Ollama to unload the model right away (rather than
-        trusting its default idle keep_alive), and archive whatever was said
-        so far so it isn't silently lost -- then clear it for the next
-        conversation."""
+        generation and archive whatever was said so far so it isn't silently
+        lost -- then clear it for the next conversation."""
         if self._task is not None and not self._task.done():
             self._task.cancel()
-
-        try:
-            await self._client.post(
-                "/api/generate",
-                json={"model": self._config.assistant_model, "keep_alive": 0},
-                timeout=10.0,
-            )
-        except httpx.HTTPError as exc:
-            log.warning("could not unload assistant model: %s", exc)
 
         if self._transcript:
             self._archive(reason)

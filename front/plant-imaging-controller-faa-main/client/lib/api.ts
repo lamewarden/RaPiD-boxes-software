@@ -153,13 +153,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ mode }),
     }),
-  /** Starts the local Ollama service (off by default at boot) and pre-loads
-   *  the model -- called once when the assistant chat window opens, so its
-   *  loading screen absorbs the ~20s cold-start cost rather than the user's
-   *  first message. */
-  assistantWake: () => jsonFetch<{ status: string }>("/api/assistant/wake", { method: "POST" }),
-  /** 409s while an experiment is running/paused/finishing; 503 if the local
-   *  Ollama model isn't reachable. `history` is the client's own copy so a
+  /** 409s while an experiment is running/paused/finishing; 503 if the
+   *  assistant API isn't reachable. `history` is the client's own copy so a
    *  page refresh doesn't lose context (the server keeps one too, for
    *  archiving -- see AssistantService). */
   assistantChat: (message: string, history: AssistantMessage[], username?: string) =>

@@ -6,8 +6,6 @@ import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
 import type { AssistantMessage, ExperimentProposal } from "@shared/api";
 
-type WakeState = "waking" | "ready" | "error";
-
 /**
  * Full-screen chat overlay (same "takeover" pattern as ImportConfigMenu, not
  * a centered card -- a chat transcript needs the room). The on-screen
@@ -16,10 +14,9 @@ type WakeState = "waking" | "ready" | "error";
  * UserSelectMenu's "+ New User"), so the transcript gets the full stage the
  * rest of the time on this small 800x452 kiosk screen.
  *
- * The local Ollama model is off by default at boot (this is a 4GB Pi that
- * must never compete with a live run for RAM) -- opening this window is what
- * wakes it, via POST /api/assistant/wake, which this component shows a
- * loading screen for since a cold start takes up to ~20s.
+ * The assistant runs against a remote API (no local model to wake), so this
+ * opens straight into the chat -- per-message "Thinking…" is the only
+ * loading state needed.
  *
  * Safety property this UI must never violate: a returned `proposal` is only
  * ever offered as something to review on the real setup screen (the same
@@ -28,30 +25,11 @@ type WakeState = "waking" | "ready" | "error";
  */
 export default function AssistantChat({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const [wake, setWake] = useState<WakeState>("waking");
-  const [wakeError, setWakeError] = useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [proposal, setProposal] = useState<ExperimentProposal | null>(null);
   const [composing, setComposing] = useState(false);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  const tryWake = async () => {
-    setWake("waking");
-    setWakeError(null);
-    try {
-      await api.assistantWake();
-      setWake("ready");
-    } catch (e) {
-      setWake("error");
-      setWakeError((e as Error).message);
-    }
-  };
-
-  useEffect(() => {
-    tryWake();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -92,48 +70,6 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
       state: { loadedConfig: proposal.config },
     });
   };
-
-  if (wake === "waking") {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-app-bg-primary p-4 text-center">
-        <Bot className="h-10 w-10 animate-pulse text-app-violet-light" strokeWidth={1.5} />
-        <p className="text-[13px] font-semibold text-white">Waking up the assistant…</p>
-        <p className="text-[11px] text-app-text-muted">
-          The local model is off by default — this can take up to 20 seconds the first time.
-        </p>
-        <button
-          onClick={onClose}
-          className="mt-2 text-[11px] text-app-text-secondary underline hover:text-white"
-        >
-          Cancel
-        </button>
-      </div>
-    );
-  }
-
-  if (wake === "error") {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-app-bg-primary p-4 text-center">
-        <Bot className="h-10 w-10 text-app-orange-light" strokeWidth={1.5} />
-        <p className="text-[13px] font-semibold text-white">Couldn't wake the assistant</p>
-        <p className="max-w-[320px] text-[11px] text-app-text-muted">{wakeError}</p>
-        <div className="mt-2 flex gap-2">
-          <button
-            onClick={tryWake}
-            className="rounded-md bg-app-violet px-3 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-app-violet-light"
-          >
-            Retry
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded-md bg-app-bg-tertiary px-3 py-1.5 text-[11px] text-app-text-secondary transition-colors hover:bg-app-border-primary"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (composing) {
     return (

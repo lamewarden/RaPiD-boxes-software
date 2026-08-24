@@ -86,13 +86,17 @@ class AppConfig(BaseSettings):
     # see rapidboxes/remote_sync.py.
     remote_sync_path: Path = Path.home() / "rapidboxes" / "remote_sync.json"
 
-    # Local QA chat assistant (Ollama). keep_alive on individual requests is
-    # what actually controls model RAM residency (see AssistantService); this
-    # is just which local Ollama instance/model to talk to. Model choice
-    # matches the one benchmarked as usable on this Pi's CPU -- see
-    # PROJECT_BRIEFING.md before changing it or re-enabling ollama.service.
-    assistant_ollama_url: str = "http://127.0.0.1:11434"
-    assistant_model: str = "qwen2.5:1.5b-instruct-q4_K_M"
+    # QA chat assistant -- an OpenAI-compatible remote API (e-INFRA CZ's
+    # shared LLM gateway), not a local model. A local Ollama model was tried
+    # first (see PROJECT_BRIEFING.md) but was unreliable at the JSON-action
+    # protocol and risked destabilizing this 4GB Pi; this API supports real
+    # tool/function calling instead, which every model tested got right.
+    # assistant_api_key deliberately has no default -- it must come from
+    # /etc/rapidboxes.env (RAPIDBOXES_ASSISTANT_API_KEY, git-ignored) in
+    # production, never from source.
+    assistant_api_base_url: str = "https://llm.ai.e-infra.cz/v1"
+    assistant_api_key: str = ""
+    assistant_model: str = "qwen3.5-122b"
     assistant_archive_dir: Path = Path.home() / "rapidboxes" / "assistant_archive"
 
     def ensure_dirs(self) -> None:
