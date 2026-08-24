@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
         )
 
     runner = ExperimentRunner(hw, storage, on_image_captured=sync.enqueue_image)
-    runner.recover()
+    await runner.recover()
     app.state.app = AppState(config, device_settings, storage, hw, runner, sync)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:

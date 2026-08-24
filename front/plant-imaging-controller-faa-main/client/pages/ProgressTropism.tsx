@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Folder, Home, Pause, Play, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+import RecoveryNoticeBanner from "@/components/RecoveryNoticeBanner";
 import StorageNoticeBanner from "@/components/StorageNoticeBanner";
 import { formatElapsed } from "@/lib/progress";
 import type { ExperimentPhase } from "@shared/api";
@@ -120,6 +121,7 @@ export default function ProgressTropism() {
           <div className="h-2 rounded-full bg-app-green transition-all" style={{ width: `${progressPct}%` }} />
         </div>
 
+        <RecoveryNoticeBanner notice={status?.recoveryNotice ?? null} />
         <StorageNoticeBanner notice={status?.storageNotice ?? null} />
 
         <div className="flex flex-1 gap-3 min-h-0">

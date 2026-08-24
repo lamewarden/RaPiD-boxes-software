@@ -53,6 +53,15 @@ export interface StorageNotice {
   experiments: Array<{ id: string; name: string | null; daysRemaining: number }>;
 }
 
+/** Shown once after the app resumes a run interrupted by a crash, power
+ *  loss, or reboot -- see back/rapidboxes/engine/runner.py's recover(). */
+export interface RecoveryNotice {
+  kind: "recovered";
+  message: string;
+  offlineSeconds: number;
+  imagesSkipped: number;
+}
+
 export interface ExperimentStatus {
   state: ExperimentState;
   phase: ExperimentPhase | null;
@@ -73,6 +82,7 @@ export interface ExperimentStatus {
   dayIndex: number | null;
   totalDays: number | null;
   storageNotice: StorageNotice | null;
+  recoveryNotice: RecoveryNotice | null;
 }
 
 export interface StorageSuggestion {

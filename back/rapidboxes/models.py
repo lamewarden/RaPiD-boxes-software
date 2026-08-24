@@ -153,6 +153,16 @@ class StorageNotice(BaseModel):
     experiments: List[dict] = Field(default_factory=list)
 
 
+class RecoveryNotice(BaseModel):
+    """Shown once after the app resumes a run that was interrupted by a
+    crash, power loss, or reboot -- see ExperimentRunner.recover()."""
+
+    kind: Literal["recovered"] = "recovered"
+    message: str
+    offlineSeconds: float
+    imagesSkipped: int
+
+
 class ExperimentStatus(BaseModel):
     state: ExperimentState = ExperimentState.idle
     phase: Optional[ExperimentPhase] = None
@@ -173,6 +183,10 @@ class ExperimentStatus(BaseModel):
     dayIndex: Optional[int] = None
     totalDays: Optional[int] = None
     storageNotice: Optional[StorageNotice] = None
+    recoveryNotice: Optional[RecoveryNotice] = None
+    # Stamped on every metadata write; recover() diffs this against wall-clock
+    # time on the next boot to work out how long the box was off.
+    updatedAt: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

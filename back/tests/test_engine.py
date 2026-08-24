@@ -4,6 +4,7 @@ Drives a full two-phase experiment in milliseconds by injecting a fake time
 source + sleep, so we can assert capture counts, file output, and cleanup.
 """
 import asyncio
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.models import (
     PHOTO_FLASH_INTENSITY,
     DeviceSettings,
+    ExperimentPhase,
     ExperimentState,
+    ExperimentStatus,
     GrowthConfig,
     TropismConfig,
 )
@@ -44,6 +47,275 @@ def _runner(tmp_path: Path, ft: FakeTime, settings: DeviceSettings = None) -> Ex
     hw = build_hardware(config, settings or DeviceSettings())
     storage = Storage(config.storage_root)
     return ExperimentRunner(hw, storage, now=ft.now, sleep=ft.sleep, tick_seconds=10_000)
+
+
+def _leave_crashed_experiment(
+    tmp_path: Path,
+    config,
+    *,
+    state: ExperimentState,
+    phase: ExperimentPhase,
+    elapsed_seconds: float,
+    images_captured: int,
+    offline_for: timedelta,
+    day_index=None,
+) -> Storage:
+    """Write a metadata.json as if a previous process died mid-run, so the
+    next ExperimentRunner's recover() has something realistic to find --
+    without actually driving a live task through a real/fake-time interrupt."""
+    storage = Storage(tmp_path / "exp")
+    exp = storage.create_experiment(config.username, config.experimentName)
+    status = ExperimentStatus(
+        state=state,
+        phase=phase,
+        experimentId=exp.experiment_id,
+        experimentName=config.experimentName,
+        username=config.username,
+        startedAt=datetime.now() - offline_for,
+        elapsedSeconds=elapsed_seconds,
+        phaseElapsedSeconds=elapsed_seconds,
+        imagesCaptured=images_captured,
+        imagesPlanned=1000,
+        config=config,
+        dayIndex=day_index,
+        updatedAt=datetime.now() - offline_for,
+    )
+    exp.write_metadata(status.model_dump(mode="json"))
+    return storage
+
+
+@pytest.mark.asyncio
+async def test_recover_resumes_mid_phase_after_outage_and_reports_skipped_images(tmp_path):
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=7200 / 3600,          # 7200s dark phase
+        lateralIlluminationHours=3600 / 3600,  # 3600s bending phase
+        spectra=["red"],
+        intervalMinutes=10.0,                # 600s interval
+    )
+    # Crashed 1000s into the dark phase (2 captures already taken, t=0 & 600),
+    # offline for 1850s -> resumes at phase-elapsed 2850s.
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.running,
+        phase=ExperimentPhase.dark,
+        elapsed_seconds=1000.0,
+        images_captured=2,
+        offline_for=timedelta(seconds=1850),
+    )
+
+    ft = FakeTime()
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+
+    # Resumed immediately (synchronously, before the task even runs a tick).
+    assert runner.status.state == ExperimentState.running
+    assert runner.status.phase == ExperimentPhase.dark
+    assert runner._clock is not None
+    assert abs(runner._clock.elapsed() - 2850.0) < 5.0
+
+    # 5 captures were due by phase-elapsed 2850s (t=0,600,1200,1800,2400); only
+    # 2 had actually happened before the crash -> 3 were missed to the outage.
+    assert runner.status.recoveryNotice is not None
+    assert runner.status.recoveryNotice.imagesSkipped == 3
+    assert runner.status.recoveryNotice.offlineSeconds == pytest.approx(1850.0, abs=5.0)
+
+    await runner._task  # run the resumed experiment to completion
+
+    assert runner.status.state == ExperimentState.done
+    exp = runner.current_experiment
+    files = sorted(p.name for p in Path(exp.path).glob("*.png"))
+    # Numbering continues from imagesCaptured=2 -- no restart-from-zero, no
+    # collision with the (pre-crash, not-actually-on-disk-in-this-test) 0 & 1.
+    assert "dark_00000.png" not in files
+    assert "dark_00001.png" not in files
+    assert "dark_00002.png" in files
+    # Both phases still ran end to end.
+    assert any(f.startswith("bending_") for f in files)
+    assert runner._hw._ir.state is False
+    assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_recover_marks_done_when_whole_schedule_elapsed_offline(tmp_path):
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=600 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+    )
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.running,
+        phase=ExperimentPhase.dark,
+        elapsed_seconds=300.0,
+        images_captured=1,
+        offline_for=timedelta(hours=5),  # far longer than the whole 600s schedule
+    )
+
+    ft = FakeTime()
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+
+    assert runner._task is None  # nothing left to run
+    assert runner.status.state == ExperimentState.done
+    assert runner.status.phase is None
+    assert runner.status.recoveryNotice is not None
+    assert runner.status.recoveryNotice.imagesSkipped > 0
+
+
+@pytest.mark.asyncio
+async def test_recover_restores_paused_state_without_fast_forwarding(tmp_path):
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=0,
+        lateralIlluminationHours=3600 / 3600,
+        spectra=["red"],
+        intervalMinutes=10.0,
+    )
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.paused,
+        phase=ExperimentPhase.bending,
+        elapsed_seconds=1234.0,
+        images_captured=2,
+        offline_for=timedelta(hours=6),  # irrelevant while paused
+    )
+
+    ft = FakeTime()
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+
+    assert runner.status.state == ExperimentState.paused
+    assert runner.status.recoveryNotice is None  # a deliberate pause isn't an "outage"
+    assert runner._clock is not None
+    assert abs(runner._clock.elapsed() - 1234.0) < 1.0  # no gap added
+
+    # Task exists but is blocked on the pause event -- no progress until resumed.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert runner.status.imagesCaptured == 2
+
+    await runner.resume()
+    await runner._task
+    assert runner.status.state == ExperimentState.done
+
+
+@pytest.mark.asyncio
+async def test_recover_skips_baseline_recapture_for_growth_protocol(tmp_path):
+    config = GrowthConfig(
+        experimentName="g",
+        username="u",
+        dayLengthHours=1,
+        experimentLengthDays=1,
+        spectra=["white"],
+        dayIntensity=40,
+        intervalMinutes=240,
+    )
+    # Baseline + one day capture already done; crashed 100s into night.
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.running,
+        phase=ExperimentPhase.night,
+        elapsed_seconds=3600 + 100.0,
+        images_captured=2,
+        offline_for=timedelta(seconds=30),
+        day_index=1,
+    )
+
+    ft = FakeTime()
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+    await runner._task
+
+    assert runner.status.state == ExperimentState.done
+    exp = runner.current_experiment
+    files = [p.name for p in Path(exp.path).glob("*.png")]
+    assert not any(f.startswith("baseline_") for f in files), "baseline must not be re-captured on resume"
+
+
+@pytest.mark.asyncio
+async def test_recover_does_nothing_for_a_finished_experiment(tmp_path):
+    config = TropismConfig(
+        experimentName="t", username="u", darkPhaseHours=600 / 3600, lateralIlluminationHours=0, intervalMinutes=1.0
+    )
+    storage = _leave_crashed_experiment(
+        tmp_path,
+        config,
+        state=ExperimentState.done,
+        phase=None,
+        elapsed_seconds=600.0,
+        images_captured=10,
+        offline_for=timedelta(hours=1),
+    )
+
+    ft = FakeTime()
+    runner = ExperimentRunner(
+        build_hardware(
+            AppConfig(simulation=True, storage_root=storage.root, settings_path=tmp_path / "settings.json"),
+            DeviceSettings(),
+        ),
+        storage,
+        now=ft.now,
+        sleep=ft.sleep,
+        tick_seconds=10_000,
+    )
+
+    await runner.recover()
+
+    assert runner._task is None
+    assert runner.status.state == ExperimentState.idle  # untouched, fresh default
 
 
 @pytest.mark.asyncio

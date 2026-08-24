@@ -23,6 +23,7 @@ from ..models import (
     ExperimentState,
     ExperimentStatus,
     GrowthConfig,
+    RecoveryNotice,
     SavedExperimentConfig,
     StartResponse,
     StorageNotice,
@@ -35,7 +36,7 @@ from ..retention import (
     suggest_deletions_for_space,
 )
 from ..storage import ExperimentDir, Storage
-from .scheduler import advance_deadline, planned_captures
+from .scheduler import advance_deadline, images_expected, phase_at, planned_captures
 
 Config = Union[TropismConfig, GrowthConfig]
 
@@ -44,13 +45,19 @@ log = logging.getLogger("rapidboxes.engine")
 _EPS = 1e-9
 Listener = Callable[[dict], Awaitable[None]]
 
+# How often metadata.json gets a heartbeat flush between captures, so a crash
+# mid-interval (captures can be tens of minutes apart) still leaves an
+# `updatedAt` recent enough for recover() to size the outage accurately --
+# without wearing the SD card by writing on every 1s UI tick.
+_METADATA_HEARTBEAT_S = 60.0
+
 
 class PausableClock:
     """Elapsed-seconds clock that can be paused; uses an injectable time source."""
 
-    def __init__(self, now: Callable[[], float]):
+    def __init__(self, now: Callable[[], float], initial_elapsed: float = 0.0):
         self._now = now
-        self._start = now()
+        self._start = now() - initial_elapsed
         self._paused_at: Optional[float] = None
         self._accum = 0.0
 
@@ -152,6 +159,7 @@ class ExperimentRunner:
         self._pause_event = asyncio.Event()
         self._pause_event.set()
         self._clock: Optional[PausableClock] = None
+        self._last_heartbeat = 0.0
         self._exp_dir: Optional[ExperimentDir] = None
         self._listeners: Set[Listener] = set()
 
@@ -240,6 +248,7 @@ class ExperimentRunner:
             config=config,
             storageNotice=storage_notice,
         )
+        self._write_metadata(exp)  # a valid snapshot exists even if start crashes right after
         self._task = asyncio.create_task(self._run(config, exp))
         await self._broadcast()
         return StartResponse(status="started", experimentId=exp.experiment_id)
@@ -309,18 +318,129 @@ class ExperimentRunner:
         await self.stop()
         await self._hw.shutdown()
 
-    def recover(self) -> None:
-        """On startup, report (don't resume) a previously interrupted run."""
+    async def recover(self) -> None:
+        """On startup, resume a run interrupted by a crash, power loss, or reboot.
+
+        The plant's clock didn't stop just because the box did, so this fast-
+        forwards phases and capture deadlines by however long the box was off
+        (using metadata.json's last-write time as a proxy for when it died)
+        rather than quietly picking back up as if no time had passed. A
+        `recoveryNotice` on the resumed status reports the outage length and
+        how many captures could not be taken, so a gap in the sequence has an
+        obvious explanation instead of looking like a bug.
+
+        A run that was deliberately paused before the outage is restored
+        paused, at the same point, with no time fast-forwarded -- pausing is a
+        human decision that a reboot shouldn't override.
+        """
         latest = self._storage.latest_experiment()
-        meta = latest.read_metadata() if latest else None
-        if meta and meta.get("state") in ("running", "paused"):
-            self.status = ExperimentStatus(
-                state=ExperimentState.idle,
-                message=f"Previous experiment '{latest.experiment_id}' was interrupted and did not finish.",
+        if latest is None:
+            return
+        meta = latest.read_metadata()
+        if not meta or meta.get("state") not in ("running", "paused"):
+            return
+        try:
+            prev = ExperimentStatus.model_validate(meta)
+        except Exception:
+            log.exception("could not parse metadata for %s; not recoverable", latest.experiment_id)
+            return
+        if prev.config is None:
+            log.warning("interrupted experiment %s has no saved config; not recoverable", latest.experiment_id)
+            return
+
+        was_running = prev.state == ExperimentState.running
+        updated_at = prev.updatedAt or datetime.fromtimestamp(
+            (latest.path / "metadata.json").stat().st_mtime
+        )
+        outage_s = max(0.0, (datetime.now() - updated_at).total_seconds()) if was_running else 0.0
+
+        config = prev.config
+        is_growth = isinstance(config, GrowthConfig)
+        phases = build_phases(config)
+        durations = [p.duration_s for p in phases]
+        interval_s = config.intervalMinutes * 60.0
+        elapsed_at_resume = prev.elapsedSeconds + outage_s
+        located = phase_at(durations, elapsed_at_resume)
+
+        self._exp_dir = latest
+        self.status = prev
+
+        if located is None:
+            # The whole remaining schedule elapsed while the box was off.
+            expected = images_planned_for(config)
+            self.status.state = ExperimentState.done
+            self.status.phase = None
+            self.status.elapsedSeconds = self.status.totalSeconds
+            self.status.phaseElapsedSeconds = 0.0
+            self.status.nextCaptureInSeconds = None
+            self.status.message = "completed (device was offline near the end)"
+            self.status.recoveryNotice = self._build_recovery_notice(
+                outage_s, max(0, expected - prev.imagesCaptured)
             )
+            self._write_metadata(latest)
+            await self._hw.all_off()
+            log.warning(
+                "experiment %s finished its whole schedule while offline (%.0fs)",
+                latest.experiment_id, outage_s,
+            )
+            return
+
+        index, phase_elapsed = located
+        expected = images_expected(list(zip(durations, [p.capture for p in phases])), index, phase_elapsed, interval_s)
+        if is_growth:
+            expected += 1  # baseline
+        images_skipped = max(0, expected - prev.imagesCaptured)
+
+        self._stop = False
+        self._clock = PausableClock(self._now, initial_elapsed=elapsed_at_resume)
+        if was_running:
+            self._pause_event.set()
+            self.status.state = ExperimentState.running
+            self.status.recoveryNotice = self._build_recovery_notice(outage_s, images_skipped)
+        else:
+            self._pause_event.clear()
+            self.status.state = ExperimentState.paused
+
+        skip_baseline = is_growth and prev.imagesCaptured >= 1
+        cumulative_before = elapsed_at_resume - phase_elapsed
+        self._task = asyncio.create_task(
+            self._run(
+                config,
+                latest,
+                start_phase_index=index,
+                resume_phase_start=cumulative_before,
+                skip_baseline=skip_baseline,
+            )
+        )
+        log.info(
+            "recovered experiment %s after %.0fs offline; resuming %s at phase %s (~%d capture(s) missed)",
+            latest.experiment_id, outage_s, self.status.state.value, phases[index].name.value, images_skipped,
+        )
+
+    def _build_recovery_notice(self, outage_s: float, images_skipped: int) -> RecoveryNotice:
+        minutes = outage_s / 60.0
+        duration = f"{minutes / 60.0:.1f} h" if minutes >= 120 else f"{max(1, round(minutes))} min"
+        images_text = (
+            f"{images_skipped} image{'s' if images_skipped != 1 else ''} could not be captured"
+            if images_skipped > 0
+            else "no images were missed"
+        )
+        return RecoveryNotice(
+            message=f"Resumed after ~{duration} offline (power loss or reboot) -- {images_text}.",
+            offlineSeconds=outage_s,
+            imagesSkipped=images_skipped,
+        )
 
     # --- run loop -------------------------------------------------------
-    async def _run(self, config: Config, exp: ExperimentDir) -> None:
+    async def _run(
+        self,
+        config: Config,
+        exp: ExperimentDir,
+        *,
+        start_phase_index: int = 0,
+        resume_phase_start: Optional[float] = None,
+        skip_baseline: bool = False,
+    ) -> None:
         interval_s = config.intervalMinutes * 60.0
         phases = build_phases(config)
         is_growth = isinstance(config, GrowthConfig)
@@ -328,13 +448,16 @@ class ExperimentRunner:
         self.status.imagesPlanned = images_planned_for(config)
         try:
             await self._hw.configure_camera()
-            if is_growth:
+            if is_growth and not skip_baseline:
                 self.status.phase = ExperimentPhase.baseline
                 await self._capture(ExperimentPhase.baseline, "baseline", config, exp)
-            for phase in phases:
+            for i, phase in enumerate(phases):
+                if i < start_phase_index:
+                    continue
                 if self._stop:
                     break
-                await self._run_phase(phase, interval_s, config, exp)
+                phase_start = resume_phase_start if i == start_phase_index else None
+                await self._run_phase(phase, interval_s, config, exp, phase_start=phase_start)
             self.status.message = "stopped by user" if self._stop else "completed"
             self.status.state = ExperimentState.done
         except asyncio.CancelledError:
@@ -356,14 +479,21 @@ class ExperimentRunner:
             await self._broadcast()
 
     async def _run_phase(
-        self, phase: _Phase, interval_s: float, config: Config, exp: ExperimentDir
+        self,
+        phase: _Phase,
+        interval_s: float,
+        config: Config,
+        exp: ExperimentDir,
+        *,
+        phase_start: Optional[float] = None,
     ) -> None:
         assert self._clock is not None
         self.status.phase = phase.name
         self.status.phaseTotalSeconds = phase.duration_s
         self.status.dayIndex = phase.day_index
         self.status.totalDays = config.experimentLengthDays if isinstance(config, GrowthConfig) else None
-        phase_start = self._clock.elapsed()
+        if phase_start is None:
+            phase_start = self._clock.elapsed()
         await self._enter_phase_lights(phase, config)
         self._write_metadata(exp)
 
@@ -387,6 +517,8 @@ class ExperimentRunner:
                         phase.name.value,
                         skipped,
                     )
+            elif self._clock.elapsed() - self._last_heartbeat >= _METADATA_HEARTBEAT_S:
+                self._write_metadata(exp)
             if phase.capture and next_cap is not None:
                 target = min(next_cap, phase.duration_s)
                 self.status.nextCaptureInSeconds = max(0.0, next_cap - (self._clock.elapsed() - phase_start))
@@ -467,6 +599,9 @@ class ExperimentRunner:
         await self._broadcast()
 
     def _write_metadata(self, exp: ExperimentDir) -> None:
+        self.status.updatedAt = datetime.now()
+        if self._clock is not None:
+            self._last_heartbeat = self._clock.elapsed()
         try:
             exp.write_metadata(self.status.model_dump(mode="json"))
         except Exception:
