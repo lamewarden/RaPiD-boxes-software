@@ -7,6 +7,7 @@ import ProgramTabs from "@/components/ProgramTabs";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import ParameterControl from "@/components/ParameterControl";
 import SpectrumPanel from "@/components/SpectrumPanel";
+import IssueAlertsField from "@/components/IssueAlertsField";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
@@ -20,6 +21,8 @@ const DEFAULT_VALUES = {
   selectedSpectra: new Set(["white"]),
   interval: 3,
   intensity: 25,
+  reportOnIssueEnabled: false,
+  notifyEmail: "",
 };
 
 export default function TropismProgram() {
@@ -36,6 +39,10 @@ export default function TropismProgram() {
   );
   const [interval, setInterval] = useState(DEFAULT_VALUES.interval);
   const [intensity, setIntensity] = useState(DEFAULT_VALUES.intensity);
+  const [reportOnIssueEnabled, setReportOnIssueEnabled] = useState(
+    DEFAULT_VALUES.reportOnIssueEnabled
+  );
+  const [notifyEmail, setNotifyEmail] = useState(DEFAULT_VALUES.notifyEmail);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -54,6 +61,10 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
     setInterval(loaded.intervalMinutes);
     setIntensity(loaded.intensity);
+    // Replays whether alerting was on, but deliberately NOT the raw email --
+    // a reused config on a shared device shouldn't silently start emailing
+    // whoever set it up last; re-enter the address to opt back in.
+    setReportOnIssueEnabled(loaded.reportOnIssueEnabled);
 
     api
       .settings()
@@ -107,6 +118,10 @@ export default function TropismProgram() {
         toast.error("Enable dark phase or set lateral illumination > 0h.");
         return;
       }
+      if (reportOnIssueEnabled && !notifyEmail) {
+        toast.error("Set a notify email or turn off issue alerts.");
+        return;
+      }
       const res = await guardedStart({
         protocol: "tropism",
         experimentName,
@@ -117,6 +132,8 @@ export default function TropismProgram() {
         spectra: Array.from(selectedSpectra) as Spectrum[],
         intervalMinutes: interval,
         intensity,
+        reportOnIssueEnabled,
+        notifyEmail: notifyEmail || null,
       });
       if (!res) return; // user cancelled the low-space dialog
       if (res.status === "busy") {
@@ -160,6 +177,8 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
     setInterval(DEFAULT_VALUES.interval);
     setIntensity(DEFAULT_VALUES.intensity);
+    setReportOnIssueEnabled(DEFAULT_VALUES.reportOnIssueEnabled);
+    setNotifyEmail(DEFAULT_VALUES.notifyEmail);
   };
 
   const getColorForValue = (value: number, max: number, colorScheme: string) => {
@@ -197,7 +216,7 @@ export default function TropismProgram() {
       <div className="flex p-1.5 flex-col items-start gap-1.5 flex-1 self-stretch bg-app-bg-primary overflow-hidden">
         <ProgramTabs />
 
-        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 overflow-hidden">
+        <div className="flex flex-col items-start gap-1.5 self-stretch flex-1 min-h-0 overflow-y-auto pr-0.5">
 
         {/* Lateral Illumination and Dark Phase Row */}
         <div className="flex justify-center items-start gap-1.5 self-stretch flex-shrink-0">
@@ -274,6 +293,15 @@ export default function TropismProgram() {
             onSliderChange={setIntensity}
           />
         </div>
+
+        <IssueAlertsField
+          enabled={reportOnIssueEnabled}
+          email={notifyEmail}
+          onChange={(enabled, email) => {
+            setReportOnIssueEnabled(enabled);
+            setNotifyEmail(email);
+          }}
+        />
 
         </div>
 

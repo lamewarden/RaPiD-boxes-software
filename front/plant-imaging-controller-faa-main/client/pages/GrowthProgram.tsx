@@ -7,6 +7,7 @@ import ProgramTabs from "@/components/ProgramTabs";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import ParameterControl from "@/components/ParameterControl";
 import SpectrumPanel from "@/components/SpectrumPanel";
+import IssueAlertsField from "@/components/IssueAlertsField";
 import { api } from "@/lib/api";
 import { getExperimentName, getUsername, setExperimentName } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
@@ -24,6 +25,8 @@ const DEFAULT_VALUES = {
   selectedSpectra: new Set(["white"]),
   dayIntensity: 25,
   interval: 30,
+  reportOnIssueEnabled: false,
+  notifyEmail: "",
 };
 
 export default function GrowthProgram() {
@@ -38,6 +41,10 @@ export default function GrowthProgram() {
   );
   const [dayIntensity, setDayIntensity] = useState(DEFAULT_VALUES.dayIntensity);
   const [interval, setInterval] = useState(DEFAULT_VALUES.interval);
+  const [reportOnIssueEnabled, setReportOnIssueEnabled] = useState(
+    DEFAULT_VALUES.reportOnIssueEnabled
+  );
+  const [notifyEmail, setNotifyEmail] = useState(DEFAULT_VALUES.notifyEmail);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -55,6 +62,9 @@ export default function GrowthProgram() {
     setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
     setDayIntensity(loaded.dayIntensity);
     setInterval(loaded.intervalMinutes);
+    // See TropismProgram: replays whether alerting was on, but deliberately
+    // not the raw email address.
+    setReportOnIssueEnabled(loaded.reportOnIssueEnabled);
 
     api
       .settings()
@@ -101,6 +111,10 @@ export default function GrowthProgram() {
         toast.error("Select at least one spectrum colour.");
         return;
       }
+      if (reportOnIssueEnabled && !notifyEmail) {
+        toast.error("Set a notify email or turn off issue alerts.");
+        return;
+      }
       const res = await guardedStart({
         protocol: "growth",
         experimentName,
@@ -110,6 +124,8 @@ export default function GrowthProgram() {
         spectra: Array.from(selectedSpectra) as Spectrum[],
         dayIntensity,
         intervalMinutes: interval,
+        reportOnIssueEnabled,
+        notifyEmail: notifyEmail || null,
       });
       if (!res) return; // user cancelled the low-space dialog
       if (res.status === "busy") {
@@ -152,6 +168,8 @@ export default function GrowthProgram() {
     setSelectedSpectra(new Set(DEFAULT_VALUES.selectedSpectra));
     setDayIntensity(DEFAULT_VALUES.dayIntensity);
     setInterval(DEFAULT_VALUES.interval);
+    setReportOnIssueEnabled(DEFAULT_VALUES.reportOnIssueEnabled);
+    setNotifyEmail(DEFAULT_VALUES.notifyEmail);
     toast.success("Growth settings reset to defaults.");
   };
 
@@ -225,6 +243,15 @@ export default function GrowthProgram() {
               onDecrement={() => setDayIntensity((v) => Math.max(0, v - 5))}
             />
           </div>
+
+          <IssueAlertsField
+            enabled={reportOnIssueEnabled}
+            email={notifyEmail}
+            onChange={(enabled, email) => {
+              setReportOnIssueEnabled(enabled);
+              setNotifyEmail(email);
+            }}
+          />
 
         </div>
 

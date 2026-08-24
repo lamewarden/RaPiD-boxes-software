@@ -15,6 +15,11 @@ export interface TropismConfig {
   spectra: Spectrum[];
   intervalMinutes: number;
   intensity: number;
+  /** Opt-in mid-run issue alerting (mold/anomaly detection) -- see
+   *  back/rapidboxes/assistant/mold_watch.py. notifyEmail is required
+   *  whenever this is true. */
+  reportOnIssueEnabled: boolean;
+  notifyEmail: string | null;
 }
 
 export type PhotoIlluminationSource = "ir" | "rgbw";
@@ -28,6 +33,8 @@ export interface GrowthConfig {
   spectra: Spectrum[];
   dayIntensity: number;
   intervalMinutes: number;
+  reportOnIssueEnabled: boolean;
+  notifyEmail: string | null;
 }
 
 export type ExperimentConfig = TropismConfig | GrowthConfig;
@@ -100,6 +107,10 @@ export interface ExperimentStatus {
   currentPhaseIndex: number | null;
   bytesUsed: number;
   estimatedTotalBytes: number | null;
+  /** Set once MoldWatchService confirms a mid-run anomaly for a user who
+   *  opted into reportOnIssueEnabled -- see mark_issue_detected(). */
+  issueDetected: boolean;
+  issueDetail: string | null;
 }
 
 export interface StorageSuggestion {
@@ -367,6 +378,10 @@ export interface SavedExperimentConfig {
   leds: LedSettings;
   ir: IrSettings;
   camera: CameraSettings;
+  /** Whether issue alerting was on for this run -- replayed on Import,
+   *  unlike the email address itself, which this snapshot never carries
+   *  (see back/rapidboxes/models.py's TropismConfig docstring). */
+  reportOnIssueEnabled: boolean;
 }
 
 // --- QA chat assistant (see rapidboxes/assistant/service.py) --------------

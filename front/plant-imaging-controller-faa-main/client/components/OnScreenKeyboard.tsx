@@ -10,6 +10,10 @@ const ROWS = [
   "qwertyuiop".split(""),
   "asdfghjkl".split(""),
   "zxcvbnm-_".split(""),
+  // @ and . live on their own row rather than shift-gated: an email address
+  // (Phase 4's opt-in issue-report field) needs both typeable without a
+  // mode switch, same reasoning that already put -_ directly on the base layout.
+  "@.".split(""),
 ];
 
 export default function OnScreenKeyboard({
