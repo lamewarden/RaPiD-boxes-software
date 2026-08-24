@@ -210,21 +210,6 @@ class CameraSettings(BaseModel):
     zoom: float = Field(default=1.0, ge=1.0, le=5.0)
 
 
-class CameraDefaultsUpdate(BaseModel):
-    """PUT /api/settings/camera/mine body: save the current camera settings as
-    this researcher's personal baseline (Settings -> Camera -> "Save Mine").
-
-    Distinct from CameraSettings' own field defaults (the fixed system
-    default, which nothing in the app can overwrite) and from the active
-    session's settings (always reset to the system default on process start,
-    see settings_store.load_device_settings_for_new_session) -- this one is
-    keyed by username and persists across restarts until the user next saves
-    over it."""
-
-    username: str = Field(min_length=1, max_length=40)
-    camera: CameraSettings
-
-
 # AWB and per-shot settle time used to be user-tunable, but the sensor is
 # accurate enough at a fixed white balance that tuning them never actually
 # helped, and the manual settle slider is now unneeded now that settle is
@@ -288,6 +273,23 @@ class DeviceSettings(BaseModel):
         if wanted != self.camera.exposureMicroseconds:
             self.camera = self.camera.model_copy(update={"exposureMicroseconds": wanted})
         return self
+
+
+class UserDefaultsUpdate(BaseModel):
+    """PUT /api/settings/mine body: save the current camera + illumination
+    settings as this researcher's personal baseline (Settings -> "Save Mine",
+    shared across the Camera and Illumination tabs).
+
+    Distinct from DeviceSettings' own field defaults (the fixed system
+    default, which nothing in the app can overwrite) and from the active
+    session's settings (the camera half is always reset to the system
+    default on process start, see
+    settings_store.load_device_settings_for_new_session) -- this one is
+    keyed by username and persists across restarts until the user next saves
+    over it."""
+
+    username: str = Field(min_length=1, max_length=40)
+    settings: DeviceSettings
 
 
 # ---------------------------------------------------------------------------

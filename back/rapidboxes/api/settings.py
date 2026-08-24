@@ -5,8 +5,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import camera_defaults
-from ..models import CameraDefaultsUpdate, CameraSettings, DeviceSettings, ExperimentState
+from .. import user_defaults
+from ..models import DeviceSettings, ExperimentState, UserDefaultsUpdate
 from ..settings_store import save_device_settings
 from .deps import AppState, get_state
 
@@ -27,13 +27,13 @@ async def put_settings(settings: DeviceSettings, state: AppState = Depends(get_s
     return state.settings
 
 
-@router.get("/camera/mine", response_model=Optional[CameraSettings])
-async def get_my_camera_defaults(
+@router.get("/mine", response_model=Optional[DeviceSettings])
+async def get_my_defaults(
     username: str = Query(min_length=1, max_length=40), state: AppState = Depends(get_state)
 ):
-    return camera_defaults.load_for(state.config.camera_defaults_path, username)
+    return user_defaults.load_for(state.config.user_defaults_path, username)
 
 
-@router.put("/camera/mine", response_model=CameraSettings)
-async def put_my_camera_defaults(body: CameraDefaultsUpdate, state: AppState = Depends(get_state)):
-    return camera_defaults.save_for(state.config.camera_defaults_path, body.username, body.camera)
+@router.put("/mine", response_model=DeviceSettings)
+async def put_my_defaults(body: UserDefaultsUpdate, state: AppState = Depends(get_state)):
+    return user_defaults.save_for(state.config.user_defaults_path, body.username, body.settings)
