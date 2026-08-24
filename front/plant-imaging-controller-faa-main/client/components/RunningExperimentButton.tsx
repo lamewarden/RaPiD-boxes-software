@@ -60,7 +60,7 @@ export default function RunningExperimentButton({ className = "" }: { className?
       className={`flex items-center justify-center gap-2 rounded-md border border-app-green/50 bg-app-green/15 px-3 py-2 text-white transition-colors hover:bg-app-green/25 ${className}`.trim()}
     >
       <Activity className="h-[16px] w-[16px] text-app-green" strokeWidth={1.75} />
-      <span className="text-[12px] font-bold leading-4">
+      <span className="text-[11px] font-bold leading-4 whitespace-nowrap">
         {protocolLabel}: {stateLabel}
       </span>
     </button>

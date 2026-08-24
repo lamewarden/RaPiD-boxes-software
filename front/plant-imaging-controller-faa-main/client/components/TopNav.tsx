@@ -68,31 +68,31 @@ export default function TopNav() {
     <div className="flex p-0.5 gap-1 justify-center items-start self-stretch border-b border-app-border-primary bg-app-bg-secondary">
       <button className={btn} onClick={handleClose} disabled={closingKiosk}>
         <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">
           {closingKiosk ? "Closing..." : "Close"}
         </span>
       </button>
 
       <button className={btn} onClick={() => setImportOpen(true)}>
         <Download className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Import</span>
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Import</span>
       </button>
 
       <button className={btn} onClick={() => setDownloadsOpen(true)}>
         <FolderDown className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Downloads</span>
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Downloads</span>
       </button>
 
       <button className={btn} onClick={() => setEditingUser(true)}>
         <User className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">
           {username}
         </span>
       </button>
 
       <Link to="/gallery" className={btn}>
         <Folder className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Gallery</span>
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Gallery</span>
       </Link>
 
       {cameraAvailable ? (
@@ -102,7 +102,7 @@ export default function TopNav() {
           className={btn}
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-center text-[13px] font-semibold leading-5">Live</span>
+          <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Live</span>
         </Link>
       ) : (
         <button
@@ -111,7 +111,7 @@ export default function TopNav() {
           className="flex flex-1 py-2 px-0 justify-center items-center gap-2 rounded-md bg-app-bg-tertiary opacity-50 hover:opacity-70 transition-opacity"
         >
           <Radio className="w-[18px] h-[18px]" strokeWidth={1.5} />
-          <span className="text-white text-center text-[13px] font-semibold leading-5">
+          <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">
             {checkingCamera ? "Checking…" : "Live"}
           </span>
         </button>
@@ -122,7 +122,7 @@ export default function TopNav() {
         onClick={() => setSettingsOpen(true)}
       >
         <Settings className="w-[18px] h-[18px]" strokeWidth={1.5} />
-        <span className="text-white text-center text-[13px] font-semibold leading-5">Settings</span>
+        <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Settings</span>
       </button>
 
       <RunningExperimentButton className="flex-1" />
