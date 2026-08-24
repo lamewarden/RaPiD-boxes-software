@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..assistant.service import AssistantUnavailable
 from ..models import AssistantChatRequest, AssistantChatResponse
 from .deps import AppState, get_state
 
@@ -22,4 +23,7 @@ ACTIVE_STATES = ("running", "paused", "finishing")
 async def chat(body: AssistantChatRequest, state: AppState = Depends(get_state)):
     if state.runner.status.state in ACTIVE_STATES:
         raise HTTPException(409, "assistant chat is unavailable while an experiment is running")
-    return await state.assistant.chat(body.message, body.history, body.username)
+    try:
+        return await state.assistant.chat(body.message, body.history, body.username)
+    except AssistantUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc

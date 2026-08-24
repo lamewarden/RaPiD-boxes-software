@@ -34,6 +34,15 @@ from ..storage import ExperimentDir, Storage
 
 log = logging.getLogger("rapidboxes.assistant")
 
+
+class AssistantUnavailable(Exception):
+    """The local Ollama model could not be reached or errored a request.
+
+    Distinct from a normal chat reply so api/assistant.py can turn it into a
+    503 instead of the app blowing up with a raw 500 whenever Ollama is off
+    (e.g. deliberately disabled per PROJECT_BRIEFING.md) or crashes.
+    """
+
 _KNOWLEDGE_PATH = Path(__file__).parent / "knowledge.md"
 
 _ACTION_PROTOCOL = """
@@ -99,6 +108,10 @@ class AssistantService:
     def __init__(self, config: AppConfig, storage: Storage):
         self._config = config
         self._storage = storage
+        # Owns creating its own archive dir, same as Storage/settings_store do
+        # for theirs -- AppConfig.ensure_dirs() only runs on the get_config()
+        # singleton path, not for an AppConfig built directly (e.g. tests).
+        config.assistant_archive_dir.mkdir(parents=True, exist_ok=True)
         self._client = httpx.AsyncClient(base_url=config.assistant_ollama_url, timeout=120.0)
         self._lock = asyncio.Lock()
         self._transcript: List[AssistantMessage] = []
@@ -122,6 +135,11 @@ class AssistantService:
                 raw = await self._call_ollama(messages)
             except asyncio.CancelledError:
                 raise
+            except httpx.HTTPError as exc:
+                log.warning("assistant model call failed: %s", exc)
+                raise AssistantUnavailable(
+                    "the local assistant model isn't reachable right now"
+                ) from exc
             finally:
                 self._task = None
 
