@@ -108,17 +108,11 @@ export default {
           "0%": { left: "-30%" },
           "100%": { left: "110%" },
         },
-        // Gentle breathing glow marking "you are here" on a progress bar.
-        "pulse-glow": {
-          "0%, 100%": { opacity: "0.5", transform: "translate(-50%, -50%) scale(0.85)" },
-          "50%": { opacity: "1", transform: "translate(-50%, -50%) scale(1.25)" },
-        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "progress-wave": "progress-wave 2.4s ease-in-out infinite",
-        "pulse-glow": "pulse-glow 2s ease-in-out infinite",
       },
     },
   },

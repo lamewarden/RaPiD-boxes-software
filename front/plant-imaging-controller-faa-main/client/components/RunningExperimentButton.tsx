@@ -1,3 +1,4 @@
+import { Activity } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { ExperimentPhase, ExperimentStatus } from "@shared/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
@@ -72,14 +73,7 @@ export default function RunningExperimentButton({ className = "" }: { className?
         <div className="absolute inset-y-0 w-1/4 animate-progress-wave bg-gradient-to-r from-transparent via-white/40 to-transparent" />
       </div>
 
-      {/* "You are here" -- a soft breathing dot right at the progress edge. */}
-      {status.state === "running" && (
-        <div
-          className="absolute top-1/2 left-0 h-1.5 w-1.5 animate-pulse-glow rounded-full bg-app-green-bright shadow-[0_0_6px_2px_hsl(var(--app-green-bright)/0.6)]"
-          style={{ left: `${progressPct}%` }}
-        />
-      )}
-
+      <Activity className="relative z-10 h-[16px] w-[16px] text-app-green" strokeWidth={1.75} />
       <span className="relative z-10 whitespace-nowrap text-[12px] font-semibold leading-5">
         {protocolLabel}: {stateLabel}
       </span>
