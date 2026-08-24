@@ -13,11 +13,14 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from PIL import Image
+
+from . import user_defaults
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -216,3 +219,32 @@ class Storage:
             raise ValueError(f"refusing to delete path outside storage root: {resolved}")
         shutil.rmtree(resolved)
         return True
+
+
+@dataclass
+class UserTally:
+    count: int = 0
+    bytes_used: int = 0
+
+
+def tally_by_user(storage: "Storage", user_defaults_path: Path) -> Dict[str, UserTally]:
+    """Per-username experiment count + total bytes, keyed lower-case.
+
+    Shared by GET /api/users (api/users.py) and the assistant's my_storage
+    tool -- lives here rather than in api/users.py so the assistant module
+    can import it without a circular dependency back through api/deps.py.
+    Full re-walk + re-stat of every experiment folder on every call, same
+    cost as the original inline version; no caching, callers should treat
+    this as O(all files on disk)."""
+    tallies: Dict[str, UserTally] = {}
+    for d in storage.list_experiments():
+        exp = ExperimentDir(d)
+        name = (exp.username() or "").strip().lower()
+        if not name:
+            continue
+        tally = tallies.setdefault(name, UserTally())
+        tally.count += 1
+        tally.bytes_used += exp.size_bytes()
+    for key in user_defaults.load_all(user_defaults_path):
+        tallies.setdefault(key, UserTally())
+    return tallies

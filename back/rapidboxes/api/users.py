@@ -12,38 +12,20 @@ lookups, and new experiments -- see client/lib/session.ts) -- "Ivan",
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List
+from typing import List
 
 from fastapi import APIRouter, Depends
 
-from .. import user_defaults
 from ..models import UserSummary
-from ..storage import ExperimentDir
+from ..storage import tally_by_user
 from .deps import AppState, get_state
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
-@dataclass
-class _Tally:
-    count: int = 0
-    bytes_used: int = 0
-
-
 @router.get("", response_model=List[UserSummary])
 async def list_users(state: AppState = Depends(get_state)) -> List[UserSummary]:
-    tallies: Dict[str, _Tally] = {}
-    for d in state.storage.list_experiments():
-        exp = ExperimentDir(d)
-        name = (exp.username() or "").strip().lower()
-        if not name:
-            continue
-        tally = tallies.setdefault(name, _Tally())
-        tally.count += 1
-        tally.bytes_used += exp.size_bytes()
-    for key in user_defaults.load_all(state.config.user_defaults_path):
-        tallies.setdefault(key, _Tally())
+    tallies = tally_by_user(state.storage, state.config.user_defaults_path)
     return [
         UserSummary(username=name, experimentCount=t.count, bytesUsed=t.bytes_used)
         for name, t in sorted(tallies.items())

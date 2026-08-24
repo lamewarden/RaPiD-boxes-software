@@ -24,7 +24,7 @@ from typing import List, Optional
 
 import httpx
 
-from .. import config_xml
+from .. import config_xml, settings_store, user_defaults
 from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..models import (
@@ -33,7 +33,7 @@ from ..models import (
     ExperimentProposal,
     SavedExperimentConfig,
 )
-from ..storage import ExperimentDir, Storage
+from ..storage import ExperimentDir, Storage, tally_by_user
 
 log = logging.getLogger("rapidboxes.assistant")
 
@@ -125,6 +125,36 @@ _TOOLS = [
                 "Get the box's current live state right now: is an "
                 "experiment running, how much storage is free, is the "
                 "camera working."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "my_settings",
+            "description": (
+                "Look up the CURRENT user's own device settings -- "
+                "illumination source (IR/RGBW), LED wiring, IR pins, camera "
+                "defaults, and whether they have a saved personal 'Mine' "
+                "baseline. Use for questions like \"what's my illumination "
+                "source\" or \"what are my camera settings\". Always scoped "
+                "to whoever is chatting -- takes no arguments, never another "
+                "user's settings."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "my_storage",
+            "description": (
+                "How much storage the CURRENT user is using -- their own "
+                "experiment count and bytes used, plus the box's total free "
+                "space. Use for questions like \"how much storage am I "
+                "using\". Always scoped to whoever is chatting -- takes no "
+                "arguments, never another user's usage."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -251,9 +281,12 @@ class AssistantService:
         self, tool_call: dict, requesting_username: Optional[str]
     ) -> tuple[Optional[ExperimentProposal], str]:
         """Dispatches one native tool_calls entry to its resolver. Only
-        prefill_experiment ever carries a proposal -- list_experiments and
-        system_status are read-only lookups, answered directly, never a
-        setup-screen prefill."""
+        prefill_experiment ever carries a proposal -- every other tool is a
+        read-only lookup, answered directly, never a setup-screen prefill.
+        my_settings/my_storage deliberately ignore any username the model
+        might put in args (their schema takes none) and always use
+        requesting_username -- unlike list_experiments/prefill_experiment,
+        which may look up a named other user, these two never do."""
         name = tool_call.get("function", {}).get("name")
         try:
             args = json.loads(tool_call.get("function", {}).get("arguments") or "{}")
@@ -268,6 +301,10 @@ class AssistantService:
             return None, self._resolve_list_experiments(args, requesting_username)
         if name == "system_status":
             return None, self._resolve_system_status()
+        if name == "my_settings":
+            return None, self._resolve_my_settings(requesting_username)
+        if name == "my_storage":
+            return None, self._resolve_my_storage(requesting_username)
         log.warning("model called unknown tool %r", name)
         return None, "Sorry, something went wrong handling that request."
 
@@ -407,6 +444,59 @@ class AssistantService:
             f"Storage: {free_gb:.1f} GB free of {total_gb:.1f} GB.\n"
             f"Camera: {camera}."
         )
+
+    def _resolve_my_settings(self, requesting_username: Optional[str]) -> str:
+        """Read-only: the current persisted device settings plus the
+        requester's own saved 'Mine' baseline, if any. Strictly scoped to
+        requesting_username -- unlike list_experiments, this never takes a
+        username argument from the model, by design (settings are more
+        sensitive than a past experiment's config)."""
+        if not requesting_username:
+            return "I don't know who's chatting -- pick your username on the home screen first."
+
+        settings = settings_store.load_device_settings(self._config.settings_path)
+        lines = [
+            "Current device settings (shared by whoever uses the box next):",
+            f"Illumination source: {settings.photoIlluminationSource.upper()}",
+            f"Camera zoom: {settings.camera.zoom:g}x, grayscale: {settings.camera.grayscale}",
+            f"LED pixel count: {settings.leds.pixelCount}, order: {settings.leds.pixelOrder}",
+            f"IR pins: {settings.ir.pins}",
+            "(Camera settings reset to system defaults every restart; LEDs/IR/illumination "
+            "source persist.)",
+        ]
+
+        mine = user_defaults.load_for(self._config.user_defaults_path, requesting_username)
+        if mine:
+            lines.append(f"\nYour saved 'Mine' baseline ({requesting_username}):")
+            lines.append(f"Illumination source: {mine.photoIlluminationSource.upper()}")
+            lines.append(f"Camera zoom: {mine.camera.zoom:g}x, grayscale: {mine.camera.grayscale}")
+        else:
+            lines.append(f"\nNo personal 'Mine' baseline saved yet for {requesting_username}.")
+
+        return "\n".join(lines)
+
+    def _resolve_my_storage(self, requesting_username: Optional[str]) -> str:
+        """Read-only: the current user's own experiment count/bytes used,
+        plus device-wide free space. Strictly scoped to requesting_username,
+        same reasoning as _resolve_my_settings."""
+        if not requesting_username:
+            return "I don't know who's chatting -- pick your username on the home screen first."
+
+        usage = shutil.disk_usage(self._config.storage_root)
+        free_gb = usage.free / (1024**3)
+        total_gb = usage.total / (1024**3)
+
+        tallies = tally_by_user(self._storage, self._config.user_defaults_path)
+        tally = tallies.get(requesting_username.strip().lower())
+        if tally is None or tally.count == 0:
+            usage_line = f"You have no stored experiments yet ({requesting_username})."
+        else:
+            mb = tally.bytes_used / (1024**2)
+            usage_line = (
+                f"{requesting_username} has {tally.count} experiment(s) using {mb:.1f} MB."
+            )
+
+        return f"{usage_line}\nDevice free space: {free_gb:.1f} GB of {total_gb:.1f} GB."
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

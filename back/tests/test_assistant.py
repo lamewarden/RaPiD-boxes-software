@@ -311,6 +311,94 @@ def test_system_status_without_runner_degrades_gracefully(app_config: AppConfig)
     assert "isn't available" in reply
 
 
+# --- my_settings / my_storage: strictly scoped to the requester ------------
+
+
+def test_my_settings_reports_persisted_settings_and_mine_baseline(app_config: AppConfig):
+    from rapidboxes import settings_store, user_defaults
+    from rapidboxes.models import CameraSettings, DeviceSettings
+
+    settings_store.save_device_settings(
+        app_config.settings_path,
+        DeviceSettings(photoIlluminationSource="rgbw"),
+    )
+    user_defaults.save_for(
+        app_config.user_defaults_path,
+        "ivan",
+        DeviceSettings(camera=CameraSettings(zoom=2.5), photoIlluminationSource="ir"),
+    )
+
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_settings")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "RGBW" in reply  # current persisted setting
+    assert "Your saved 'Mine' baseline (ivan)" in reply
+    assert "IR" in reply  # ivan's own saved baseline
+    assert "2.5x" in reply
+
+
+def test_my_settings_no_mine_baseline_says_so(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_settings")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "No personal 'Mine' baseline saved yet" in reply
+
+
+def test_my_settings_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_settings")
+    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    assert "don't know who's chatting" in reply
+
+
+def test_my_settings_ignores_username_argument_from_model(app_config: AppConfig):
+    """my_settings' schema takes no arguments -- even if the model tries to
+    slip one in, the resolver must still use requesting_username, never a
+    model-supplied one. This is the strict-scoping guarantee."""
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = {"function": {"name": "my_settings", "arguments": json.dumps({"username": "someone-else"})}}
+    _proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert "ivan" in reply.lower() or "No personal 'Mine' baseline saved yet for ivan" in reply
+
+
+def test_my_storage_reports_own_usage_only(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    for username, name in [("ivan", "run1"), ("sabol", "run2")]:
+        exp = storage.create_experiment(username, name)
+        exp.write_metadata({"username": username})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_storage")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "ivan has 1 experiment(s)" in reply
+    assert "sabol" not in reply
+    assert "Device free space:" in reply
+
+
+def test_my_storage_no_experiments_yet(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_storage")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "no stored experiments yet" in reply
+
+
+def test_my_storage_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("my_storage")
+    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    assert "don't know who's chatting" in reply
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 
