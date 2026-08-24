@@ -399,6 +399,61 @@ def test_my_storage_requires_a_known_username(app_config: AppConfig):
     assert "don't know who's chatting" in reply
 
 
+# --- read_experiment_log: strictly scoped to the requester's own runs ------
+
+
+def test_read_experiment_log_returns_own_events(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    exp.append_event("started protocol=tropism username=ivan")
+    exp.append_event("phase dark started (index 0)")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("read_experiment_log")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert exp.experiment_id in reply
+    assert "started protocol=tropism username=ivan" in reply
+    assert "phase dark started" in reply
+
+
+def test_read_experiment_log_never_reads_another_users_run(app_config: AppConfig):
+    """read_experiment_log's schema takes no username -- even if sabol has a
+    run and ivan asks, only ivan's own experiments are ever candidates."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("sabol", "sabol-run")
+    exp.write_metadata({"username": "sabol", "startedAt": datetime.now().isoformat()})
+    exp.append_event("started protocol=tropism username=sabol")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("read_experiment_log")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "couldn't find" in reply
+
+
+def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    # No append_event calls -- events.log never created.
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("read_experiment_log")
+    proposal, reply = service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "no logged events" in reply
+
+
+def test_read_experiment_log_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("read_experiment_log")
+    _proposal, reply = service._resolve_tool_call(call, requesting_username=None)
+    assert "don't know who's chatting" in reply
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 

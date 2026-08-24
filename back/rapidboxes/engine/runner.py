@@ -254,6 +254,7 @@ class ExperimentRunner:
                 camera=camera or CameraSettings(),
             )
             exp.write_config_xml(config_xml.serialize(saved), config.experimentName)
+        exp.append_event(f"started protocol={config.protocol} username={config.username}")
         self._stop = False
         self._pause_event.set()
         self._clock = PausableClock(self._now)
@@ -514,11 +515,13 @@ class ExperimentRunner:
         except asyncio.CancelledError:
             self.status.state = ExperimentState.error
             self.status.message = "cancelled"
+            exp.append_event("experiment cancelled")
             raise
         except Exception as e:  # pragma: no cover - defensive
-            log.exception("experiment failed")
+            log.exception("experiment %s failed", exp.experiment_id)
             self.status.state = ExperimentState.error
             self.status.message = str(e)
+            exp.append_event(f"experiment failed: {e}")
         finally:
             self.status.phase = None
             self.status.currentPhaseIndex = None
@@ -526,7 +529,11 @@ class ExperimentRunner:
             try:
                 await self._hw.all_off()
             except Exception:
-                log.exception("all_off in finally failed")
+                log.exception("all_off in finally failed for %s", exp.experiment_id)
+                exp.append_event("all_off failed during shutdown")
+            exp.append_event(
+                f"finished state={self.status.state.value} message={self.status.message}"
+            )
             self._write_metadata(exp)
             await self._broadcast()
 
@@ -546,6 +553,8 @@ class ExperimentRunner:
         self.status.phaseTotalSeconds = phase.duration_s
         self.status.dayIndex = phase.day_index
         self.status.totalDays = config.experimentLengthDays if isinstance(config, GrowthConfig) else None
+        verb = "resumed" if phase_start is not None else "started"
+        exp.append_event(f"phase {phase.name.value} {verb} (index {phase_index})")
         if phase_start is None:
             phase_start = self._clock.elapsed()
         await self._enter_phase_lights(phase, config)
@@ -652,7 +661,12 @@ class ExperimentRunner:
             try:
                 self._on_image_captured(path, exp.experiment_id, config.username)
             except Exception:
-                log.warning("remote sync notification failed; experiment continues", exc_info=True)
+                log.warning(
+                    "remote sync notification failed for %s; experiment continues",
+                    exp.experiment_id,
+                    exc_info=True,
+                )
+                exp.append_event(f"remote sync notification failed for {image_id}")
 
         await self._broadcast()
 
@@ -663,4 +677,5 @@ class ExperimentRunner:
         try:
             exp.write_metadata(self.status.model_dump(mode="json"))
         except Exception:
-            log.exception("metadata write failed")
+            log.exception("metadata write failed for %s", exp.experiment_id)
+            exp.append_event("metadata write failed")

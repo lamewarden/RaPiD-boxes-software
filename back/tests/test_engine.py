@@ -466,6 +466,62 @@ async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_full_run_writes_events_log(tmp_path):
+    """events.log (ExperimentDir.append_event) is the durable, guaranteed
+    experiment_id-scoped log the assistant's read_experiment_log tool reads
+    -- unlike the shared systemd journal, which has no per-run tagging."""
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    await runner.start(config)
+    await runner._task
+
+    events = runner.current_experiment.read_events()
+    assert "started protocol=tropism username=u" in events
+    assert "phase dark started" in events
+    assert "finished state=done message=completed" in events
+
+
+@pytest.mark.asyncio
+async def test_crash_writes_failure_event_to_experiment_log(tmp_path, monkeypatch):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=0,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    async def fail_capture(path):
+        raise RuntimeError("simulated capture failure")
+
+    monkeypatch.setattr(runner._hw, "capture", fail_capture)
+
+    await runner.start(config)
+    await runner._task
+
+    assert runner.status.state == ExperimentState.error
+    events = runner.current_experiment.read_events()
+    assert "experiment failed: simulated capture failure" in events
+    assert "finished state=error message=simulated capture failure" in events
+
+
+@pytest.mark.asyncio
 async def test_status_exposes_phase_plan_index_and_storage_tracking(tmp_path):
     ft = FakeTime()
     runner = _runner(tmp_path, ft)

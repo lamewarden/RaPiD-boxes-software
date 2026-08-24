@@ -159,6 +159,30 @@ _TOOLS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_experiment_log",
+            "description": (
+                "Read the event log for one of the CURRENT user's own past "
+                "experiments -- what phases ran, capture failures, remote "
+                "sync failures, crashes. Use this to help explain a "
+                "complaint like \"my last run had a weird gap\" or \"what "
+                "happened during yesterday's experiment\". Always scoped to "
+                "whoever is chatting -- can only read their own "
+                "experiments, never another user's."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -305,6 +329,8 @@ class AssistantService:
             return None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
             return None, self._resolve_my_storage(requesting_username)
+        if name == "read_experiment_log":
+            return None, self._resolve_read_experiment_log(args, requesting_username)
         log.warning("model called unknown tool %r", name)
         return None, "Sorry, something went wrong handling that request."
 
@@ -337,9 +363,11 @@ class AssistantService:
         )
         return proposal, summary
 
-    def _find_experiment(
-        self, target_user: str, reference: str
-    ) -> Optional[tuple[ExperimentDir, SavedExperimentConfig]]:
+    def _find_experiment_dir(self, target_user: str, reference: str) -> Optional[ExperimentDir]:
+        """Most-recent experiment matching an optional username + free-text
+        reference ("yesterday", "last tropism run", ...). Shared by
+        prefill_experiment (which additionally needs the saved config) and
+        read_experiment_log (which only needs the folder, not a config)."""
         candidates = []
         for d in self._storage.list_experiments():
             exp = ExperimentDir(d)
@@ -369,7 +397,14 @@ class AssistantService:
         if not candidates:
             return None
         candidates.sort(key=lambda c: c[1], reverse=True)
-        exp = candidates[0][0]
+        return candidates[0][0]
+
+    def _find_experiment(
+        self, target_user: str, reference: str
+    ) -> Optional[tuple[ExperimentDir, SavedExperimentConfig]]:
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return None
 
         data = exp.read_config_xml()
         if data is None:
@@ -497,6 +532,29 @@ class AssistantService:
             )
 
         return f"{usage_line}\nDevice free space: {free_gb:.1f} GB of {total_gb:.1f} GB."
+
+    def _resolve_read_experiment_log(self, args: dict, requesting_username: Optional[str]) -> str:
+        """Read-only: the tail of one of the requester's own experiments'
+        events.log. Strictly scoped to requesting_username -- this is
+        personal troubleshooting, not a shared lookup like list_experiments,
+        so (unlike prefill_experiment) it never accepts a username and
+        always resolves against the current user only."""
+        if not requesting_username:
+            return "I don't know who's chatting -- pick your username on the home screen first."
+
+        target_user = requesting_username.strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return (
+                f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
+                "Try being more specific about which run."
+            )
+
+        events = exp.read_events()
+        if not events:
+            return f"{exp.experiment_id} has no logged events (nothing unusual was recorded)."
+        return f"Events for {exp.experiment_id}:\n{events}"
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

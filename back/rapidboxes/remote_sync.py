@@ -54,6 +54,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+from .storage import Storage
 from .models import (
     RemoteSyncSettings,
     RemoteSyncStatus,
@@ -559,6 +560,15 @@ class RemoteSyncService:
         for src in job.files:
             await self._copy_or_defer(src, job.researcher, job.experiment_id)
 
+    def _log_event(self, experiment_id: str, message: str) -> None:
+        """Best-effort: appends to that experiment's own events.log (see
+        storage.ExperimentDir.append_event) so a sync failure is correlated
+        to a specific run, not just the shared systemd journal. Silently
+        does nothing if the experiment folder is gone (e.g. deleted since)."""
+        exp = Storage(self._storage_root).get_experiment(experiment_id)
+        if exp is not None:
+            exp.append_event(message)
+
     async def _flush_failed(self) -> None:
         if not self._pending:
             return
@@ -571,7 +581,16 @@ class RemoteSyncService:
             else:
                 item.attempts += 1
                 if item.attempts >= MAX_ATTEMPTS:
-                    log.warning("giving up on remote copy of %s after %d attempts", item.src, item.attempts)
+                    log.warning(
+                        "giving up on remote copy of %s (experiment %s) after %d attempts",
+                        item.src,
+                        item.experiment_id,
+                        item.attempts,
+                    )
+                    self._log_event(
+                        item.experiment_id,
+                        f"remote sync: gave up on {item.src.name} after {item.attempts} attempts",
+                    )
                     self._pending.pop(key, None)
                 # One failure means the share is unhappy; don't hammer the rest
                 # of the backlog on this pass.
@@ -613,12 +632,14 @@ class RemoteSyncService:
         except asyncio.TimeoutError:
             self._last_result = "error"
             self._last_error = "Copy of %s timed out after %ds." % (src.name, int(COPY_TIMEOUT_S))
-            log.warning("remote sync: %s", self._last_error)
+            log.warning("remote sync (experiment %s): %s", experiment_id, self._last_error)
+            self._log_event(experiment_id, f"remote sync: {self._last_error}")
             return False
         except Exception as e:
             self._last_result = "error"
             self._last_error = "Copy of %s failed: %s" % (src.name, e)
-            log.warning("remote sync: %s", self._last_error)
+            log.warning("remote sync (experiment %s): %s", experiment_id, self._last_error)
+            self._log_event(experiment_id, f"remote sync: {self._last_error}")
             return False
         self._last_result = "ok"
         self._last_error = None

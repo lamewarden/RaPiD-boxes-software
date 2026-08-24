@@ -48,6 +48,34 @@ class ExperimentDir:
             json.dump(data, f, indent=2, default=str)
         os.replace(tmp, final)
 
+    def append_event(self, message: str) -> None:
+        """One timestamped line appended to this experiment's own events.log
+        -- durable, guaranteed-scoped to this experiment_id, and covered by
+        the same 90-day retention as its images (it lives inside the
+        experiment folder, deleted for free by delete_experiment()) unlike
+        the shared systemd journal, which has no per-experiment tagging and
+        no guaranteed time-floor retention. Best-effort: a logging failure
+        here must never break capture/control flow, so this never raises."""
+        ts = datetime.now().isoformat(timespec="seconds")
+        try:
+            with (self.path / "events.log").open("a") as f:
+                f.write(f"{ts} {message}\n")
+        except OSError:
+            pass
+
+    def read_events(self, max_lines: int = 200) -> str:
+        """Last `max_lines` of this experiment's events.log, oldest first
+        within that window. Empty string if the file doesn't exist (older
+        experiments predating this feature, or one with no logged events)."""
+        f = self.path / "events.log"
+        if not f.exists():
+            return ""
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            return ""
+        return "\n".join(lines[-max_lines:])
+
     def read_metadata(self) -> Optional[dict]:
         f = self.path / "metadata.json"
         if not f.exists():
