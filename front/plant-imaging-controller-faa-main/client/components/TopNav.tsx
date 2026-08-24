@@ -2,11 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { X, User, Folder, Radio, Settings, Download, FolderDown } from "lucide-react";
 import { toast } from "sonner";
-import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import SettingsMenu from "@/components/SettingsMenu";
 import ImportConfigMenu from "@/components/ImportConfigMenu";
 import DownloadsMenu from "@/components/DownloadsMenu";
 import RunningExperimentButton from "@/components/RunningExperimentButton";
+import UserSelectMenu from "@/components/UserSelectMenu";
 import { getUsername, setUsername } from "@/lib/session";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
 import { api } from "@/lib/api";
@@ -14,7 +14,7 @@ import type { SavedExperimentConfig } from "@shared/api";
 
 export default function TopNav() {
   const navigate = useNavigate();
-  const [editingUser, setEditingUser] = useState(false);
+  const [selectingUser, setSelectingUser] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
@@ -83,7 +83,7 @@ export default function TopNav() {
         <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">Downloads</span>
       </button>
 
-      <button className={btn} onClick={() => setEditingUser(true)}>
+      <button className={btn} onClick={() => setSelectingUser(true)}>
         <User className="w-[18px] h-[18px]" strokeWidth={1.5} />
         <span className="text-white text-center text-[12px] font-semibold leading-5 whitespace-nowrap">
           {username}
@@ -137,15 +137,14 @@ export default function TopNav() {
 
       {downloadsOpen && <DownloadsMenu onClose={() => setDownloadsOpen(false)} />}
 
-      {editingUser && (
-        <OnScreenKeyboard
-          title="Researcher name"
-          initialValue={username}
-          onCancel={() => setEditingUser(false)}
-          onConfirm={(v) => {
+      {selectingUser && (
+        <UserSelectMenu
+          currentUsername={username}
+          onClose={() => setSelectingUser(false)}
+          onSelect={(v) => {
             setUsername(v);
             setUser(getUsername());
-            setEditingUser(false);
+            setSelectingUser(false);
           }}
         />
       )}

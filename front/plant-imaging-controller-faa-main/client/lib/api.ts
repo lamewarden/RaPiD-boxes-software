@@ -91,6 +91,9 @@ export const api = {
   plantMaskStatus: (experimentId: string) =>
     jsonFetch<PlantMaskStatus>(`/api/images/${encodeURIComponent(experimentId)}/plant-mask/status`),
   settings: () => jsonFetch<DeviceSettings>("/api/settings"),
+  /** Usernames this device has seen -- from experiment history and saved
+   *  "Mine" settings -- for the user-select picker. */
+  users: () => jsonFetch<string[]>("/api/users"),
   saveSettings: (s: DeviceSettings) =>
     jsonFetch<DeviceSettings>("/api/settings", { method: "PUT", body: JSON.stringify(s) }),
   /** This researcher's saved baseline ("Mine") -- camera + illumination as

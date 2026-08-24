@@ -31,6 +31,7 @@ from .api import (
     settings as settings_api,
     system,
     update,
+    users,
     ws,
 )
 from .api.deps import AppState
@@ -96,6 +97,7 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
         remote_sync_api,
         system,
         update,
+        users,
         preview,
         health,
     ):

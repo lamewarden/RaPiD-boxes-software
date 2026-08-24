@@ -315,6 +315,39 @@ async def test_my_defaults_round_trip_covers_camera_and_illumination(client: Asy
 
 
 @pytest.mark.asyncio
+async def test_list_users_combines_experiment_history_and_saved_defaults(
+    client: AsyncClient, app_config: AppConfig
+):
+    (app_config.storage_root / "2026-01-01_Ivan_run-a").mkdir(parents=True)
+    (app_config.storage_root / "2026-01-02_bob_run-b").mkdir(parents=True)
+
+    res = await client.get("/api/settings")
+    settings = res.json()
+    res = await client.put(
+        "/api/settings/mine", json={"username": "lev", "settings": settings}
+    )
+    assert res.status_code == 200
+
+    res = await client.get("/api/users")
+    assert res.status_code == 200
+    assert res.json() == ["bob", "Ivan", "lev"]  # case-insensitive alphabetical
+
+
+@pytest.mark.asyncio
+async def test_list_users_prefers_experiment_casing_over_lowercased_mine_key(
+    client: AsyncClient, app_config: AppConfig
+):
+    (app_config.storage_root / "2026-01-01_Ivan_run-a").mkdir(parents=True)
+    res = await client.get("/api/settings")
+    await client.put(
+        "/api/settings/mine", json={"username": "IVAN", "settings": res.json()}
+    )
+
+    res = await client.get("/api/users")
+    assert res.json() == ["Ivan"]  # not a separate "IVAN" entry
+
+
+@pytest.mark.asyncio
 async def test_start_experiment_busy_after_start(client: AsyncClient):
     config = TropismConfig(
         experimentName="api-test",
