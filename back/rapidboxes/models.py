@@ -163,6 +163,19 @@ class RecoveryNotice(BaseModel):
     imagesSkipped: int
 
 
+class PhaseInfo(BaseModel):
+    """One entry in ExperimentStatus.phases -- the full planned sequence for
+    this run, computed once at start (see engine.runner.build_phases) so the
+    UI can show "previous/current/next phase" and a phase-by-phase
+    breakdown without duplicating the scheduling logic client-side."""
+
+    name: ExperimentPhase
+    durationSeconds: float
+    capture: bool
+    dayIndex: Optional[int] = None
+    imagesPlanned: int
+
+
 class ExperimentStatus(BaseModel):
     state: ExperimentState = ExperimentState.idle
     phase: Optional[ExperimentPhase] = None
@@ -187,6 +200,15 @@ class ExperimentStatus(BaseModel):
     # Stamped on every metadata write; recover() diffs this against wall-clock
     # time on the next boot to work out how long the box was off.
     updatedAt: Optional[datetime] = None
+    # The full planned phase sequence, and where we are in it -- None while on
+    # the growth baseline (a one-off capture, not part of `phases`) or once
+    # the run is no longer active.
+    phases: List[PhaseInfo] = Field(default_factory=list)
+    currentPhaseIndex: Optional[int] = None
+    # Real bytes written so far (summed at each capture) vs. the same rough
+    # worst-case estimate used for the pre-flight low-space check at start.
+    bytesUsed: int = 0
+    estimatedTotalBytes: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------

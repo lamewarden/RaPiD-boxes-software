@@ -23,6 +23,7 @@ from ..models import (
     ExperimentState,
     ExperimentStatus,
     GrowthConfig,
+    PhaseInfo,
     RecoveryNotice,
     SavedExperimentConfig,
     StartResponse,
@@ -102,6 +103,23 @@ def images_planned_for(config: Config) -> int:
     if isinstance(config, GrowthConfig):
         total += 1  # one-off baseline photo
     return total
+
+
+def phase_infos_for(config: Config) -> List[PhaseInfo]:
+    """The API-facing view of build_phases(config) -- ExperimentStatus.phases,
+    so the UI can show "previous/current/next phase" and a phase-by-phase
+    breakdown without duplicating this scheduling logic client-side."""
+    interval_s = config.intervalMinutes * 60.0
+    return [
+        PhaseInfo(
+            name=p.name,
+            durationSeconds=p.duration_s,
+            capture=p.capture,
+            dayIndex=p.day_index,
+            imagesPlanned=planned_captures(p.duration_s, interval_s) if p.capture else 0,
+        )
+        for p in build_phases(config)
+    ]
 
 
 def _build_tropism_phases(config: TropismConfig) -> List[_Phase]:
@@ -247,6 +265,8 @@ class ExperimentRunner:
             startedAt=datetime.now(),
             config=config,
             storageNotice=storage_notice,
+            phases=phase_infos_for(config),
+            estimatedTotalBytes=estimated,
         )
         self._write_metadata(exp)  # a valid snapshot exists even if start crashes right after
         self._task = asyncio.create_task(self._run(config, exp))
@@ -364,12 +384,27 @@ class ExperimentRunner:
 
         self._exp_dir = latest
         self.status = prev
+        # Always recompute rather than trust whatever was persisted: an
+        # experiment already running when the app itself is upgraded has old
+        # metadata with neither field, and both are cheap pure functions of
+        # config anyway. Camera settings come from this experiment's own
+        # saved XML (what it actually started with), not the live session
+        # settings, which reset to the system default on every boot.
+        self.status.phases = phase_infos_for(config)
+        try:
+            xml_bytes = latest.read_config_xml()
+            saved_camera = config_xml.parse(xml_bytes).camera if xml_bytes else CameraSettings()
+        except Exception:
+            log.warning("could not read saved config for %s; using default camera for the storage estimate", latest.experiment_id)
+            saved_camera = CameraSettings()
+        self.status.estimatedTotalBytes = estimate_experiment_bytes(config, saved_camera)
 
         if located is None:
             # The whole remaining schedule elapsed while the box was off.
             expected = images_planned_for(config)
             self.status.state = ExperimentState.done
             self.status.phase = None
+            self.status.currentPhaseIndex = None
             self.status.elapsedSeconds = self.status.totalSeconds
             self.status.phaseElapsedSeconds = 0.0
             self.status.nextCaptureInSeconds = None
@@ -393,6 +428,7 @@ class ExperimentRunner:
 
         self._stop = False
         self._clock = PausableClock(self._now, initial_elapsed=elapsed_at_resume)
+        self.status.currentPhaseIndex = index
         if was_running:
             self._pause_event.set()
             self.status.state = ExperimentState.running
@@ -450,6 +486,7 @@ class ExperimentRunner:
             await self._hw.configure_camera()
             if is_growth and not skip_baseline:
                 self.status.phase = ExperimentPhase.baseline
+                self.status.currentPhaseIndex = None
                 await self._capture(ExperimentPhase.baseline, "baseline", config, exp)
             for i, phase in enumerate(phases):
                 if i < start_phase_index:
@@ -457,7 +494,7 @@ class ExperimentRunner:
                 if self._stop:
                     break
                 phase_start = resume_phase_start if i == start_phase_index else None
-                await self._run_phase(phase, interval_s, config, exp, phase_start=phase_start)
+                await self._run_phase(phase, interval_s, config, exp, phase_index=i, phase_start=phase_start)
             self.status.message = "stopped by user" if self._stop else "completed"
             self.status.state = ExperimentState.done
         except asyncio.CancelledError:
@@ -470,6 +507,7 @@ class ExperimentRunner:
             self.status.message = str(e)
         finally:
             self.status.phase = None
+            self.status.currentPhaseIndex = None
             self.status.nextCaptureInSeconds = None
             try:
                 await self._hw.all_off()
@@ -485,10 +523,12 @@ class ExperimentRunner:
         config: Config,
         exp: ExperimentDir,
         *,
+        phase_index: int,
         phase_start: Optional[float] = None,
     ) -> None:
         assert self._clock is not None
         self.status.phase = phase.name
+        self.status.currentPhaseIndex = phase_index
         self.status.phaseTotalSeconds = phase.duration_s
         self.status.dayIndex = phase.day_index
         self.status.totalDays = config.experimentLengthDays if isinstance(config, GrowthConfig) else None
@@ -584,6 +624,10 @@ class ExperimentRunner:
 
         self.status.imagesCaptured = idx + 1
         self.status.lastImageId = image_id
+        try:
+            self.status.bytesUsed += path.stat().st_size
+        except OSError:
+            log.warning("could not stat just-captured %s for bytesUsed", path)
         self._write_metadata(exp)
 
         # Hand the new image to remote sync (if configured). This only drops a

@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Folder, Home, Pause, Play, Square, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import RecoveryNoticeBanner from "@/components/RecoveryNoticeBanner";
 import StorageNoticeBanner from "@/components/StorageNoticeBanner";
-import { formatElapsed } from "@/lib/progress";
+import ExperimentDetailModal from "@/components/ExperimentDetailModal";
+import { formatElapsedShort } from "@/lib/progress";
+import { formatBytes } from "@/lib/format";
 import type { ExperimentPhase } from "@shared/api";
 
 const PHASE_LABEL: Partial<Record<ExperimentPhase, string>> = {
@@ -17,6 +19,7 @@ export default function ProgressTropism() {
   const navigate = useNavigate();
   const { status, connected } = useExperimentStatus();
   const summaryOpened = useRef(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const isPaused = status?.state === "paused";
   const isActive = status?.state === "running" || status?.state === "paused";
@@ -25,6 +28,10 @@ export default function ProgressTropism() {
     : isActive
       ? "Starting…"
       : "—";
+  const phaseIndex = status?.currentPhaseIndex ?? null;
+  const phases = status?.phases ?? [];
+  const prevPhase = phaseIndex != null && phaseIndex > 0 ? phases[phaseIndex - 1] : null;
+  const nextPhase = phaseIndex != null && phaseIndex + 1 < phases.length ? phases[phaseIndex + 1] : null;
   const elapsed = status?.elapsedSeconds ?? 0;
   const remaining = status ? status.totalSeconds - status.elapsedSeconds : 0;
   const captured = status?.imagesCaptured ?? 0;
@@ -150,7 +157,7 @@ export default function ProgressTropism() {
               <div className="flex items-center justify-center gap-2">
                 <div className="text-center">
                   <div className="text-base font-black text-app-green tabular-nums leading-none">
-                    {formatElapsed(elapsed)}
+                    {formatElapsedShort(elapsed)}
                   </div>
                   <p className="text-app-text-muted text-[9px] mt-0.5">Elapsed</p>
                 </div>
@@ -164,21 +171,53 @@ export default function ProgressTropism() {
                 </div>
               </div>
               {isActive && (
-                <div className="border-t border-app-border-primary pt-1 text-center">
-                  <div className="text-sm font-bold text-app-text-secondary tabular-nums leading-none">
-                    {formatElapsed(remaining)}
+                <div className="border-t border-app-border-primary pt-1 flex items-center justify-center gap-2">
+                  <div className="text-center">
+                    <div className="text-sm font-bold text-app-text-secondary tabular-nums leading-none">
+                      {formatElapsedShort(remaining)}
+                    </div>
+                    <p className="text-app-text-muted text-[8px] mt-0.5">Remaining</p>
                   </div>
-                  <p className="text-app-text-muted text-[9px] mt-0.5">Remaining</p>
+                  <div className="w-px self-stretch bg-app-border-primary" />
+                  <div className="text-center">
+                    <div className="text-[11px] font-bold text-app-text-secondary leading-none">
+                      {formatBytes(status?.bytesUsed ?? 0)}
+                      <span className="text-app-text-muted text-[8px] font-semibold">
+                        {" "}
+                        - {status?.estimatedTotalBytes != null ? formatBytes(status.estimatedTotalBytes) : "—"}
+                      </span>
+                    </div>
+                    <p className="text-app-text-muted text-[8px] mt-0.5">Storage</p>
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1.5 px-2 text-center">
-              <p className="text-[11px] font-semibold text-app-blue">{phaseLabel}</p>
+            <button
+              type="button"
+              onClick={() => experimentId && setDetailOpen(true)}
+              disabled={!experimentId}
+              className="bg-app-bg-secondary border border-app-border-primary rounded-lg py-1 px-2 text-center transition-colors hover:border-app-blue disabled:cursor-not-allowed"
+            >
+              {prevPhase && (
+                <div className="truncate rounded bg-app-bg-tertiary px-1 py-0.5 text-[8px] text-app-text-muted">
+                  ← {PHASE_LABEL[prevPhase.name] ?? prevPhase.name}
+                </div>
+              )}
+              <p className="mt-0.5 truncate text-[11px] font-semibold text-app-blue">{phaseLabel}</p>
               <p className="text-app-text-muted text-[9px]">
-                {isPaused ? "Paused" : status?.state === "done" ? "Finished" : "Phase"}
+                {isPaused
+                  ? "Paused"
+                  : status?.state === "done"
+                    ? "Finished"
+                    : `Duration ${formatElapsedShort(status?.phaseTotalSeconds ?? 0)}`}
               </p>
-            </div>
+              {nextPhase && (
+                <div className="mt-0.5 truncate rounded bg-app-bg-tertiary px-1 py-0.5 text-[8px] text-app-text-muted">
+                  {PHASE_LABEL[nextPhase.name] ?? nextPhase.name} →
+                </div>
+              )}
+            </button>
 
             <div className="flex flex-col gap-1 mt-auto">
               <button
@@ -208,6 +247,10 @@ export default function ProgressTropism() {
           </div>
         </div>
       </div>
+
+      {detailOpen && status && (
+        <ExperimentDetailModal status={status} onClose={() => setDetailOpen(false)} />
+      )}
     </div>
   );
 }

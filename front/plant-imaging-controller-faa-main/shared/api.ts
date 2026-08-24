@@ -62,6 +62,17 @@ export interface RecoveryNotice {
   imagesSkipped: number;
 }
 
+/** One entry in ExperimentStatus.phases -- the full planned sequence for this
+ *  run, computed once at start. See back/rapidboxes/engine/runner.py
+ *  phase_infos_for(). */
+export interface PhaseInfo {
+  name: ExperimentPhase;
+  durationSeconds: number;
+  capture: boolean;
+  dayIndex: number | null;
+  imagesPlanned: number;
+}
+
 export interface ExperimentStatus {
   state: ExperimentState;
   phase: ExperimentPhase | null;
@@ -83,6 +94,12 @@ export interface ExperimentStatus {
   totalDays: number | null;
   storageNotice: StorageNotice | null;
   recoveryNotice: RecoveryNotice | null;
+  phases: PhaseInfo[];
+  /** Index into `phases`; null on the growth baseline (a one-off capture,
+   *  not part of the phase list) or once the run is no longer active. */
+  currentPhaseIndex: number | null;
+  bytesUsed: number;
+  estimatedTotalBytes: number | null;
 }
 
 export interface StorageSuggestion {

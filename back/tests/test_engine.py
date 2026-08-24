@@ -124,8 +124,17 @@ async def test_recover_resumes_mid_phase_after_outage_and_reports_skipped_images
     # Resumed immediately (synchronously, before the task even runs a tick).
     assert runner.status.state == ExperimentState.running
     assert runner.status.phase == ExperimentPhase.dark
+    assert runner.status.currentPhaseIndex == 0
     assert runner._clock is not None
     assert abs(runner._clock.elapsed() - 2850.0) < 5.0
+
+    # phases/estimatedTotalBytes are recomputed on recover(), not just
+    # trusted from whatever was persisted -- the crafted metadata above (like
+    # a real experiment that was already running when the app itself gets
+    # upgraded to a version that added these fields) has neither.
+    assert [p.name.value for p in runner.status.phases] == ["dark", "bending"]
+    assert runner.status.estimatedTotalBytes is not None
+    assert runner.status.estimatedTotalBytes > 0
 
     # 5 captures were due by phase-elapsed 2850s (t=0,600,1200,1800,2400); only
     # 2 had actually happened before the crash -> 3 were missed to the outage.
@@ -382,6 +391,68 @@ async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
     # Hardware left safe: all LEDs black, IR off.
     assert runner._hw._ir.state is False
     assert all(p == BLACK for p in runner._hw._leds.pixels)
+
+
+@pytest.mark.asyncio
+async def test_status_exposes_phase_plan_index_and_storage_tracking(tmp_path):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=180 / 3600,
+        lateralIlluminationHours=120 / 3600,
+        spectra=["red"],
+        intervalMinutes=1.0,
+        intensity=50,
+    )
+
+    resp = await runner.start(config)
+    assert resp.status == "started"
+
+    # The full plan is known immediately at start, before any phase runs.
+    assert [p.name.value for p in runner.status.phases] == ["dark", "bending"]
+    assert runner.status.phases[0].durationSeconds == 180
+    assert runner.status.phases[0].imagesPlanned == 3
+    assert runner.status.phases[1].imagesPlanned == 2
+    assert runner.status.estimatedTotalBytes is not None
+    assert runner.status.estimatedTotalBytes > 0
+    assert runner.status.bytesUsed == 0
+
+    await runner._task  # run to completion
+
+    assert runner.status.state == ExperimentState.done
+    assert runner.status.currentPhaseIndex is None  # cleared once finished
+    # Real bytes written, one stat() per capture -- must be nonzero and, for
+    # a handful of small simulated frames, comfortably under the worst-case
+    # pre-flight estimate (which assumes full-resolution uncompressed frames).
+    assert runner.status.bytesUsed > 0
+    assert runner.status.bytesUsed < runner.status.estimatedTotalBytes
+
+
+@pytest.mark.asyncio
+async def test_current_phase_index_advances_through_the_plan(tmp_path):
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t",
+        username="u",
+        darkPhaseEnabled=True,
+        darkPhaseHours=60 / 3600,
+        lateralIlluminationHours=60 / 3600,
+        spectra=["red"],
+        intervalMinutes=1.0,
+    )
+
+    await runner.start(config)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert runner.status.currentPhaseIndex == 0
+    assert runner.status.phase == ExperimentPhase.dark
+
+    await runner._task
+    assert runner.status.state == ExperimentState.done
 
 
 @pytest.mark.asyncio
