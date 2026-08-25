@@ -49,7 +49,9 @@ inside each phase that has `capture: true`.
 - **Gallery** — browse past experiment folders. Each folder can be
   downloaded (zip) or deleted individually; there's also a bulk
   "download all" / delete-all at the top, with a two-tap confirmation before
-  anything destructive happens.
+  anything destructive happens. This is the *manual, pull* way to get images
+  off the device — see "Getting your images off the device" below for the
+  other (automatic, push) way, Remote Sync.
 - **Live** — a live camera preview for framing/focus. It uses a *fixed dim
   white backlight* for visibility, not the actual illumination an experiment
   would use — so Live's exposure/brightness will not match a real capture.
@@ -137,6 +139,28 @@ Mine" row and is never locked while an experiment is running — those
 concepts (system default vs. personal baseline, session-scoped vs.
 persisted) only apply to camera/illumination settings, not to device-level
 things like SSH or Remote Sync.
+
+### Getting your images off the device
+
+There are **two different ways** — always mention both when someone asks
+how to get their images/data off the box, even if they only asked about
+one, since people often don't know the second one exists:
+
+1. **Manual download (Gallery)** — pull-based, on demand. Open **Gallery**,
+   download one experiment's folder as a zip, or use "download all" at the
+   top for everything at once. No setup required; you do it whenever you
+   want, after the fact.
+2. **Remote Sync (Settings → General → Remote Sync)** — automatic, push-based.
+   Once configured and switched on, every new image is copied to a network
+   share as it's captured, with no manual step needed per experiment. Can
+   also back-fill everything already captured locally via "Sync Entire
+   Folder". Requires one-time setup (server/username/password) — see the
+   step-by-step walkthrough right below.
+
+If someone asks "how do I download my images" and only Gallery seems to
+apply, still mention Remote Sync as the alternative for not having to
+manually download every experiment — that's very likely what they're
+actually asking about if they push back that "there's something else."
 
 ### Remote Sync (CIFS network drive) setup, step by step
 
@@ -262,6 +286,7 @@ scroll through a wall of text on this box.
 | Old experiments disappeared from Gallery | Automatic 90-day retention cleanup | No — intentional | Back up important experiments (Gallery → download) well before 90 days old. |
 | "Low space" when starting a new experiment | Estimated storage needed exceeds free space | No — a real, working guard | Use the offered "free space" option to remove that user's own old experiments, or delete/download some via Gallery first. |
 | Typed an existing username and got no warning it "already exists" | Intentional — usernames are case-insensitive and reusing one just resumes that person's folder | No — intentional | Nothing to fix; that is the expected behavior. |
+| Asked "how do I download my images" (or similar) and pushed back that there's "something else" beyond the answer given | There are genuinely two separate ways to get images off the device -- manual Gallery zip download AND automatic Remote Sync -- and only one may have been mentioned | No — a real second option, not a misunderstanding | See "Getting your images off the device" above; always mention both Gallery download and Remote Sync, not just one. |
 | "Recovered" banner appears after a reboot, saying images were skipped or not | Automatic resume-after-outage feature reporting exactly what happened | No — intentional, informational | Explain what the banner already says; if imagesSkipped > 0, that many capture slots were missed while it was offline and cannot be recreated. |
 | Live view looks dim/flat compared to real captures | Live always uses a fixed dim white backlight for framing, never the experiment's real illumination or exposure | No — intentional | Live is for framing only; real capture brightness/color will differ. |
 | Settings → "Mine" doesn't change the system default for other users | "Mine" is strictly personal and never touches the shared system default | No — intentional | Each user's "Mine" is private to their own username; there's no UI to change the shared default. |
