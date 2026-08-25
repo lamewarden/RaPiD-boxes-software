@@ -16,11 +16,11 @@ export default function Index() {
           <button
             onClick={() => setAssistantOpen(true)}
             title="IEB Image Facility raPIDBOx assistanT"
-            className="mb-3 inline-flex items-center gap-2 rounded-full border border-app-violet/50 bg-app-violet/15 px-4 py-1.5 text-white shadow-lg transition-colors hover:bg-app-violet/25"
+            className="mb-4 inline-flex items-center gap-3 rounded-full border border-app-violet/50 bg-app-violet/15 px-7 py-3 text-white shadow-lg transition-colors hover:bg-app-violet/25"
           >
-            <Flower2 className="h-[16px] w-[16px] text-app-violet-light" strokeWidth={1.5} />
-            <span className="text-[12px] font-bold">PidiBot</span>
-            <Sparkles className="h-[13px] w-[13px] text-app-violet-light" strokeWidth={1.5} />
+            <Flower2 className="h-[24px] w-[24px] text-app-violet-light" strokeWidth={1.5} />
+            <span className="text-[18px] font-bold">PidiBot</span>
+            <Sparkles className="h-[19px] w-[19px] text-app-violet-light" strokeWidth={1.5} />
           </button>
           <h2 className="text-xl font-bold text-white mb-2">Select Your Program</h2>
           <p className="text-app-text-secondary text-sm mb-4">
