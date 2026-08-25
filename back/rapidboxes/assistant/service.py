@@ -50,6 +50,7 @@ from ..models import (
     TropismConfig,
 )
 from ..dsm_sharing import DsmSharingService
+from ..hardware.base import CameraUnavailableError, HardwareTimeoutError
 from ..remote_sync import RemoteSyncService
 from ..storage import ExperimentDir, Storage, tally_by_user
 from . import vision
@@ -665,6 +666,52 @@ class AssistantService:
                 f"only {_format_bytes(response.availableBytes or 0)} free."
             )
         return response, "Could not start the experiment."
+
+    async def capture_snapshot(self, requesting_username: str) -> Tuple[Optional[bytes], str]:
+        """A real capture with the device's actual current camera and
+        illumination settings -- deliberately not the Live preview, which
+        always uses a fast RGBW-speed exposure for framing regardless of
+        the real configured source (see hardware/manager.py's
+        _live_preview_settings), so it would misrepresent what an IR run
+        actually looks like. Same underlying camera call the Settings ->
+        Camera "test photo" button uses (HardwareManager.capture_test_jpeg).
+
+        If the requester's own experiment is genuinely running, the camera
+        is busy with its own scheduled captures and can't take a concurrent
+        ad-hoc shot -- falls back to their run's own most recent real
+        capture instead of failing outright, same "can't do X right now,
+        here's the next best thing" precedent as
+        upload_experiment_to_remote's DSM-sharing fallback. Strictly scoped
+        like every other tool here: never captures or returns anything for
+        an experiment that isn't the requester's own."""
+        if self._runner is None or self._app_state is None:
+            return None, "That isn't available right now -- try again shortly."
+
+        status = self._runner.status
+        if status.state in (ExperimentState.running, ExperimentState.paused):
+            if status.username and status.username.strip().lower() == requesting_username.strip().lower():
+                exp = self._storage.get_experiment(status.experimentId) if status.experimentId else None
+                images = exp.list_capture_images() if exp is not None else []
+                if exp is None or not images:
+                    return None, "Your experiment is running but hasn't captured an image yet."
+                last = images[-1]
+                path = exp.thumb_file(last["id"])
+                if path is None:
+                    return None, f"Couldn't read {last['id']}."
+                return (
+                    path.read_bytes(),
+                    f"An experiment is running, so here's the most recent real capture "
+                    f"({last['id']}) instead of a fresh test shot.",
+                )
+            return None, "An experiment is running right now -- can't take a test photo until it finishes."
+
+        try:
+            frame = await self._runner._hw.capture_test_jpeg(self._app_state.settings.camera)
+        except CameraUnavailableError:
+            return None, "No camera detected."
+        except HardwareTimeoutError as exc:
+            return None, f"Camera did not respond in time: {exc}"
+        return frame, "Snapshot with your current camera and light settings."
 
     # --- chat --------------------------------------------------------------
     async def chat(

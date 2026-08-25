@@ -10,6 +10,7 @@ service's own contract, not the remote gateway's.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1496,6 +1497,76 @@ async def test_start_experiment_from_launch_without_runner_or_app_state_degrades
     response, message = await service.start_experiment_from_launch(saved, "run", "ivan")
 
     assert response is None
+    assert "isn't available right now" in message
+
+
+@pytest.mark.asyncio
+async def test_capture_snapshot_while_idle_takes_a_real_photo(client: AsyncClient):
+    app_state = client._app.state.app
+    frame, message = await app_state.assistant.capture_snapshot("ivan")
+    assert frame is not None
+    assert isinstance(frame, (bytes, bytearray))
+    assert len(frame) > 0
+    assert "current camera and light settings" in message
+
+
+@pytest.mark.asyncio
+async def test_capture_snapshot_while_own_experiment_running_sends_last_capture(client: AsyncClient):
+    app_state = client._app.state.app
+    config = _tropism_config().model_copy(update={"experimentName": "run1", "username": "ivan"})
+    res = await client.post("/api/experiments", json=config.model_dump())
+    assert res.status_code == 200
+    # Let at least one real capture land before asking for a snapshot.
+    exp = app_state.storage.get_experiment(app_state.runner.status.experimentId)
+    for _ in range(50):
+        if exp.list_capture_images():
+            break
+        await asyncio.sleep(0.05)
+    assert exp.list_capture_images(), "no capture landed in time for this test"
+
+    frame, message = await app_state.assistant.capture_snapshot("ivan")
+
+    assert frame is not None
+    assert "experiment is running" in message
+    assert "most recent real capture" in message
+    await client.post("/api/experiments/current/abort")
+
+
+@pytest.mark.asyncio
+async def test_capture_snapshot_declines_while_another_users_experiment_runs(client: AsyncClient):
+    app_state = client._app.state.app
+    config = _tropism_config().model_copy(update={"experimentName": "run1", "username": "sabol"})
+    res = await client.post("/api/experiments", json=config.model_dump())
+    assert res.status_code == 200
+
+    frame, message = await app_state.assistant.capture_snapshot("ivan")
+
+    assert frame is None
+    assert "can't take a test photo" in message
+    await client.post("/api/experiments/current/abort")
+
+
+@pytest.mark.asyncio
+async def test_capture_snapshot_reports_no_camera(client: AsyncClient, monkeypatch):
+    from rapidboxes.hardware.base import CameraUnavailableError
+
+    app_state = client._app.state.app
+
+    async def fail_unavailable(settings):
+        raise CameraUnavailableError("camera not connected")
+
+    monkeypatch.setattr(app_state.hw, "capture_test_jpeg", fail_unavailable)
+    frame, message = await app_state.assistant.capture_snapshot("ivan")
+    assert frame is None
+    assert "No camera" in message
+
+
+@pytest.mark.asyncio
+async def test_capture_snapshot_without_runner_or_app_state_degrades(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    frame, message = await service.capture_snapshot("ivan")
+    assert frame is None
     assert "isn't available right now" in message
 
 

@@ -562,6 +562,145 @@ async def test_download_too_large_for_telegram_suggests_the_device_instead(
     await service.shutdown()
 
 
+# --- /snapshot: a real camera capture, or /screenshot: the kiosk screen ----
+
+
+@pytest.mark.asyncio
+async def test_snapshot_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/snapshot", "")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_command_without_assistant_reports_unavailable(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/snapshot", "")
+
+    assert "isn't available right now" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_command_sends_a_real_photo_on_success(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fake_snapshot(username):
+        assert username == "ivan"
+        return b"\xff\xd8fake-jpeg-bytes", "Snapshot with your current camera and light settings."
+
+    monkeypatch.setattr(assistant, "capture_snapshot", fake_snapshot)
+    service.attach_assistant(assistant)
+
+    photo_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendPhoto"):
+            photo_calls.append((data, files))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service._dispatch_command(42, "/snapshot", "")
+
+    assert len(photo_calls) == 1
+    data, files = photo_calls[0]
+    assert data["caption"] == "Snapshot with your current camera and light settings."
+    filename, content, _ctype = files["photo"]
+    assert filename == "snapshot.jpg"
+    assert content == b"\xff\xd8fake-jpeg-bytes"
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_command_relays_the_reason_on_failure(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fake_snapshot(username):
+        return None, "An experiment is running right now -- can't take a test photo until it finishes."
+
+    monkeypatch.setattr(assistant, "capture_snapshot", fake_snapshot)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/snapshot", "")
+
+    assert "can't take a test photo" in calls[0][1]["text"]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_screenshot_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/screenshot", "")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_screenshot_command_sends_a_real_screenshot_on_success(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+
+    async def fake_capture():
+        return b"\x89PNG-fake-bytes"
+
+    monkeypatch.setattr(telegram_link_module, "capture_kiosk_screenshot", fake_capture)
+
+    photo_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendPhoto"):
+            photo_calls.append((data, files))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service._dispatch_command(42, "/screenshot", "")
+
+    assert len(photo_calls) == 1
+    data, files = photo_calls[0]
+    assert data["caption"] == "Current kiosk screen."
+    filename, content, _ctype = files["photo"]
+    assert filename == "screenshot.png"
+    assert content == b"\x89PNG-fake-bytes"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_screenshot_command_relays_the_unavailable_reason(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+
+    async def fake_capture():
+        raise telegram_link_module.KioskScreenshotUnavailable("no kiosk display session found")
+
+    monkeypatch.setattr(telegram_link_module, "capture_kiosk_screenshot", fake_capture)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/screenshot", "")
+
+    assert "no kiosk display session found" in calls[0][1]["text"]
+    await service.shutdown()
+
+
 # --- /monitor: on-demand subscription to the sender's own running run ------
 
 

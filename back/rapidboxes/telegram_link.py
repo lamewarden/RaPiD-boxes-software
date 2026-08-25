@@ -79,6 +79,7 @@ import httpx
 from . import config_xml
 from .assistant import summary as assistant_summary
 from .assistant.service import AssistantUnavailable, format_config_knobs
+from .kiosk_screenshot import KioskScreenshotUnavailable, capture_kiosk_screenshot
 from .models import (
     EXPOSURE_PROFILES,
     VALID_SPECTRA,
@@ -699,13 +700,23 @@ class TelegramLinkService:
     async def _send_photo_file(self, chat_id: int, path: Path, caption: str) -> None:
         try:
             data = path.read_bytes()
+        except OSError as exc:
+            log.warning("telegram sendPhoto failed to read %s: %s", path, exc)
+            return
+        await self._send_photo_bytes(chat_id, path.name, data, caption)
+
+    async def _send_photo_bytes(self, chat_id: int, filename: str, data: bytes, caption: str) -> None:
+        """Same as _send_photo_file but for an image already in memory (a
+        fresh camera capture, a screen grab) -- no need to round-trip it
+        through a temp file just to read it straight back."""
+        try:
             res = await self._client.post(
                 f"/bot{self._token}/sendPhoto",
                 data={"chat_id": str(chat_id), "caption": caption},
-                files={"photo": (path.name, data, "image/jpeg")},
+                files={"photo": (filename, data, "image/jpeg")},
             )
             res.raise_for_status()
-        except (httpx.HTTPError, OSError) as exc:
+        except httpx.HTTPError as exc:
             log.warning("telegram sendPhoto failed for chat %s: %s", chat_id, exc)
 
     async def _send_download(self, chat_id: int, download: AssistantDownloadRef) -> None:
@@ -1008,6 +1019,10 @@ class TelegramLinkService:
             await self._send_raw(chat_id, "Nothing active to cancel.")
         elif command == "/monitor":
             await self._handle_monitor_command(chat_id)
+        elif command == "/snapshot":
+            await self._handle_snapshot_command(chat_id)
+        elif command == "/screenshot":
+            await self._handle_screenshot_command(chat_id)
         else:
             await self._send_raw(chat_id, f"I don't know {command} -- send /help to see what I can do.")
 
@@ -1048,8 +1063,12 @@ class TelegramLinkService:
             "/monitor — subscribe to your currently running experiment: anomalies, a blackout notice, and a "
             "completion summary with photos. Pins a live-updating progress bar here too.",
             "/launch [what you want] — walks through setting up a new experiment, one question at a time, "
-            "starting from a past run's settings (or defaults). Ends with a summary to confirm before it's "
-            "loaded on the device -- you still press Start there yourself. /cancel stops it anytime.",
+            "starting from a past run's settings (or defaults). Ends with a summary to confirm -- \"yes\" "
+            "actually starts it, real camera and lighting, right then. If it can't (busy/no camera/low "
+            "space), it loads the settings on the setup screen instead. /cancel stops it anytime.",
+            "/snapshot — a real photo with your current camera and light settings (not the Live preview's "
+            "fudged fast exposure). If your own experiment is running, sends its most recent capture instead.",
+            "/screenshot — whatever's actually on the kiosk's touchscreen right now.",
             "/unlink — disconnect this Telegram account from RapidBoxes.",
             "/help — this list.",
             "",
@@ -1284,6 +1303,53 @@ class TelegramLinkService:
             f"{message} I've loaded the settings on the setup screen instead -- once that's sorted, "
             "you can press Start there yourself.",
         )
+
+    async def _handle_snapshot_command(self, chat_id: int) -> None:
+        """A real camera capture with the device's actual current settings
+        -- see AssistantService.capture_snapshot for the full behavior
+        (including its own-experiment-running fallback). Deterministic
+        dispatch here, the actual hardware call lives on AssistantService
+        since it already holds the runner/app-state wiring this needs."""
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+        if self._assistant is None:
+            await self._send_raw(chat_id, "That isn't available right now -- try again shortly.")
+            return
+
+        frame, message = await self._assistant.capture_snapshot(username)
+        if frame is None:
+            await self._send_raw(chat_id, message)
+            return
+        await self._send_photo_bytes(chat_id, "snapshot.jpg", frame, message)
+
+    async def _handle_screenshot_command(self, chat_id: int) -> None:
+        """Whatever is actually on the kiosk's own touchscreen right now --
+        see kiosk_screenshot.py. Unlike every other command, this is
+        deliberately device-wide, not scoped to the asker: the kiosk is one
+        shared screen, so a screenshot of it can show whatever anyone is
+        currently doing there, the same "device-wide" precedent /status
+        already set. Never touches the camera/experiment hardware at all,
+        so it works regardless of whether an experiment is running."""
+        if self._username_for_chat(chat_id) is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+
+        try:
+            png = await capture_kiosk_screenshot()
+        except KioskScreenshotUnavailable as exc:
+            await self._send_raw(chat_id, f"Couldn't capture the screen: {exc}")
+            return
+        await self._send_photo_bytes(chat_id, "screenshot.png", png, "Current kiosk screen.")
 
     async def _handle_monitor_command(self, chat_id: int) -> None:
         """/monitor subscribes the sender to their own currently-running
