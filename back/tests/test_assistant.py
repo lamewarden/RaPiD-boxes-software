@@ -351,7 +351,7 @@ async def test_system_status_reports_idle_storage_and_camera(app_config: AppConf
     proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply
-    assert "Storage:" in reply
+    assert "Device storage:" in reply
     assert "Camera:" in reply
 
 
@@ -382,6 +382,35 @@ async def test_system_status_reports_a_recovered_interruption(app_config: AppCon
     assert proposal is None
     assert "30 min offline" in reply
     assert "3 images could not be captured" in reply
+
+
+@pytest.mark.asyncio
+async def test_system_status_distinguishes_real_usage_from_the_preflight_estimate(app_config: AppConfig):
+    """The user reported the assistant giving an "uncertain"/approximate
+    answer about a running experiment's size -- root cause was that neither
+    the real bytes captured so far nor the pre-flight estimate was ever
+    exposed at all. Both must be present now, clearly distinguished (a
+    measured "so far" figure vs. a labeled, non-final estimate)."""
+    storage = Storage(app_config.storage_root)
+    hw = build_hardware(app_config, DeviceSettings())
+    runner = ExperimentRunner(hw, storage)
+    runner.status.state = ExperimentState.running
+    runner.status.phase = ExperimentPhase.dark
+    runner.status.experimentId = "2026-01-01_ivan_test"
+    runner.status.username = "ivan"
+    runner.status.imagesCaptured = 163
+    runner.status.imagesPlanned = 400
+    runner.status.bytesUsed = 670_000_000
+    runner.status.estimatedTotalBytes = 21_021_327_360
+    service = AssistantService(app_config, storage, runner)
+
+    call = _tool_call("system_status")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert proposal is None
+    assert "so far: 639 MB" in reply
+    assert "pre-flight estimate" in reply
+    assert "19.6 GB" in reply
+    assert "not a measured final size" in reply
 
 
 @pytest.mark.asyncio
@@ -508,6 +537,25 @@ async def test_read_experiment_log_returns_own_events(app_config: AppConfig):
 
 
 @pytest.mark.asyncio
+async def test_read_experiment_log_reports_exact_measured_size(app_config: AppConfig):
+    """This is the only tool with an exact, disk-measured size for one
+    specific experiment -- unlike my_storage (all-experiments total) or
+    system_status's estimatedTotalBytes (a pre-flight guess for a live
+    run's full planned schedule, not a measurement)."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    (exp.path / "dark_00000.png").write_bytes(b"x" * 2_000_000)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("read_experiment_log")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert proposal is None
+    assert "2 MB" in reply
+    assert "exact, measured" in reply
+
+
+@pytest.mark.asyncio
 async def test_read_experiment_log_never_reads_another_users_run(app_config: AppConfig):
     """read_experiment_log's schema takes no username -- even if sabol has a
     run and ivan asks, only ivan's own experiments are ever candidates."""
@@ -534,7 +582,7 @@ async def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
     call = _tool_call("read_experiment_log")
     proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
-    assert "no logged events" in reply
+    assert "No logged events" in reply
 
 
 @pytest.mark.asyncio

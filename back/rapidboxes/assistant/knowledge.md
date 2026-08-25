@@ -53,7 +53,11 @@ inside each phase that has `capture: true`.
 - **Live** — a live camera preview for framing/focus. It uses a *fixed dim
   white backlight* for visibility, not the actual illumination an experiment
   would use — so Live's exposure/brightness will not match a real capture.
-- **Settings** — Camera tab and Illumination tab, described below.
+- **Settings** — three separate tabs, each its own section of this menu:
+  **Camera**, **Illumination**, and **General** (device info/storage, SSH
+  Access, Remote Sync, and OTA Update) — all described below. Treat these as
+  three distinct places, not one undifferentiated "Settings" blob: e.g.
+  Remote Sync and SSH live under **General**, not Camera or Illumination.
 - **Running-experiment badge** (top-right, only visible while something is
   running) — shows current phase name; tapping it goes to the live progress
   screen for that run.
@@ -114,12 +118,32 @@ saved" above you're touching — see that section before telling someone
 "just change it in Settings," since the effect (this session only vs.
 forever vs. only when you load your own "Mine") differs a lot.
 
+### Settings: General tab
+
+The third tab, separate from Camera and Illumination — no camera/light knobs
+live here. Its own on-screen sections, top to bottom:
+
+- **Device info** — app version, storage path, and free/used storage (with a
+  low-space warning badge).
+- **SSH Access** — shows the SSH command for this box (tap to copy) and
+  whether SSH is currently reachable.
+- **Remote Sync** — the CIFS network-share backup setup, detailed in its own
+  walkthrough right below.
+- **Update** — checks for and applies OTA software updates from the repo,
+  and can roll back to the previous version.
+
+Unlike Camera/Illumination, General has no "Default"/"Mine"/"Save"/"Save
+Mine" row and is never locked while an experiment is running — those
+concepts (system default vs. personal baseline, session-scoped vs.
+persisted) only apply to camera/illumination settings, not to device-level
+things like SSH or Remote Sync.
+
 ### Remote Sync (CIFS network drive) setup, step by step
 
 This backs up captured images to a network share automatically as they're
 taken. The actual steps, in order:
 
-1. Open **Settings → Remote Sync**. The **Server/share** field is prefilled
+1. Open **Settings → General → Remote Sync**. The **Server/share** field is prefilled
    with the institutional default; change it only if told to use a
    different share.
 2. Enter the **Username** for that network share (this is the CIFS account,
@@ -234,7 +258,7 @@ scroll through a wall of text on this box.
 | Camera Settings fields are greyed out / edits are rejected | An experiment is currently running; camera/illumination settings are locked while active (409 on the API) | No — intentional | Finish, stop, or abort the current experiment first, then change settings. |
 | Camera zoom/focus/exposure "reset itself" after a reboot or power cut (no experiment running at the time) | Camera settings are session-scoped and always reset to system default on process start | No — intentional | Reload your personal "Mine" preset from Settings (Camera or Illumination tab), or re-enter the values. |
 | A handful of images right after a reboot look zoomed differently or lost color, mid-experiment | A now-fixed bug where a resumed experiment briefly used fresh session defaults instead of its own saved camera config | It *was* a real, now-fixed bug; old affected frames stay wrong | Tell them plainly this was a real, fixed bug; the specific old frames from around that reboot cannot be recovered. Current runs are not affected. |
-| Remote Sync shows "off"/"needs password" right after a restart, even though it was configured before | Password is deliberately not persisted across restarts, for security | No — intentional, every restart | Re-enter the password in Settings → Remote Sync; server/username/on-off are unaffected. |
+| Remote Sync shows "off"/"needs password" right after a restart, even though it was configured before | Password is deliberately not persisted across restarts, for security | No — intentional, every restart | Re-enter the password in Settings → General → Remote Sync; server/username/on-off are unaffected. |
 | Old experiments disappeared from Gallery | Automatic 90-day retention cleanup | No — intentional | Back up important experiments (Gallery → download) well before 90 days old. |
 | "Low space" when starting a new experiment | Estimated storage needed exceeds free space | No — a real, working guard | Use the offered "free space" option to remove that user's own old experiments, or delete/download some via Gallery first. |
 | Typed an existing username and got no warning it "already exists" | Intentional — usernames are case-insensitive and reusing one just resumes that person's folder | No — intentional | Nothing to fix; that is the expected behavior. |
@@ -243,7 +267,7 @@ scroll through a wall of text on this box.
 | Settings → "Mine" doesn't change the system default for other users | "Mine" is strictly personal and never touches the shared system default | No — intentional | Each user's "Mine" is private to their own username; there's no UI to change the shared default. |
 | Images look blacked-out or blown-out right after switching IR ↔ RGBW | Exposure has an out-of-range value snapping back to that source's default (0.2–10s for IR, 10–500ms for RGBW) mid-adjustment | No — intentional guard | Explain the two exposure ranges above; if they want a specific value, it must be inside the new source's range. |
 | Remote Sync password field is empty even though sync was working yesterday | Password is deliberately never returned or pre-filled by the API, only ever entered fresh | No — intentional, by design (security) | Re-type the password; this is expected every time you open the panel, not just after a restart. |
-| Remote Sync turned itself off mid-run with no one touching Settings | The active/selected username on the home screen changed while sync was on, which auto-disables it | No — intentional (prevents mis-filing images under the wrong researcher) | Switch back to the correct username and re-enable sync from Settings → Remote Sync. |
+| Remote Sync turned itself off mid-run with no one touching Settings | The active/selected username on the home screen changed while sync was on, which auto-disables it | No — intentional (prevents mis-filing images under the wrong researcher) | Switch back to the correct username and re-enable sync from Settings → General → Remote Sync. |
 | "Check Connection" fails with a specific error (wrong password / host unreachable / bad path) | Real probe result from actually trying to write to the destination share | Depends — the message is accurate | Read the specific error back to them; it names the real cause, not a generic failure. |
 | Zoom looks "soft"/lower detail at higher zoom values | Digital zoom center-crops then upscales — it is not optical, so higher zoom trades resolution for framing | No — intentional (no optical zoom hardware) | Explain it's a digital crop; for real detail at high zoom, physically move the box/camera closer instead. |
 | Focus distance number is confusing (e.g. "why does a bigger number mean closer focus") | focusDistance is in diopters (1/metres), not centimetres or an arbitrary scale | No — intentional unit choice | 10.0 = 1/10 m = 10 cm; explain the diopter relationship, don't treat it as a linear "bigger = farther" slider. |

@@ -61,6 +61,19 @@ def _load_knowledge() -> str:
 
 _SYSTEM_PROMPT = _load_knowledge()
 
+
+def _format_bytes(n: int) -> str:
+    """Same thresholds/units as the frontend's formatBytes() (client/lib/
+    format.ts) -- keeping these consistent matters: a researcher comparing
+    what the assistant says to what the progress screen already shows for
+    the same experiment should never see two different-looking numbers for
+    the same quantity."""
+    if n >= 1_073_741_824:
+        return f"{n / 1_073_741_824:.1f} GB"
+    if n >= 1_048_576:
+        return f"{n / 1_048_576:.0f} MB"
+    return f"{round(n / 1024)} KB"
+
 # Real OpenAI-style tool definitions. Real testing across several candidate
 # models on this gateway showed native tool_calls output is clean and
 # reliable, unlike asking the model to emit JSON in message text (which
@@ -134,7 +147,11 @@ _TOOLS = [
             "description": (
                 "Get the box's current live state right now: is an "
                 "experiment running, how much storage is free, is the "
-                "camera working."
+                "camera working. If an experiment is currently running, "
+                "also reports its real captured-so-far storage use and the "
+                "rough pre-flight estimate for its full planned size (NOT a "
+                "final measured size -- use read_experiment_log for that, "
+                "on a finished run)."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -160,11 +177,14 @@ _TOOLS = [
         "function": {
             "name": "my_storage",
             "description": (
-                "How much storage the CURRENT user is using -- their own "
-                "experiment count and bytes used, plus the box's total free "
-                "space. Use for questions like \"how much storage am I "
-                "using\". Always scoped to whoever is chatting -- takes no "
-                "arguments, never another user's usage."
+                "How much storage the CURRENT user is using in TOTAL, "
+                "combined across every experiment they've ever run, plus "
+                "the box's total free space. Use for questions like \"how "
+                "much storage am I using overall\". For the exact size of "
+                "ONE specific experiment, use read_experiment_log instead -- "
+                "this tool's number is a combined total, not any single "
+                "run's size. Always scoped to whoever is chatting -- takes "
+                "no arguments, never another user's usage."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -174,11 +194,14 @@ _TOOLS = [
         "function": {
             "name": "read_experiment_log",
             "description": (
-                "Read the event log for one of the CURRENT user's own past "
-                "experiments -- what phases ran, capture failures, remote "
-                "sync failures, crashes. Use this to help explain a "
-                "complaint like \"my last run had a weird gap\" or \"what "
-                "happened during yesterday's experiment\". Always scoped to "
+                "Read the event log AND exact on-disk size for one of the "
+                "CURRENT user's own experiments -- what phases ran, capture "
+                "failures, remote sync failures, crashes, and its real "
+                "measured storage footprint. Use this to help explain a "
+                "complaint like \"my last run had a weird gap\", \"what "
+                "happened during yesterday's experiment\", or \"how big was "
+                "that experiment\" (this is the only tool with an exact, "
+                "measured size for one specific run). Always scoped to "
                 "whoever is chatting -- can only read their own "
                 "experiments, never another user's."
             ),
@@ -552,15 +575,27 @@ class AssistantService:
             # lookup via read_experiment_log.
             if status.recoveryNotice is not None:
                 running += f"\n{status.recoveryNotice.message}"
+            # bytesUsed is real, measured so far; estimatedTotalBytes is a
+            # worst-case pre-flight guess for the *full planned* run, fixed
+            # at start and never updated as captures happen or if the run
+            # stops early -- labeled explicitly as an estimate so the model
+            # never states it as a precise final size (a real gap that used
+            # to leave the model guessing when asked "how big is this
+            # experiment" about a still-running run).
+            running += f"\nStorage used by this experiment so far: {_format_bytes(status.bytesUsed)}"
+            if status.estimatedTotalBytes is not None:
+                running += (
+                    f" (rough pre-flight estimate for the full planned run: "
+                    f"~{_format_bytes(status.estimatedTotalBytes)} -- not a measured final size, "
+                    f"and won't shrink if the run ends early)."
+                )
 
         usage = shutil.disk_usage(self._config.storage_root)
-        free_gb = usage.free / (1024**3)
-        total_gb = usage.total / (1024**3)
         camera = "available" if self._runner._hw.camera_available else "not detected"
 
         return (
             f"{running}\n"
-            f"Storage: {free_gb:.1f} GB free of {total_gb:.1f} GB.\n"
+            f"Device storage: {_format_bytes(usage.free)} free of {_format_bytes(usage.total)}.\n"
             f"Camera: {camera}."
         )
 
@@ -602,27 +637,34 @@ class AssistantService:
             return "I don't know who's chatting -- pick your username on the home screen first."
 
         usage = shutil.disk_usage(self._config.storage_root)
-        free_gb = usage.free / (1024**3)
-        total_gb = usage.total / (1024**3)
 
         tallies = tally_by_user(self._storage, self._config.user_defaults_path)
         tally = tallies.get(requesting_username.strip().lower())
         if tally is None or tally.count == 0:
             usage_line = f"You have no stored experiments yet ({requesting_username})."
         else:
-            mb = tally.bytes_used / (1024**2)
             usage_line = (
-                f"{requesting_username} has {tally.count} experiment(s) using {mb:.1f} MB."
+                f"{requesting_username} has {tally.count} experiment(s) using "
+                f"{_format_bytes(tally.bytes_used)} total across all of them. "
+                "Ask about one specific experiment (e.g. via read_experiment_log) "
+                "for its own exact size, not this combined total."
             )
 
-        return f"{usage_line}\nDevice free space: {free_gb:.1f} GB of {total_gb:.1f} GB."
+        return f"{usage_line}\nDevice free space: {_format_bytes(usage.free)} of {_format_bytes(usage.total)}."
 
     def _resolve_read_experiment_log(self, args: dict, requesting_username: Optional[str]) -> str:
         """Read-only: the tail of one of the requester's own experiments'
-        events.log. Strictly scoped to requesting_username -- this is
-        personal troubleshooting, not a shared lookup like list_experiments,
-        so (unlike prefill_experiment) it never accepts a username and
-        always resolves against the current user only."""
+        events.log, plus its real on-disk size. Strictly scoped to
+        requesting_username -- this is personal troubleshooting, not a
+        shared lookup like list_experiments, so (unlike prefill_experiment)
+        it never accepts a username and always resolves against the current
+        user only.
+
+        The size is a real `stat()` sum over that one experiment's own
+        folder (ExperimentDir.size_bytes()) -- unlike my_storage's
+        all-experiments total or a live run's estimatedTotalBytes (a
+        pre-flight guess, not a measurement), this is exact and this is the
+        only tool that answers "how big is *this specific* experiment"."""
         if not requesting_username:
             return "I don't know who's chatting -- pick your username on the home screen first."
 
@@ -635,10 +677,11 @@ class AssistantService:
                 "Try being more specific about which run."
             )
 
+        size_line = f"{exp.experiment_id} is using {_format_bytes(exp.size_bytes())} on disk (exact, measured)."
         events = exp.read_events()
         if not events:
-            return f"{exp.experiment_id} has no logged events (nothing unusual was recorded)."
-        return f"Events for {exp.experiment_id}:\n{events}"
+            return f"{size_line}\nNo logged events for {exp.experiment_id} (nothing unusual was recorded)."
+        return f"{size_line}\nEvents for {exp.experiment_id}:\n{events}"
 
     async def _resolve_check_my_images(self, args: dict, requesting_username: Optional[str]) -> str:
         """Read-only vision check on the requester's own experiment images.
