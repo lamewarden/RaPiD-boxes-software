@@ -239,12 +239,20 @@ _TOOLS = [
             "name": "system_status",
             "description": (
                 "Get the box's current live state right now: is an "
-                "experiment running, how much storage is free, is the "
+                "experiment running, how far along it is (phase, elapsed "
+                "and remaining time, real wall-clock expected finish, "
+                "images captured), how much storage is free, is the "
                 "camera working. If an experiment is currently running, "
                 "also reports its real captured-so-far storage use and the "
                 "rough pre-flight estimate for its full planned size (NOT a "
                 "final measured size -- use read_experiment_log for that, "
-                "on a finished run)."
+                "on a finished run). This is the right tool for \"how's my "
+                "experiment doing\"/\"show me the running experiment\"/"
+                "\"experiment status\"/\"is it done yet\" -- it has real "
+                "structured data as text, unlike take_screenshot, which is "
+                "just a picture of whatever the kiosk happens to be "
+                "displaying and won't show experiment progress unless the "
+                "kiosk is already sitting on that exact screen."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -488,11 +496,21 @@ _TOOLS = [
             "name": "take_screenshot",
             "description": (
                 "Capture whatever's actually showing on the kiosk's own "
-                "touchscreen right now, as a real image -- for remote "
-                "troubleshooting. Use for \"send me a screenshot\"/\"what's "
-                "on the screen\"/\"show me the current UI\". Device-wide, "
-                "not scoped to whoever's asking -- the kiosk is one shared "
-                "screen, unlike take_snapshot's per-user camera capture."
+                "touchscreen right now, as a real image -- a literal, "
+                "unedited screen grab for remote UI troubleshooting (a "
+                "stuck screen, a rendering glitch, confirming what someone "
+                "standing at the device is looking at). It does NOT "
+                "navigate the kiosk to any particular screen first -- if "
+                "nobody's there tapping through it, it may well just show "
+                "the idle home screen. Use only for literal requests like "
+                "\"send me a screenshot\"/\"what's stuck on the screen\"/"
+                "\"is the kiosk frozen\". Do NOT use this for \"how's my "
+                "experiment doing\"/\"show me the running experiment\"/any "
+                "experiment progress or status question -- system_status "
+                "answers those with real data as text regardless of what "
+                "screen the kiosk happens to be on. Device-wide, not scoped "
+                "to whoever's asking -- the kiosk is one shared screen, "
+                "unlike take_snapshot's per-user camera capture."
             ),
             "parameters": {"type": "object", "properties": {}},
         },

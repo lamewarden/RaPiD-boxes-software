@@ -440,15 +440,23 @@ except where noted:
   run's most recent real capture instead of a fresh shot -- still scoped
   to their own experiment, never anyone else's.
 - **/screenshot** (also reachable via plain chat, e.g. "send me a
-  screenshot"/"what's on the screen" -- the take_screenshot tool) —
+  screenshot"/"what's stuck on the screen" -- the take_screenshot tool) —
   whatever's actually showing on the kiosk's touchscreen right now, as a
-  real image. Unlike every other command, this is deliberately
-  **device-wide, not scoped to the asker** -- same "device-wide" precedent
-  /status already set -- since the kiosk is one shared screen: whoever
-  asks sees whatever's currently on it, which could be another
-  researcher's in-progress screen if they're standing at the device at
-  that moment. Doesn't touch the camera or an experiment at all, so it
-  works regardless of whether one is running.
+  real image. This is a literal, unedited screen grab -- it never
+  navigates the kiosk to any particular screen first, so if nobody's
+  physically there tapping through it, it may just show the idle home
+  screen. **Not** the right tool for "how's my experiment doing"/"show me
+  the running experiment"/any progress-or-status question -- that's
+  /status (system_status), which answers with real elapsed/remaining/
+  phase/image-count data as text regardless of what's on the kiosk screen
+  at that moment; only reach for /screenshot on a literal "what does the
+  screen look like" request. Unlike every other command, this is
+  deliberately **device-wide, not scoped to the asker** -- same "device-
+  wide" precedent /status already set -- since the kiosk is one shared
+  screen: whoever asks sees whatever's currently on it, which could be
+  another researcher's in-progress screen if they're standing at the
+  device at that moment. Doesn't touch the camera or an experiment at
+  all, so it works regardless of whether one is running.
 - **/stop** — stops the sender's own currently running (or paused)
   experiment, with a "yes"/"no" confirmation first that states exactly how
   many images have been captured so far. Uses the graceful stop, never the
