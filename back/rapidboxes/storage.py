@@ -120,12 +120,21 @@ class ExperimentDir:
     def size_bytes(self) -> int:
         return sum(f.stat().st_size for f in self.path.rglob("*") if f.is_file())
 
-    def zip_to_temp_file(self) -> Path:
-        """Zips this experiment's whole folder (images + metadata.json +
-        saved config XML) to a new temp file and returns its path -- caller
-        owns cleanup (os.remove). Shared by the HTTP download endpoint and
-        the assistant's download_experiment tool (see api/experiments.py,
-        assistant/service.py).
+    def zip_to_temp_file(self, image_ids: Optional[List[str]] = None) -> Path:
+        """Zips this experiment to a new temp file and returns its path --
+        caller owns cleanup (os.remove). Shared by the HTTP download
+        endpoint and the assistant's download_experiment tool (see
+        api/experiments.py, assistant/service.py).
+
+        `image_ids=None` (the default) zips the whole folder (images +
+        metadata.json + saved config XML) -- unchanged from before this
+        parameter existed. Passing a list zips only those full-resolution
+        capture images (by id, e.g. "dark_00003"), for a "just the first
+        three images" / "images 5 through 10" style request -- no metadata
+        or config XML, since a partial extract isn't a full backup. IDs
+        that don't resolve to a real file are silently skipped rather than
+        erroring, same never-invent-just-point-at-real-data principle as
+        the rest of the assistant's tools.
 
         Streams to disk rather than an in-memory buffer: an experiment can
         accumulate hundreds of JPEGs, and this runs on a Pi with as little
@@ -137,9 +146,15 @@ class ExperimentDir:
         os.close(fd)
         try:
             with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in sorted(self.path.rglob("*")):
-                    if f.is_file():
-                        zf.write(f, arcname=f.relative_to(self.path))
+                if image_ids is None:
+                    for f in sorted(self.path.rglob("*")):
+                        if f.is_file():
+                            zf.write(f, arcname=f.relative_to(self.path))
+                else:
+                    for image_id in image_ids:
+                        f = self.image_file(image_id)
+                        if f is not None:
+                            zf.write(f, arcname=f.name)
         except Exception:
             os.remove(tmp_path)
             raise

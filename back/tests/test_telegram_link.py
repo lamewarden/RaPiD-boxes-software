@@ -432,6 +432,62 @@ async def test_chat_message_requesting_download_sends_a_real_zip_document(
 
 
 @pytest.mark.asyncio
+async def test_chat_message_requesting_an_image_range_sends_only_that_subset(
+    chat_config: AppConfig, monkeypatch
+):
+    """'send me the first two images' -- the zip Telegram actually receives
+    must contain only those images, not the whole experiment folder."""
+    import zipfile
+    from io import BytesIO
+
+    from PIL import Image
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    for i in range(5):
+        Image.new("RGB", (4, 4), color="white").save(exp.path / f"dark_{i:05d}.png", "PNG")
+
+    assistant = AssistantService(chat_config, storage)
+
+    async def fake_call(self, messages):
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "download_experiment", "arguments": '{"firstN": 2}'},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    service.attach_assistant(assistant)
+
+    document_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendDocument"):
+            document_calls.append((url, data, files))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service._handle_chat_message(42, "send me the first two images")
+
+    assert len(document_calls) == 1
+    _, _data, files = document_calls[0]
+    filename, content, _ctype = files["document"]
+    assert filename == f"{exp.experiment_id}_2-images.zip"
+    with zipfile.ZipFile(BytesIO(content)) as zf:
+        assert set(zf.namelist()) == {"dark_00000.png", "dark_00001.png"}
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_download_too_large_for_telegram_suggests_the_device_instead(
     chat_config: AppConfig, monkeypatch
 ):

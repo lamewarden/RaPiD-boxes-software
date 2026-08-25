@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 import zipfile
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -162,10 +162,22 @@ async def get_summary(experiment_id: str, state: AppState = Depends(get_state)) 
 
 @router.get("/{experiment_id}/download")
 async def download_experiment(
-    experiment_id: str, background_tasks: BackgroundTasks, state: AppState = Depends(get_state)
+    experiment_id: str,
+    background_tasks: BackgroundTasks,
+    state: AppState = Depends(get_state),
+    images: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated image ids (e.g. 'dark_00000,dark_00001') to zip "
+            "only those full-resolution captures instead of the whole "
+            "experiment folder. Omit for the original whole-folder zip -- "
+            "set by AssistantService._resolve_download_experiment when "
+            "someone asks for a specific range/count of images."
+        ),
+    ),
 ):
-    """Zip an experiment's whole folder (images + metadata.json + saved config
-    XML) and hand it back as a downloadable attachment.
+    """Zip an experiment (or a specific subset of its images) and hand it
+    back as a downloadable attachment.
 
     An experiment can accumulate hundreds of JPEGs over a multi-day run, and
     this runs on a Pi with as little as 2GB of RAM. Building the archive in an
@@ -182,12 +194,14 @@ async def download_experiment(
     if exp is None:
         raise HTTPException(404, "experiment not found")
 
-    tmp_path = exp.zip_to_temp_file()
+    image_ids = [i for i in images.split(",") if i] if images else None
+    tmp_path = exp.zip_to_temp_file(image_ids)
     background_tasks.add_task(os.remove, tmp_path)
+    filename = f"{exp.experiment_id}.zip" if image_ids is None else f"{exp.experiment_id}_{len(image_ids)}-images.zip"
     return FileResponse(
         tmp_path,
         media_type="application/zip",
-        filename=f"{exp.experiment_id}.zip",
+        filename=filename,
         background=background_tasks,
     )
 

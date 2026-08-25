@@ -433,12 +433,19 @@ class AssistantDownloadRef(BaseModel):
     one Gallery -> Folders' own download button uses); the web UI just
     links to it, while Telegram delivery builds and uploads the zip
     directly (see telegram_link.py) since Telegram can't fetch a URL back
-    from this not-internet-reachable device."""
+    from this not-internet-reachable device.
+
+    `imageIds=None` means the whole experiment (the original, still-default
+    behavior); a list means only those specific images were requested (e.g.
+    "just the first three") -- `url` already has them baked in as a query
+    string so the web link and the Telegram delivery path both zip the same
+    subset without re-resolving "first three" a second time."""
 
     experimentId: str
     url: str
     filename: str
     sizeBytes: int
+    imageIds: Optional[List[str]] = None
 
 
 class AssistantChatResponse(BaseModel):

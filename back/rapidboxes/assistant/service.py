@@ -332,12 +332,17 @@ _TOOLS = [
         "function": {
             "name": "download_experiment",
             "description": (
-                "Package one of the CURRENT user's own experiments (every "
-                "image plus its config) as a zip for them to download. Use "
-                "when asked to \"zip up\"/\"package\"/\"send me\"/\"download\" "
-                "a whole experiment -- for a single image use show_image "
-                "instead. Always scoped to whoever is chatting -- can only "
-                "package their own experiments, never another user's."
+                "Package one of the CURRENT user's own experiments as a zip "
+                "for them to download or (over Telegram) receive directly. "
+                "Use when asked to \"zip up\"/\"package\"/\"send me\"/"
+                "\"download\" a whole experiment OR a specific range/count "
+                "of its images (e.g. \"just the first three images\", "
+                "\"images 5 through 10\", \"the last 5 photos\") -- for a "
+                "single image use show_image instead. Omit every image-"
+                "selection argument to package the whole experiment (every "
+                "image plus its config), which is the default. Always "
+                "scoped to whoever is chatting -- can only package their "
+                "own experiments, never another user's."
             ),
             "parameters": {
                 "type": "object",
@@ -345,6 +350,22 @@ _TOOLS = [
                     "reference": {
                         "type": "string",
                         "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                    "firstN": {
+                        "type": "integer",
+                        "description": "only the first N captured images (chronological), e.g. 3 for 'the first three images'",
+                    },
+                    "lastN": {
+                        "type": "integer",
+                        "description": "only the last N captured images (chronological)",
+                    },
+                    "startIndex": {
+                        "type": "integer",
+                        "description": "1-based start of an explicit range, e.g. 'images 5 through 10' -> startIndex=5, endIndex=10. Ignored if firstN/lastN is set.",
+                    },
+                    "endIndex": {
+                        "type": "integer",
+                        "description": "1-based end of an explicit range (inclusive). Ignored if firstN/lastN is set.",
                     },
                 },
             },
@@ -937,17 +958,21 @@ class AssistantService:
     def _resolve_download_experiment(
         self, args: dict, requesting_username: Optional[str]
     ) -> tuple[Optional[AssistantDownloadRef], str]:
-        """Points at one of the requester's own experiments, packaged as a
-        zip -- never invented, always a real folder that exists (same
-        principle as show_image/prefill_experiment). Strictly scoped like
-        read_experiment_log/check_my_images: never another user's data.
+        """Points at one of the requester's own experiments -- or a specific
+        range/count of its images -- packaged as a zip. Never invented,
+        always real files that exist (same principle as show_image/
+        prefill_experiment). Strictly scoped like read_experiment_log/
+        check_my_images: never another user's data.
 
         Doesn't build the zip itself -- that's real disk I/O better done
         only where it's actually needed: the web UI just links to the
         existing download endpoint (a browser click builds it on demand),
         while Telegram delivery (telegram_link.py) builds and uploads it
         directly, since Telegram can't fetch a URL back from this
-        not-internet-reachable device."""
+        not-internet-reachable device. The image subset (if any) is
+        resolved once here and baked into `url` as a query string /
+        `imageIds`, so both delivery paths zip the exact same files without
+        re-parsing "first three" a second time."""
         if not requesting_username:
             return None, "I don't know who's chatting -- pick your username on the home screen first."
 
@@ -960,14 +985,66 @@ class AssistantService:
                 "Try being more specific about which run."
             )
 
-        size = exp.size_bytes()
+        image_ids, error = self._resolve_download_image_range(exp, args)
+        if error:
+            return None, error
+
+        if image_ids is None:
+            size = exp.size_bytes()
+            url = f"/api/experiments/{exp.experiment_id}/download"
+            filename = f"{exp.experiment_id}.zip"
+            desc = f"Packaging {exp.experiment_id} ({_format_bytes(size)}) as a zip."
+        else:
+            size = sum(
+                f.stat().st_size for f in (exp.image_file(i) for i in image_ids) if f is not None
+            )
+            url = f"/api/experiments/{exp.experiment_id}/download?images={','.join(image_ids)}"
+            filename = f"{exp.experiment_id}_{len(image_ids)}-images.zip"
+            desc = (
+                f"Packaging {len(image_ids)} image(s) from {exp.experiment_id} "
+                f"({_format_bytes(size)}) as a zip."
+            )
+
         ref = AssistantDownloadRef(
             experimentId=exp.experiment_id,
-            url=f"/api/experiments/{exp.experiment_id}/download",
-            filename=f"{exp.experiment_id}.zip",
+            url=url,
+            filename=filename,
             sizeBytes=size,
+            imageIds=image_ids,
         )
-        return ref, f"Packaging {exp.experiment_id} ({_format_bytes(size)}) as a zip."
+        return ref, desc
+
+    def _resolve_download_image_range(
+        self, exp: ExperimentDir, args: dict
+    ) -> tuple[Optional[List[str]], Optional[str]]:
+        """Turns firstN/lastN/startIndex/endIndex into a concrete list of
+        real image ids (chronological order, same as the gallery), or
+        (None, None) if none of those args were given -- meaning "the whole
+        experiment", the original/default behavior. firstN/lastN win over
+        an explicit start/end range if both are somehow given, since
+        they're the more common, less error-prone ask."""
+        images = exp.list_capture_images()
+        first_n = args.get("firstN")
+        last_n = args.get("lastN")
+        start_index = args.get("startIndex")
+        end_index = args.get("endIndex")
+        if not any((first_n, last_n, start_index, end_index)):
+            return None, None
+        if not images:
+            return None, f"{exp.experiment_id} has no captured images yet."
+
+        if first_n:
+            selected = images[: int(first_n)]
+        elif last_n:
+            selected = images[-int(last_n) :]
+        else:
+            start = max(int(start_index), 1) if start_index else 1
+            end = int(end_index) if end_index else len(images)
+            selected = images[start - 1 : end]
+
+        if not selected:
+            return None, f"That range doesn't match any of {exp.experiment_id}'s {len(images)} image(s)."
+        return [img["id"] for img in selected], None
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

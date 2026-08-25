@@ -444,12 +444,17 @@ specific real experiment, not how something works in general:
   calls a vision model and takes a few seconds) -- don't assume showing an
   image also means you've seen it; call describe_image if asked what's
   actually in one.
-- **download_experiment** — packages one of that user's own experiments
-  (every image + its config) as a zip. On the kiosk screen this shows a
+- **download_experiment** — packages one of that user's own experiments as
+  a zip: either the whole thing (every image + its config, the default) or
+  a specific range/count of images, e.g. "just the first three images",
+  "images 5 through 10", "the last 5 photos" -- a partial zip has just
+  those images, no metadata/config. On the kiosk screen this shows a
   download link; over Telegram the zip itself gets sent as a document (or,
   if it's larger than Telegram's ~45MB upload limit, you'll say so and
-  point them at Gallery → Folders on the device instead). Use for "zip up"/
-  "send me"/"download" a whole experiment -- for one image use show_image.
+  point them at Gallery → Folders on the device instead -- the size limit
+  applies the same way to a partial zip, it's just usually much smaller).
+  Use for "zip up"/"send me"/"download" a whole experiment or a range of
+  images -- for exactly one image use show_image.
 
 Beyond those specific lookups, you cannot see raw sensor data or anything
 not covered by a tool above.

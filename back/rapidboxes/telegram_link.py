@@ -254,7 +254,7 @@ class TelegramLinkService:
         exp = self._storage.get_experiment(download.experimentId)
         if exp is None:
             return
-        tmp_path = exp.zip_to_temp_file()
+        tmp_path = exp.zip_to_temp_file(download.imageIds)
         try:
             data = tmp_path.read_bytes()
             res = await self._client.post(

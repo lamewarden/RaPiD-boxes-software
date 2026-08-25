@@ -955,6 +955,102 @@ async def test_download_experiment_never_packages_another_users_run(app_config: 
     assert "couldn't find" in reply
 
 
+# --- download_experiment: a specific range/count of images, not the whole --
+
+
+def _five_image_experiment(storage: Storage):
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    for i in range(5):
+        _write_fake_png(exp.path / f"dark_{i:05d}.png")
+    return exp
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_first_n_images(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = _five_image_experiment(storage)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment", firstN=3)
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is not None
+    assert download.imageIds == ["dark_00000", "dark_00001", "dark_00002"]
+    assert download.filename == f"{exp.experiment_id}_3-images.zip"
+    assert download.url == f"/api/experiments/{exp.experiment_id}/download?images=dark_00000,dark_00001,dark_00002"
+    expected_size = sum((exp.path / f"dark_{i:05d}.png").stat().st_size for i in range(3))
+    assert download.sizeBytes == expected_size
+    assert "3 image" in reply
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_last_n_images(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    _five_image_experiment(storage)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment", lastN=2)
+    _proposal, _image, download, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is not None
+    assert download.imageIds == ["dark_00003", "dark_00004"]
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_explicit_index_range(app_config: AppConfig):
+    """'images 2 through 4' -- 1-based, inclusive, matching how a person
+    would actually describe a range."""
+    storage = Storage(app_config.storage_root)
+    _five_image_experiment(storage)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment", startIndex=2, endIndex=4)
+    _proposal, _image, download, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is not None
+    assert download.imageIds == ["dark_00001", "dark_00002", "dark_00003"]
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_no_range_args_packages_the_whole_thing(app_config: AppConfig):
+    """No firstN/lastN/startIndex/endIndex -- unchanged default behavior."""
+    storage = Storage(app_config.storage_root)
+    exp = _five_image_experiment(storage)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment")
+    _proposal, _image, download, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is not None
+    assert download.imageIds is None
+    assert download.url == f"/api/experiments/{exp.experiment_id}/download"
+    assert download.sizeBytes == exp.size_bytes()
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_range_on_empty_experiment(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment", firstN=3)
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "no captured images yet" in reply
+
+
+@pytest.mark.asyncio
+async def test_download_experiment_range_never_packages_another_users_run(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("sabol", "sabol-run")
+    exp.write_metadata({"username": "sabol", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("download_experiment", firstN=1)
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "couldn't find" in reply
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 

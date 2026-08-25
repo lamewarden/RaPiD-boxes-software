@@ -422,15 +422,18 @@ export interface AssistantImageRef {
   caption: string;
 }
 
-/** One real experiment folder resolved by the download_experiment tool,
- *  packaged as a zip -- never invented (see AssistantImageRef). `url` is
- *  the same GET /api/experiments/{id}/download endpoint Gallery's own
- *  download button uses. */
+/** One real experiment folder -- or a specific range/count of its images --
+ *  resolved by the download_experiment tool, packaged as a zip -- never
+ *  invented (see AssistantImageRef). `url` is the same GET
+ *  /api/experiments/{id}/download endpoint Gallery's own download button
+ *  uses, with an `?images=` query string already baked in when imageIds is
+ *  set. `imageIds` is null for "the whole experiment" (the default). */
 export interface AssistantDownloadRef {
   experimentId: string;
   url: string;
   filename: string;
   sizeBytes: number;
+  imageIds: string[] | null;
 }
 
 /** A concrete, ready-to-review config resolved from one specific past

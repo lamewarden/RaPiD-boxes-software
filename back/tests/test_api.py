@@ -530,6 +530,36 @@ async def test_download_experiment_zip_contains_all_files(app_config: AppConfig)
 
 
 @pytest.mark.asyncio
+async def test_download_experiment_images_query_zips_only_that_subset(app_config: AppConfig):
+    """?images=<comma-separated ids> -- the download_experiment assistant
+    tool's "just the first three images" path -- should zip only those
+    full-resolution captures, not the whole folder (no metadata.json, no
+    config xml, no other images)."""
+    from PIL import Image
+
+    app = create_app(app_config)
+    async with app.router.lifespan_context(app):
+        storage = app.state.app.storage
+        exp = storage.create_experiment("alice", "range-test")
+        for i in range(5):
+            Image.new("RGB", (4, 4), color="white").save(exp.path / f"dark_{i:05d}.png", "PNG")
+        exp.write_metadata({"experimentName": "range-test", "username": "alice", "imagesCaptured": 5})
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get(
+                f"/api/experiments/{exp.experiment_id}/download",
+                params={"images": "dark_00000,dark_00002"},
+            )
+
+    assert res.status_code == 200
+    assert f'filename="{exp.experiment_id}_2-images.zip"' in res.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        assert zf.testzip() is None
+        assert set(zf.namelist()) == {"dark_00000.png", "dark_00002.png"}
+
+
+@pytest.mark.asyncio
 async def test_download_experiment_404_for_missing_experiment(client: AsyncClient):
     res = await client.get("/api/experiments/does-not-exist/download")
     assert res.status_code == 404
