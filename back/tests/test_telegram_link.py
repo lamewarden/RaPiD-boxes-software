@@ -17,7 +17,15 @@ from rapidboxes import telegram_link as telegram_link_module
 from rapidboxes.assistant import summary as assistant_summary
 from rapidboxes.assistant.service import AssistantService
 from rapidboxes.config import AppConfig
-from rapidboxes.models import CameraSettings, ExperimentState, ExperimentStatus, SavedExperimentConfig
+from rapidboxes.engine.runner import ExperimentRunner
+from rapidboxes.hardware.manager import build_hardware
+from rapidboxes.models import (
+    CameraSettings,
+    DeviceSettings,
+    ExperimentState,
+    ExperimentStatus,
+    SavedExperimentConfig,
+)
 from rapidboxes.storage import Storage
 from rapidboxes.telegram_link import LINK_CODE_TTL_S, MAX_CHAT_HISTORY, TelegramLinkService, _strip_markdown_lite
 
@@ -38,6 +46,45 @@ def _mock_post(monkeypatch, service: TelegramLinkService) -> list:
     async def fake_post(url, json=None, **kw):
         calls.append((url, json))
         return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+    return calls
+
+
+class _FakeResponseWithBody:
+    """Like _FakeResponse but with a real JSON body and an optional HTTP
+    error status -- needed for the progress-bar tests, which read back a
+    real message_id from sendMessage's response, and for the "message is
+    not modified" 400 case editMessageText must swallow, not warn about."""
+
+    def __init__(self, body: dict, status_code: int = 200, text: str = ""):
+        self._body = body
+        self.status_code = status_code
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "http://test")
+            response = httpx.Response(self.status_code, request=request, text=self.text)
+            raise httpx.HTTPStatusError("error", request=request, response=response)
+
+    def json(self) -> dict:
+        return self._body
+
+
+def _mock_post_with_message_ids(monkeypatch, service: TelegramLinkService) -> list:
+    """Records every (url, json_body) call and hands back an
+    incrementing, real-looking message_id for every sendMessage, so
+    _send_and_pin has something real to track."""
+    calls: list = []
+    counter = {"n": 1000}
+
+    async def fake_post(url, json=None, **kw):
+        calls.append((url, json))
+        if url.endswith("/sendMessage"):
+            counter["n"] += 1
+            return _FakeResponseWithBody({"ok": True, "result": {"message_id": counter["n"]}})
+        return _FakeResponseWithBody({"ok": True, "result": {}})
 
     monkeypatch.setattr(service._client, "post", fake_post)
     return calls
@@ -823,3 +870,523 @@ async def test_notify_completion_without_a_stored_ai_summary_still_sends_a_recap
     assert "capture failed" in text
     assert "download this experiment" in text
     await service.shutdown()
+
+
+# --- _parse_command ----------------------------------------------------------
+
+
+def test_parse_command_splits_off_the_bot_username_and_argument_text():
+    from rapidboxes.telegram_link import _parse_command
+
+    assert _parse_command("/launch like my run from tuesday") == ("/launch", "like my run from tuesday")
+    assert _parse_command("/status@IEB_pidibot") == ("/status", "")
+    assert _parse_command("/help") == ("/help", "")
+    assert _parse_command("  /monitor  ") == ("/monitor", "")
+
+
+def test_parse_command_returns_none_for_ordinary_text():
+    from rapidboxes.telegram_link import _parse_command
+
+    assert _parse_command("how much storage do I have left") is None
+    assert _parse_command("") is None
+
+
+# --- /help -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_help_command_works_even_when_unlinked(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/help", "")
+
+    assert len(calls) == 1
+    text = calls[0][1]["text"]
+    assert "isn't linked yet" in text
+    for command in ("/status", "/experiments", "/monitor", "/launch", "/unlink", "/help"):
+        assert command in text
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_help_command_when_linked_has_no_unlinked_note(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/help", "")
+
+    assert "isn't linked yet" not in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_gets_a_direct_reply_not_forwarded_to_chat(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+
+    async def fail_if_called(self, messages):
+        raise AssertionError("unknown /command must not reach the model")
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fail_if_called)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/frobnicate", "")
+
+    assert len(calls) == 1
+    assert "/frobnicate" in calls[0][1]["text"]
+    assert "/help" in calls[0][1]["text"]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /status -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/status", "")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_command_without_assistant_reports_unavailable(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/status", "")
+
+    assert "isn't available right now" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_command_is_device_wide_not_scoped_to_the_asker(chat_config: AppConfig, monkeypatch):
+    """The one deliberate exception to strict per-user scoping -- confirms
+    it reports on someone ELSE's running experiment, not just the asker's
+    own (or nothing). Uses a real ExperimentRunner (not the plain
+    _FakeRunner the /monitor tests use) because resolve_system_status also
+    reads real hardware state via runner._hw -- same pattern
+    test_assistant.py's own system_status tests use."""
+    storage = Storage(chat_config.storage_root)
+    hw = build_hardware(chat_config, DeviceSettings())
+    runner = ExperimentRunner(hw, storage)
+    runner.status.state = ExperimentState.running
+    runner.status.experimentId = "exp1"
+    runner.status.username = "sabol"
+    runner.status.imagesCaptured = 3
+    runner.status.imagesPlanned = 10
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, storage, runner=runner)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/status", "")
+
+    assert "sabol" in calls[0][1]["text"]
+    await assistant.aclose()
+    assert "exp1" in calls[0][1]["text"]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /experiments --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_experiments_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/experiments", "")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_experiments_command_lists_only_the_askers_own(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    ivan_exp = storage.create_experiment("ivan", "run1")
+    ivan_exp.write_metadata({"username": "ivan"})
+    sabol_exp = storage.create_experiment("sabol", "sabol-run")
+    sabol_exp.write_metadata({"username": "sabol"})
+
+    assistant = AssistantService(chat_config, storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/experiments", "")
+
+    text = calls[0][1]["text"]
+    assert ivan_exp.experiment_id in text
+    assert sabol_exp.experiment_id not in text
+    await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /unlink ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unlink_command_removes_and_persists(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assert service.is_linked("ivan") is True
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/unlink", "")
+
+    assert service.is_linked("ivan") is False
+    assert "Unlinked" in calls[0][1]["text"]
+
+    reloaded = TelegramLinkService(
+        "token", "MyBot", service._links_path, service._storage, service._monitors_path
+    )
+    assert reloaded.is_linked("ivan") is False
+    await reloaded.shutdown()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unlink_command_when_not_linked_says_so(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(999, "/unlink", "")
+
+    assert "nothing to unlink" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+# --- /launch -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_launch_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "like my last run")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_command_resolves_a_real_past_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "tropism-run")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseHours=12.5,
+        lateralIlluminationHours=3.0,
+        intervalMinutes=15.0,
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(grayscale=False, zoom=2.0),
+    )
+    exp.write_config_xml(config_xml.serialize(saved), "tropism-run")
+
+    assistant = AssistantService(chat_config, storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+
+    text = calls[0][1]["text"]
+    assert exp.experiment_id in text
+    assert "press Start yourself" in text
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_command_never_finds_another_users_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    sabol_exp = storage.create_experiment("sabol", "sabol-run")
+    sabol_exp.write_metadata({"username": "sabol", "startedAt": "2026-01-01T00:00:00"})
+
+    assistant = AssistantService(chat_config, storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    # Naming sabol in the free text does nothing -- /launch never takes a
+    # username argument, only "reference", so this stays scoped to ivan.
+    await service._dispatch_command(42, "/launch", "like sabol's run")
+
+    assert "couldn't find" in calls[0][1]["text"]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /monitor's pinned progress bar -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_monitor_pins_a_progress_message_for_a_real_experiment(chat_config: AppConfig, monkeypatch):
+    from PIL import Image
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    Image.new("RGB", (4, 4), color="white").save(exp.path / "dark_00000.png", "PNG")
+    service.attach_runner(
+        _FakeRunner(
+            ExperimentStatus(
+                state=ExperimentState.running,
+                experimentId=exp.experiment_id,
+                username="ivan",
+                elapsedSeconds=3600,
+                totalSeconds=7200,
+                imagesCaptured=1,
+                imagesPlanned=2,
+            )
+        )
+    )
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    send_calls = [c for c in calls if c[0].endswith("/sendMessage")]
+    pin_calls = [c for c in calls if c[0].endswith("/pinChatMessage")]
+    assert len(send_calls) == 2  # "Now monitoring..." + the progress bar
+    assert len(pin_calls) == 1
+    progress_text = send_calls[1][1]["text"]
+    assert "50%" in progress_text
+    assert exp.experiment_id in progress_text
+    key = (exp.experiment_id, 42)
+    assert key in service._progress_messages
+    assert pin_calls[0][1]["message_id"] == service._progress_messages[key]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_does_not_pin_without_a_real_experiment_folder(chat_config: AppConfig, monkeypatch):
+    """Matches the other /monitor tests' fake "exp1" id -- no real folder
+    on disk, so there is nothing real to point a progress bar at."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    )
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert not any(c[0].endswith("/pinChatMessage") for c in calls)
+    assert service._progress_messages == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_twice_does_not_create_a_second_pin(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    service.attach_runner(
+        _FakeRunner(
+            ExperimentStatus(state=ExperimentState.running, experimentId=exp.experiment_id, username="ivan")
+        )
+    )
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+    await service._handle_monitor_command(42)
+
+    assert len([c for c in calls if c[0].endswith("/pinChatMessage")]) == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_progress_tick_edits_the_pinned_message_after_the_interval(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    service.attach_runner(
+        _FakeRunner(
+            ExperimentStatus(
+                state=ExperimentState.running,
+                experimentId=exp.experiment_id,
+                username="ivan",
+                elapsedSeconds=1800,
+                totalSeconds=3600,
+                imagesCaptured=5,
+                imagesPlanned=10,
+            )
+        )
+    )
+    service._monitors[exp.experiment_id] = {42}
+    service._progress_messages[(exp.experiment_id, 42)] = 555
+    # time.monotonic() isn't wall-clock -- 0.0 isn't "long ago" relative to
+    # its own epoch, only a value computed relative to the real current
+    # reading is (same pattern test_expired_code_does_not_link uses).
+    from rapidboxes.telegram_link import PROGRESS_UPDATE_INTERVAL_S
+
+    service._progress_last_edit[(exp.experiment_id, 42)] = (
+        telegram_link_module.time.monotonic() - PROGRESS_UPDATE_INTERVAL_S - 1
+    )
+
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+    await service._progress_tick()
+
+    edit_calls = [c for c in calls if c[0].endswith("/editMessageText")]
+    assert len(edit_calls) == 1
+    assert edit_calls[0][1]["message_id"] == 555
+    assert "50%" in edit_calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_progress_tick_skips_a_recently_edited_pin(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId=exp.experiment_id, username="ivan"))
+    )
+    service._monitors[exp.experiment_id] = {42}
+    service._progress_messages[(exp.experiment_id, 42)] = 555
+    service._progress_last_edit[(exp.experiment_id, 42)] = telegram_link_module.time.monotonic()
+
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+    await service._progress_tick()
+
+    assert not any(c[0].endswith("/editMessageText") for c in calls)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_progress_tick_is_a_noop_when_idle(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(_FakeRunner(ExperimentStatus(state=ExperimentState.idle)))
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+
+    await service._progress_tick()
+
+    assert calls == []
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_edit_message_treats_not_modified_400_as_success(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+
+    async def fake_post(url, json=None, **kw):
+        return _FakeResponseWithBody(
+            {"ok": False, "description": "Bad Request: message is not modified"},
+            status_code=400,
+            text="Bad Request: message is not modified",
+        )
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+    ok = await service._edit_message(42, 555, "same text")
+
+    assert ok is True
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_edit_message_reports_a_real_failure_as_false(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+
+    async def fake_post(url, json=None, **kw):
+        return _FakeResponseWithBody({"ok": False}, status_code=403, text="Forbidden: bot was blocked by the user")
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+    ok = await service._edit_message(42, 555, "new text")
+
+    assert ok is False
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_completion_unpins_and_forgets_the_progress_message(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    service._monitors[exp.experiment_id] = {42}
+    service._progress_messages[(exp.experiment_id, 42)] = 555
+    service._progress_last_edit[(exp.experiment_id, 42)] = 123.0
+
+    calls = _mock_post_with_message_ids(monkeypatch, service)
+    await service.notify_completion(exp, ExperimentStatus(state=ExperimentState.done, message="done"))
+
+    unpin_calls = [c for c in calls if c[0].endswith("/unpinChatMessage")]
+    assert len(unpin_calls) == 1
+    assert unpin_calls[0][1]["message_id"] == 555
+    assert (exp.experiment_id, 42) not in service._progress_messages
+    assert (exp.experiment_id, 42) not in service._progress_last_edit
+    await service.shutdown()
+
+
+# --- _build_progress_text: format correctness, no HTTP involved ------------
+
+
+def test_build_progress_text_percentage_bar_and_duration_format(chat_config: AppConfig):
+    from PIL import Image
+
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    Image.new("RGB", (4, 4), color="white").save(exp.path / "dark_00000.png", "PNG")
+
+    status = ExperimentStatus(
+        state=ExperimentState.running,
+        experimentId=exp.experiment_id,
+        username="ivan",
+        elapsedSeconds=3600 * 14 + 60 * 20,  # 14h 20m
+        totalSeconds=3600 * 23,  # 23h total -> 8h40m left
+        imagesCaptured=142,
+        imagesPlanned=230,
+    )
+    text = service._build_progress_text(status, exp)
+
+    assert exp.experiment_id in text
+    assert "62%" in text
+    assert "14h 20m elapsed" in text
+    assert "8h 40m left" in text
+    assert "142/230 images" in text
+    assert "no anomalies detected" in text
+
+
+def test_build_progress_text_flags_a_detected_issue(chat_config: AppConfig):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    exp = storage.create_experiment("ivan", "run1")
+    status = ExperimentStatus(
+        state=ExperimentState.running, experimentId=exp.experiment_id, username="ivan", issueDetected=True
+    )
+    text = service._build_progress_text(status, exp)
+    assert "possible issue detected" in text

@@ -583,12 +583,12 @@ class AssistantService:
             args = {}
 
         if name == "prefill_experiment":
-            proposal, reply = self._resolve_prefill_experiment(args, requesting_username)
+            proposal, reply = self.resolve_prefill_experiment(args, requesting_username)
             return proposal, None, None, reply
         if name == "list_experiments":
-            return None, None, None, self._resolve_list_experiments(args, requesting_username)
+            return None, None, None, self.resolve_list_experiments(args, requesting_username)
         if name == "system_status":
-            return None, None, None, self._resolve_system_status()
+            return None, None, None, self.resolve_system_status()
         if name == "my_settings":
             return None, None, None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
@@ -611,9 +611,13 @@ class AssistantService:
         log.warning("model called unknown tool %r", name)
         return None, None, None, "Sorry, something went wrong handling that request."
 
-    def _resolve_prefill_experiment(
+    def resolve_prefill_experiment(
         self, args: dict, requesting_username: Optional[str]
     ) -> tuple[Optional[ExperimentProposal], str]:
+        """Deterministic lookup, no model call -- public (unlike most
+        _resolve_* methods) so telegram_link.py's /launch command can call
+        it directly, the same "skill = a plain script, not a full LLM
+        round-trip" precedent as /status and /experiments there."""
         target_user = (args.get("username") or requesting_username or "").strip().lower()
         reference = (args.get("reference") or "").strip().lower()
         match = self._find_experiment(target_user, reference)
@@ -693,9 +697,12 @@ class AssistantService:
             return None
         return exp, saved
 
-    def _resolve_list_experiments(self, args: dict, requesting_username: Optional[str]) -> str:
+    def resolve_list_experiments(self, args: dict, requesting_username: Optional[str]) -> str:
         """Read-only listing, most-recently-modified first (same ordering
-        Storage.list_experiments() already uses for Gallery/history).
+        Storage.list_experiments() already uses for Gallery/history). Public
+        (unlike most _resolve_* methods) so telegram_link.py's /experiments
+        command can call it directly -- no model round-trip needed for
+        something this deterministic.
 
         Naming nobody defaults to the CURRENT user (matches what "which
         experiment did I conduct" actually expects), not everyone -- an
@@ -741,10 +748,13 @@ class AssistantService:
             lines.append(f"- {experiment_id} — {username} — {protocol} — {date_str}")
         return "\n".join(lines)
 
-    def _resolve_system_status(self) -> str:
+    def resolve_system_status(self) -> str:
         """Read-only snapshot of live device state -- current experiment (if
         any), free storage, camera. Never anything that changes state; see
-        the module docstring for why that boundary is deliberate."""
+        the module docstring for why that boundary is deliberate. Public
+        (unlike most _resolve_* methods) so telegram_link.py's /status
+        command can call it directly -- deliberately device-wide, not
+        scoped to whoever's asking, unlike every other Telegram command."""
         if self._runner is None:
             return "System status isn't available right now."
 

@@ -28,6 +28,23 @@ Deliberately optional infrastructure: unset bot_token/bot_username means
 gracefully (no crash, no-op / False) so the rest of the app works fine with
 this feature simply unavailable until an admin sets it up. Same precedent
 as Remote Sync's credentials_required state.
+
+Slash commands (/help, /status, /experiments, /unlink, /launch, /monitor)
+are deliberately plain deterministic Python, not a model round-trip: each
+one is a fixed "skill" backed by a "script" -- either a small handler right
+here, or (for /status, /experiments, /launch) a public resolve_*() method on
+AssistantService that already existed as a tool for the *general* chat path
+and needed no LLM involvement in the first place, just an explicit username/
+args tuple instead of a model-produced tool_call. Anything that isn't a
+recognized /command still goes to _handle_chat_message, the one place an
+actual model call happens. See _poll_once for the dispatch.
+
+/monitor additionally pins a live-updating progress-bar message to the
+chat (see _send_and_pin/_edit_message/_build_progress_text): edited in
+place roughly every PROGRESS_UPDATE_INTERVAL_S rather than resent, both to
+respect Telegram's per-chat edit rate limits and because a fresh message
+every few minutes for a run lasting hours/days would drown out everything
+else in the chat.
 """
 from __future__ import annotations
 
@@ -38,6 +55,7 @@ import os
 import re
 import secrets
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
@@ -68,6 +86,19 @@ MAX_CHAT_HISTORY = 20
 # that zip overhead pushed a borderline experiment over the edge.
 TELEGRAM_MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 
+# How often the progress-bar background loop wakes up to check whether any
+# pinned message is due for a refresh -- NOT how often a given message is
+# actually edited (see PROGRESS_UPDATE_INTERVAL_S). Short enough that a
+# freshly-pinned message and a completed/unsubscribed run are noticed
+# promptly, without editing anything that often.
+PROGRESS_TICK_S = 60.0
+# How often a pinned progress message is actually edited, in real time
+# regardless of how often the tick above runs. 15-20 minutes is plenty for
+# a run lasting hours to days, and stays well clear of Telegram's per-chat
+# edit rate limits.
+PROGRESS_UPDATE_INTERVAL_S = 15 * 60.0
+PROGRESS_BAR_SEGMENTS = 10
+
 # Same ambiguity the web UI's markdownLite.ts fixes (a bullet's leading
 # "* " misread as the start of an *italic* span), ported to Python since
 # Telegram gets plain text, not React elements, from PidiBot's replies.
@@ -88,8 +119,39 @@ def _strip_markdown_lite(text: str) -> str:
     return text
 
 
+def _format_duration(seconds: float) -> str:
+    """"3d 18h 0m" -- mirrors the web UI's formatDurationLong (client/lib/
+    progress.ts) exactly, so a duration quoted here and one quoted on the
+    Progress screen for the same run never disagree in shape."""
+    s = max(0, round(seconds))
+    days, rem = divmod(s, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if days > 0 or hours > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
 def _key(username: str) -> str:
     return username.strip().lower()
+
+
+def _parse_command(text: str) -> Optional[Tuple[str, str]]:
+    """Splits a Telegram command message into (command, rest), e.g.
+    "/launch like my run from tuesday" -> ("/launch", "like my run from
+    tuesday"), "/status@IEB_pidibot" -> ("/status", ""). Returns None for
+    anything that isn't a /command at all, so it falls through to normal
+    chat instead."""
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return None
+    head, _, rest = stripped.partition(" ")
+    command = head.split("@")[0].lower()
+    return command, rest.strip()
 
 
 def _load_links(path: Path) -> Dict[str, int]:
@@ -156,8 +218,20 @@ class TelegramLinkService:
         # report on.
         self._monitors_path = monitors_path
         self._monitors: Dict[str, Set[int]] = _load_monitors(monitors_path)
+        # Pinned progress-bar messages: (experiment_id, chat_id) -> the
+        # sendMessage result's message_id, so later ticks know what to edit
+        # rather than sending a new message. Deliberately NOT persisted like
+        # _monitors -- unlike the blackout notice, nothing here needs to
+        # survive a restart: if lost, the next /monitor for a still-running
+        # experiment just starts a fresh pinned message.
+        self._progress_messages: Dict[Tuple[str, int], int] = {}
+        # Same key -- last successful edit, in monotonic time, so the tick
+        # loop can skip a pin that was refreshed recently without needing a
+        # per-subscription scheduler.
+        self._progress_last_edit: Dict[Tuple[str, int], float] = {}
         self._update_offset = 0
         self._worker: Optional[asyncio.Task] = None
+        self._progress_worker: Optional[asyncio.Task] = None
         self._client = httpx.AsyncClient(base_url=API_BASE, timeout=15.0)
 
     @property
@@ -210,6 +284,66 @@ class TelegramLinkService:
         except httpx.HTTPError as exc:
             log.warning("telegram sendMessage failed for chat %s: %s", chat_id, exc)
             return False
+
+    async def _send_and_pin(self, chat_id: int, text: str) -> Optional[int]:
+        """Sends `text` and pins it -- the progress-bar message /monitor
+        starts. Returns the message_id (for later edits) or None if even
+        the send failed; a pin failure alone (e.g. the bot somehow lacking
+        pin rights) is logged but not fatal -- the message still exists and
+        can still be edited in place, just without staying pinned."""
+        try:
+            res = await self._client.post(
+                f"/bot{self._token}/sendMessage", json={"chat_id": chat_id, "text": text}
+            )
+            res.raise_for_status()
+            message_id = (res.json().get("result") or {}).get("message_id")
+        except httpx.HTTPError as exc:
+            log.warning("telegram sendMessage (progress bar) failed for chat %s: %s", chat_id, exc)
+            return None
+        if message_id is None:
+            return None
+        try:
+            pin_res = await self._client.post(
+                f"/bot{self._token}/pinChatMessage",
+                json={"chat_id": chat_id, "message_id": message_id, "disable_notification": True},
+            )
+            pin_res.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("telegram pinChatMessage failed for chat %s: %s", chat_id, exc)
+        return message_id
+
+    async def _edit_message(self, chat_id: int, message_id: int, text: str) -> bool:
+        try:
+            res = await self._client.post(
+                f"/bot{self._token}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": text},
+            )
+            res.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as exc:
+            # Telegram 400s this when the new text is byte-identical to what's
+            # already there -- a genuinely unchanged progress bar between two
+            # ticks, not a real failure, so it must not spam a warning every
+            # PROGRESS_UPDATE_INTERVAL_S.
+            if exc.response.status_code == 400 and "not modified" in exc.response.text.lower():
+                return True
+            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, exc)
+            return False
+        except httpx.HTTPError as exc:
+            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, exc)
+            return False
+
+    async def _unpin_message(self, chat_id: int, message_id: int) -> None:
+        """Best-effort, called once a monitored run finishes -- a failure
+        here just leaves a stale pin behind, never worth surfacing."""
+        try:
+            res = await self._client.post(
+                f"/bot{self._token}/unpinChatMessage",
+                json={"chat_id": chat_id, "message_id": message_id},
+            )
+            res.raise_for_status()
+        except httpx.HTTPError:
+            pass
 
     async def _send_photo(self, chat_id: int, image: AssistantImageRef) -> None:
         """Sends the same thumbnail the web chat shows inline -- Telegram's
@@ -345,6 +479,14 @@ class TelegramLinkService:
                 await self._send_photo_file(chat_id, first_path, f"First: {images[0]['id']}")
             if last_path is not None:
                 await self._send_photo_file(chat_id, last_path, f"Last: {images[-1]['id']}")
+            # The progress bar has nothing further to report once finished --
+            # unpin it and drop the tracking (best-effort; a failed unpin
+            # just leaves a stale pin, not a real problem).
+            key = (exp.experiment_id, chat_id)
+            message_id = self._progress_messages.pop(key, None)
+            self._progress_last_edit.pop(key, None)
+            if message_id is not None:
+                await self._unpin_message(chat_id, message_id)
 
     # --- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -353,6 +495,8 @@ class TelegramLinkService:
             return
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._poll_loop())
+        if self._progress_worker is None or self._progress_worker.done():
+            self._progress_worker = asyncio.create_task(self._progress_loop())
 
     async def shutdown(self) -> None:
         if self._worker is not None:
@@ -362,6 +506,13 @@ class TelegramLinkService:
             except (asyncio.CancelledError, Exception):
                 pass
             self._worker = None
+        if self._progress_worker is not None:
+            self._progress_worker.cancel()
+            try:
+                await self._progress_worker
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._progress_worker = None
         await self._client.aclose()
 
     async def _poll_loop(self) -> None:
@@ -373,6 +524,76 @@ class TelegramLinkService:
             except Exception:
                 log.exception("telegram poll failed")
             await asyncio.sleep(POLL_INTERVAL_S)
+
+    async def _progress_loop(self) -> None:
+        while True:
+            try:
+                await self._progress_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("telegram progress-bar tick failed")
+            await asyncio.sleep(PROGRESS_TICK_S)
+
+    async def _progress_tick(self) -> None:
+        """Refreshes the pinned progress message for whoever's monitoring
+        whatever is currently running -- at most one experiment at a time,
+        since this device only ever runs one. A no-op the rest of the time
+        (idle, nobody monitoring, or every pin refreshed too recently)."""
+        if self._runner is None:
+            return
+        status = self._runner.status
+        if status.experimentId is None or status.state not in ("running", "paused"):
+            return
+        chat_ids = self._monitors.get(status.experimentId)
+        if not chat_ids:
+            return
+        exp = self._storage.get_experiment(status.experimentId)
+        if exp is None:
+            return
+
+        text = self._build_progress_text(status, exp)
+        now = time.monotonic()
+        for chat_id in chat_ids:
+            key = (status.experimentId, chat_id)
+            message_id = self._progress_messages.get(key)
+            if message_id is None:
+                continue
+            if now - self._progress_last_edit.get(key, 0.0) < PROGRESS_UPDATE_INTERVAL_S:
+                continue
+            if await self._edit_message(chat_id, message_id, text):
+                self._progress_last_edit[key] = now
+
+    def _build_progress_text(self, status: ExperimentStatus, exp: ExperimentDir) -> str:
+        """Real, already-measured numbers only -- elapsedSeconds/
+        totalSeconds/imagesCaptured are the runner's own live status (same
+        source the Progress screen itself reads), and the last-capture
+        timestamp comes from the actual newest image file, not an
+        estimate."""
+        pct = 0.0
+        if status.totalSeconds > 0:
+            pct = max(0.0, min(100.0, (status.elapsedSeconds / status.totalSeconds) * 100))
+        filled = round(pct / 100 * PROGRESS_BAR_SEGMENTS)
+        bar = "▓" * filled + "░" * (PROGRESS_BAR_SEGMENTS - filled)
+        remaining = max(0.0, status.totalSeconds - status.elapsedSeconds)
+
+        lines = [
+            f"🔬 {status.experimentId}",
+            f"[{bar}] {pct:.0f}%",
+            f"{_format_duration(status.elapsedSeconds)} elapsed · {_format_duration(remaining)} left",
+        ]
+        captured = (
+            f"{status.imagesCaptured}/{status.imagesPlanned} images"
+            if status.imagesPlanned
+            else f"{status.imagesCaptured} images"
+        )
+        images = exp.list_capture_images()
+        if images:
+            age = (datetime.now() - images[-1]["timestamp"]).total_seconds()
+            captured += f" · last capture {_format_duration(age)} ago"
+        lines.append(captured)
+        lines.append("⚠️ possible issue detected" if status.issueDetected else "no anomalies detected")
+        return "\n".join(lines)
 
     async def _poll_once(self) -> None:
         # Long-polling (timeout>0) would tie up this connection for the
@@ -391,10 +612,33 @@ class TelegramLinkService:
                 continue
             if await self._try_complete_link(text, chat_id):
                 continue
-            if text.split("@")[0].strip().lower() == "/monitor":
-                await self._handle_monitor_command(chat_id)
+            parsed = _parse_command(text)
+            if parsed is not None:
+                await self._dispatch_command(chat_id, parsed[0], parsed[1])
                 continue
             await self._handle_chat_message(chat_id, text)
+
+    async def _dispatch_command(self, chat_id: int, command: str, arg: str) -> None:
+        """Every recognized /command is a fixed, deterministic handler (a
+        "script") -- never a model call, see the module docstring. An
+        unrecognized /whatever gets a direct answer here rather than being
+        forwarded to the LLM as a chat turn, which would just as likely
+        produce a confused non-answer to something that was never meant as
+        a real question."""
+        if command == "/help":
+            await self._handle_help_command(chat_id)
+        elif command == "/status":
+            await self._handle_status_command(chat_id)
+        elif command == "/experiments":
+            await self._handle_experiments_command(chat_id)
+        elif command == "/unlink":
+            await self._handle_unlink_command(chat_id)
+        elif command == "/launch":
+            await self._handle_launch_command(chat_id, arg)
+        elif command == "/monitor":
+            await self._handle_monitor_command(chat_id)
+        else:
+            await self._send_raw(chat_id, f"I don't know {command} -- send /help to see what I can do.")
 
     async def _try_complete_link(self, text: str, chat_id: int) -> bool:
         """Returns True if `text` was a valid pending code (and has now been
@@ -422,6 +666,97 @@ class TelegramLinkService:
             if linked_chat_id == chat_id:
                 return username
         return None
+
+    async def _handle_help_command(self, chat_id: int) -> None:
+        """Works even from an unlinked chat -- someone's first message is
+        plausibly "what can you do", and the answer needs to say "link
+        first" rather than silently refusing like every other command."""
+        lines = [
+            "/status — is anything running right now, plus storage and camera (whole device, not just yours).",
+            "/experiments — your own most recent experiments.",
+            "/monitor — subscribe to your currently running experiment: anomalies, a blackout notice, and a "
+            "completion summary with photos. Pins a live-updating progress bar here too.",
+            "/launch [what you want] — propose settings for a new experiment, from a past run or from scratch. "
+            "You still press Start on the device yourself.",
+            "/unlink — disconnect this Telegram account from RapidBoxes.",
+            "/help — this list.",
+            "",
+            "Anything else you send me is a normal question — ask about your settings, storage, past runs, "
+            "or images.",
+        ]
+        if self._username_for_chat(chat_id) is None:
+            lines.insert(0, "This chat isn't linked yet -- link it first: Settings → General → Telegram Alerts.\n")
+        await self._send_raw(chat_id, "\n".join(lines))
+
+    async def _handle_status_command(self, chat_id: int) -> None:
+        """Deliberately device-wide, not scoped to the asker -- see
+        AssistantService.resolve_system_status's own docstring for why
+        that's the one exception to every other command here being
+        strictly personal."""
+        if self._username_for_chat(chat_id) is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+        if self._assistant is None:
+            await self._send_raw(chat_id, "System status isn't available right now -- try again shortly.")
+            return
+        await self._send_raw(chat_id, self._assistant.resolve_system_status())
+
+    async def _handle_experiments_command(self, chat_id: int) -> None:
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+        if self._assistant is None:
+            await self._send_raw(chat_id, "That isn't available right now -- try again shortly.")
+            return
+        # No "username" arg -- resolve_list_experiments then defaults to the
+        # requester's own experiments only, never another user's.
+        await self._send_raw(chat_id, self._assistant.resolve_list_experiments({}, username))
+
+    async def _handle_unlink_command(self, chat_id: int) -> None:
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(chat_id, "This Telegram account isn't linked to anything, so there's nothing to unlink.")
+            return
+        del self._links[_key(username)]
+        _save_links(self._links_path, self._links)
+        await self._send_raw(
+            chat_id,
+            f'Unlinked. "{username}" on RapidBoxes is no longer connected to this chat -- link again anytime '
+            "from Settings → General → Telegram Alerts.",
+        )
+
+    async def _handle_launch_command(self, chat_id: int, arg: str) -> None:
+        """Alias into the same propose-only flow the general chat already
+        has (resolve_prefill_experiment) -- deterministic, no model call,
+        and the underlying tool already never starts anything itself: the
+        reply always ends by saying to press Start on the device. What
+        /launch actually configures beyond "base it on a past run" is
+        intentionally still undecided -- this is the placeholder that's
+        real and useful today, not a stub."""
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+        if self._assistant is None:
+            await self._send_raw(chat_id, "That isn't available right now -- try again shortly.")
+            return
+        # No "username" arg -- always the requester's own past experiments,
+        # even if their free text names someone else.
+        _proposal, reply = self._assistant.resolve_prefill_experiment({"reference": arg}, username)
+        await self._send_raw(chat_id, _strip_markdown_lite(reply))
 
     async def _handle_monitor_command(self, chat_id: int) -> None:
         """/monitor subscribes the sender to their own currently-running
@@ -460,6 +795,17 @@ class TelegramLinkService:
             f"🔎 Now monitoring {status.experimentId}. I'll message you here about anomalies, "
             "a power/connectivity blackout, and when it finishes.",
         )
+
+        # Pin a live progress bar too -- unless this chat already has one for
+        # this experiment (re-sending /monitor must not spawn a second pin).
+        key = (status.experimentId, chat_id)
+        if key not in self._progress_messages:
+            exp = self._storage.get_experiment(status.experimentId)
+            if exp is not None:
+                message_id = await self._send_and_pin(chat_id, self._build_progress_text(status, exp))
+                if message_id is not None:
+                    self._progress_messages[key] = message_id
+                    self._progress_last_edit[key] = time.monotonic()
 
     async def _handle_chat_message(self, chat_id: int, text: str) -> None:
         """Routes a non-code message to the same AssistantService the web

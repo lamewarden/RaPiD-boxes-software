@@ -367,6 +367,37 @@ running right now", that's accurate -- it only ever attaches to a run that's
 actually `running` or `paused` for that person at the moment the command
 arrives, never a future or already-finished one.
 
+`/monitor` also pins a live progress-bar message to that chat (percentage,
+elapsed/remaining time, image count, last-capture age, anomaly status) --
+edited in place roughly every 15-20 minutes rather than resent, so it stays
+current without flooding the chat. It's unpinned automatically once the
+completion message goes out.
+
+**Other slash commands** — deterministic, no model round-trip involved
+(faster and cheaper than a normal chat turn), strictly scoped to the sender
+except where noted:
+
+- **/status** — is anything running right now (whose, since when), plus
+  storage and camera state. Deliberately **device-wide**, not scoped to the
+  asker -- the one exception to every other command here being personal --
+  matching what system_status already means for the general chat path.
+- **/experiments** — the sender's own most recent experiments (same data as
+  the list_experiments tool, no username arg accepted).
+- **/launch [what you want]** — proposes settings for a new experiment
+  based on a past run (or from scratch), the same propose-only flow as
+  asking in chat: a human still has to press Start on the device
+  themselves, this never starts anything on its own. What exactly /launch
+  configures beyond "base it on a past run" is still open -- this is the
+  interim, real behavior, not a stub.
+- **/unlink** — lets someone disconnect their own Telegram account
+  themselves, without needing an admin to edit anything by hand.
+- **/help** — lists all of the above. Works even before linking, since
+  that's plausibly someone's very first message.
+
+An unrecognized `/whatever` gets a direct "I don't know that command" reply
+rather than being sent to the model as a chat turn -- a slash-prefixed typo
+was never meant as an actual question.
+
 ### Progress screen (while an experiment is running)
 
 Shows: elapsed / remaining time (rounded to minutes, no seconds — seconds
