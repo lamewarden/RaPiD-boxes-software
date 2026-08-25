@@ -428,23 +428,33 @@ except where noted:
   does override it, the value they type is checked against that specific
   source's real range right there (IR: 0.2–10s, RGBW: 10–500ms) before
   being accepted.
-- **/snapshot** — a real photo taken right now with the device's actual
-  current camera and illumination settings -- deliberately *not* the Live
-  preview, which always uses a fast RGBW-speed exposure for framing
-  regardless of the real configured source, so it would misrepresent what
-  an IR run actually looks like. Same underlying capture the Settings →
-  Camera "test photo" button uses. If the sender's own experiment is
-  running right now, the camera is busy with its own scheduled captures,
-  so this sends their run's most recent real capture instead of a fresh
-  shot -- still scoped to their own experiment, never anyone else's.
-- **/screenshot** — whatever's actually showing on the kiosk's touchscreen
-  right now, as a real image. Unlike every other command, this is
-  deliberately **device-wide, not scoped to the asker** -- same "device-
-  wide" precedent /status already set -- since the kiosk is one shared
-  screen: whoever asks sees whatever's currently on it, which could be
-  another researcher's in-progress screen if they're standing at the
-  device at that moment. Doesn't touch the camera or an experiment at all,
-  so it works regardless of whether one is running.
+- **/snapshot** (also reachable via plain chat, e.g. "send me a snapshot"/
+  "what does it look like right now" -- the take_snapshot tool) — a real
+  photo taken right now with the device's actual current camera and
+  illumination settings -- deliberately *not* the Live preview, which
+  always uses a fast RGBW-speed exposure for framing regardless of the
+  real configured source, so it would misrepresent what an IR run actually
+  looks like. Same underlying capture the Settings → Camera "test photo"
+  button uses. If the sender's own experiment is running right now, the
+  camera is busy with its own scheduled captures, so this sends their
+  run's most recent real capture instead of a fresh shot -- still scoped
+  to their own experiment, never anyone else's.
+- **/screenshot** (also reachable via plain chat, e.g. "send me a
+  screenshot"/"what's on the screen" -- the take_screenshot tool) —
+  whatever's actually showing on the kiosk's touchscreen right now, as a
+  real image. Unlike every other command, this is deliberately
+  **device-wide, not scoped to the asker** -- same "device-wide" precedent
+  /status already set -- since the kiosk is one shared screen: whoever
+  asks sees whatever's currently on it, which could be another
+  researcher's in-progress screen if they're standing at the device at
+  that moment. Doesn't touch the camera or an experiment at all, so it
+  works regardless of whether one is running.
+- **/stop** — stops the sender's own currently running (or paused)
+  experiment, with a "yes"/"no" confirmation first that states exactly how
+  many images have been captured so far. Uses the graceful stop, never the
+  destructive abort: every image captured up to that point is kept on
+  disk, nothing is deleted -- it just can't be resumed afterwards. Declines
+  if the sender has no experiment running, or if it's someone else's.
 - **/unlink** — lets someone disconnect their own Telegram account
   themselves, without needing an admin to edit anything by hand.
 - **/help** — lists all of the above. Works even before linking, since

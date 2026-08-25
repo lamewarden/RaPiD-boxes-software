@@ -73,9 +73,15 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
 
   // Persisted per-username (see lib/assistantHistory.ts) so closing this
   // overlay and reopening it -- as the same user -- picks the conversation
-  // back up instead of starting over every time.
+  // back up instead of starting over every time. liveImage is deliberately
+  // stripped before persisting -- a base64 photo per message would bloat
+  // localStorage fast, and it's a snapshot of one specific moment anyway
+  // (see AssistantMessage's liveImage doc comment in shared/api.ts).
   useEffect(() => {
-    saveChatHistory(username, messages);
+    saveChatHistory(
+      username,
+      messages.map((m) => (m.liveImage ? { ...m, liveImage: undefined } : m)),
+    );
   }, [username, messages]);
 
   const startNewChat = () => {
@@ -97,7 +103,13 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
       const res = await api.assistantChat(trimmed, history, getUsername());
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: res.reply, image: res.image, download: res.download },
+        {
+          role: "assistant",
+          content: res.reply,
+          image: res.image,
+          download: res.download,
+          liveImage: res.liveImage,
+        },
       ]);
       if (res.proposal) setProposal(res.proposal);
     } catch (e) {
@@ -183,6 +195,23 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
                 className="mt-1.5 block overflow-hidden rounded-lg border border-app-border-primary"
               >
                 <img src={m.image.thumbUrl} alt={m.image.caption} className="max-h-[120px] w-auto" />
+              </button>
+            )}
+            {m.liveImage && (
+              <button
+                onClick={() =>
+                  setLightbox({
+                    url: `data:${m.liveImage!.mimeType};base64,${m.liveImage!.base64Data}`,
+                    caption: m.liveImage!.caption,
+                  })
+                }
+                className="mt-1.5 block overflow-hidden rounded-lg border border-app-border-primary"
+              >
+                <img
+                  src={`data:${m.liveImage.mimeType};base64,${m.liveImage.base64Data}`}
+                  alt={m.liveImage.caption}
+                  className="max-h-[120px] w-auto"
+                />
               </button>
             )}
             {m.download && (

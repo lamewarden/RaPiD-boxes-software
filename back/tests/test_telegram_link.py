@@ -427,6 +427,64 @@ async def test_chat_message_with_shown_image_sends_a_real_photo(chat_config: App
 
 
 @pytest.mark.asyncio
+async def test_chat_message_requesting_a_screenshot_sends_a_real_photo_not_a_download(
+    chat_config: AppConfig, monkeypatch
+):
+    """Reproduces the reported bug directly: a plain-English screenshot
+    request used to have no matching tool at all and fell through to
+    download_experiment (misread as "package and send me a file"). Now
+    take_screenshot is a real tool, so the model (mocked here, same as
+    every other routing test in this file) picks it and the reply carries
+    a real photo instead of a zip."""
+    from rapidboxes.assistant import service as assistant_service_module
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    assistant = AssistantService(chat_config, storage)
+
+    async def fake_call(self, messages):
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "take_screenshot", "arguments": "{}"}}
+            ],
+        }
+
+    async def fake_screenshot() -> bytes:
+        return b"\x89PNG\r\n\x1a\nfake-screenshot-bytes"
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    monkeypatch.setattr(assistant_service_module, "capture_kiosk_screenshot", fake_screenshot)
+    service.attach_assistant(assistant)
+
+    photo_calls = []
+    document_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendPhoto"):
+            photo_calls.append((url, data, files))
+        elif url.endswith("/sendDocument"):
+            document_calls.append((url, data, files))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service._handle_chat_message(
+        42, "take a screenshot of the current web ui screen and send me it"
+    )
+
+    assert document_calls == []
+    assert len(photo_calls) == 1
+    _, data, files = photo_calls[0]
+    assert data["chat_id"] == "42"
+    filename, content, _content_type = files["photo"]
+    assert filename == "screenshot.png"
+    assert content == b"\x89PNG\r\n\x1a\nfake-screenshot-bytes"
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_chat_message_requesting_download_sends_a_real_zip_document(
     chat_config: AppConfig, monkeypatch
 ):
@@ -708,6 +766,13 @@ async def test_screenshot_command_relays_the_unavailable_reason(chat_config: App
 class _FakeRunner:
     def __init__(self, status: ExperimentStatus):
         self.status = status
+        self.stop_calls = 0
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        self.status = self.status.model_copy(
+            update={"state": ExperimentState.done, "message": "stopped by user"}
+        )
 
 
 @pytest.mark.asyncio
@@ -1713,6 +1778,200 @@ async def test_launch_wizard_abandoned_past_timeout_is_dropped(chat_config: AppC
     assert consumed is False
     assert 42 not in service._launch_wizards
     await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /stop: ends the sender's own run early, keeping every image -----------
+
+
+@pytest.mark.asyncio
+async def test_stop_command_requires_linking(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_without_runner_reports_unavailable(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    assert "isn't available right now" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_with_no_running_experiment_declines(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(_FakeRunner(ExperimentStatus(state=ExperimentState.idle)))
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    assert "don't have an experiment running" in calls[0][1]["text"]
+    assert 42 not in service._stop_confirmations
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_declines_another_users_running_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="sabol"))
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    assert "don't have an experiment running" in calls[0][1]["text"]
+    assert 42 not in service._stop_confirmations
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_asks_for_confirmation_with_the_real_image_count(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(
+            ExperimentStatus(
+                state=ExperimentState.running, experimentId="exp1", username="ivan", imagesCaptured=17
+            )
+        )
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    text = calls[0][1]["text"]
+    assert "exp1" in text
+    assert "17" in text
+    assert "kept" in text
+    assert service._stop_confirmations[42] == "exp1"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_also_accepts_a_paused_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.paused, experimentId="exp1", username="ivan"))
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/stop", "")
+
+    assert "exp1" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_yes_actually_calls_stop_and_reports_success(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    calls = _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+
+    await service._maybe_continue_stop_confirmation(42, "yes")
+
+    assert runner.stop_calls == 1
+    assert 42 not in service._stop_confirmations
+    final_text = calls[-1][1]["text"]
+    assert "Stopped exp1" in final_text
+    assert "kept" in final_text
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_no_cancels_without_calling_stop(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    calls = _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+
+    await service._maybe_continue_stop_confirmation(42, "no")
+
+    assert runner.stop_calls == 0
+    assert 42 not in service._stop_confirmations
+    assert "Cancelled" in calls[-1][1]["text"]
+    assert runner.status.state == ExperimentState.running  # untouched
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_cancel_command_also_works(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    calls = _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+
+    consumed = await service._maybe_continue_stop_confirmation(42, "/cancel")
+
+    assert consumed is True
+    assert runner.stop_calls == 0
+    assert 42 not in service._stop_confirmations
+    assert "Cancelled" in calls[-1][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_garbage_reprompts_without_calling_stop(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    calls = _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+
+    await service._maybe_continue_stop_confirmation(42, "maybe")
+
+    assert runner.stop_calls == 0
+    assert 42 in service._stop_confirmations  # still pending
+    assert "yes" in calls[-1][1]["text"].lower()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_confirmation_when_the_run_already_ended_meanwhile(chat_config: AppConfig, monkeypatch):
+    """A race: the experiment finished (or was aborted from the kiosk) in
+    the gap between /stop's question and the "yes" answer -- must not call
+    stop() again or crash, just say so."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    calls = _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+
+    runner.status = runner.status.model_copy(update={"state": ExperimentState.idle})
+    await service._maybe_continue_stop_confirmation(42, "yes")
+
+    assert runner.stop_calls == 0
+    assert "isn't running anymore" in calls[-1][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_does_not_intercept_ordinary_messages(chat_config: AppConfig, monkeypatch):
+    """No pending confirmation -- a plain "yes" with nothing pending must
+    not be swallowed silently; it should be treated as a normal message
+    (routed to chat), not consumed by the stop-confirmation handler."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    consumed = await service._maybe_continue_stop_confirmation(42, "yes")
+    assert consumed is False
     await service.shutdown()
 
 

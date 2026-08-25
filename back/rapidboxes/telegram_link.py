@@ -29,7 +29,8 @@ gracefully (no crash, no-op / False) so the rest of the app works fine with
 this feature simply unavailable until an admin sets it up. Same precedent
 as Remote Sync's credentials_required state.
 
-Slash commands (/help, /status, /experiments, /unlink, /launch, /monitor)
+Slash commands (/help, /status, /experiments, /unlink, /launch, /stop,
+/monitor, /snapshot, /screenshot)
 are deliberately plain deterministic Python, not a model round-trip: each
 one is a fixed "skill" backed by a "script" -- either a small handler right
 here, or (for /status, /experiments, /launch's initial seed) a public
@@ -63,6 +64,7 @@ else in the chat.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -568,6 +570,10 @@ class TelegramLinkService:
         # same reasoning as _progress_messages: nothing here needs to
         # survive a restart, a fresh /launch just starts clean.
         self._launch_wizards: Dict[int, _LaunchWizardState] = {}
+        # /stop confirmations pending a yes/no, keyed by chat_id -> the
+        # experiment_id it was raised for -- same in-memory-only reasoning
+        # as _launch_wizards above.
+        self._stop_confirmations: Dict[int, str] = {}
         self._update_offset = 0
         self._worker: Optional[asyncio.Task] = None
         self._progress_worker: Optional[asyncio.Task] = None
@@ -965,6 +971,8 @@ class TelegramLinkService:
                 continue
             if await self._maybe_continue_launch_wizard(chat_id, text):
                 continue
+            if await self._maybe_continue_stop_confirmation(chat_id, text):
+                continue
             parsed = _parse_command(text)
             if parsed is not None:
                 await self._dispatch_command(chat_id, parsed[0], parsed[1])
@@ -1000,6 +1008,42 @@ class TelegramLinkService:
             await self._handle_launch_answer(chat_id, state, text)
         return True
 
+    async def _maybe_continue_stop_confirmation(self, chat_id: int, text: str) -> bool:
+        """Returns True if `text` was consumed by a pending /stop
+        confirmation for this chat. Only ever reached after /stop already
+        found a real, currently-running experiment belonging to this
+        person -- see _handle_stop_command."""
+        experiment_id = self._stop_confirmations.get(chat_id)
+        if experiment_id is None:
+            return False
+
+        parsed = _parse_command(text)
+        if parsed is not None and parsed[0] == "/cancel":
+            del self._stop_confirmations[chat_id]
+            await self._send_raw(chat_id, "Cancelled -- your experiment keeps running.")
+            return True
+
+        answer = text.strip().lower()
+        if answer in ("yes", "y", "confirm", "confirmed", "stop"):
+            del self._stop_confirmations[chat_id]
+            if (
+                self._runner is None
+                or self._runner.status.experimentId != experiment_id
+                or self._runner.status.state not in ("running", "paused")
+            ):
+                await self._send_raw(chat_id, f"{experiment_id} isn't running anymore -- nothing to stop.")
+                return True
+            await self._runner.stop()
+            await self._send_raw(chat_id, f"Stopped {experiment_id}. Every image captured so far is kept.")
+            return True
+        if answer in ("no", "n", "cancel"):
+            del self._stop_confirmations[chat_id]
+            await self._send_raw(chat_id, "Cancelled -- your experiment keeps running.")
+            return True
+
+        await self._send_raw(chat_id, 'Please reply "yes" to stop it or "no" to cancel.')
+        return True
+
     async def _dispatch_command(self, chat_id: int, command: str, arg: str) -> None:
         """Every recognized /command is a fixed, deterministic handler (a
         "script") -- never a model call, see the module docstring. An
@@ -1021,6 +1065,8 @@ class TelegramLinkService:
             await self._send_raw(chat_id, "Nothing active to cancel.")
         elif command == "/monitor":
             await self._handle_monitor_command(chat_id)
+        elif command == "/stop":
+            await self._handle_stop_command(chat_id)
         elif command == "/snapshot":
             await self._handle_snapshot_command(chat_id)
         elif command == "/screenshot":
@@ -1060,7 +1106,8 @@ class TelegramLinkService:
         plausibly "what can you do", and the answer needs to say "link
         first" rather than silently refusing like every other command."""
         lines = [
-            "/status — is anything running right now, plus storage and camera (whole device, not just yours).",
+            "/status — is anything running right now, how far along (elapsed/remaining/expected finish), "
+            "plus storage and camera (whole device, not just yours).",
             "/experiments — your own most recent experiments.",
             "/monitor — subscribe to your currently running experiment: anomalies, a blackout notice, and a "
             "completion summary with photos. Pins a live-updating progress bar here too.",
@@ -1068,6 +1115,8 @@ class TelegramLinkService:
             "starting from a past run's settings (or defaults). Ends with a summary to confirm -- \"yes\" "
             "actually starts it, real camera and lighting, right then. If it can't (busy/no camera/low "
             "space), it loads the settings on the setup screen instead. /cancel stops it anytime.",
+            "/stop — ends your own running experiment early. Keeps every image captured so far (nothing is "
+            "deleted) but it can't be resumed once stopped. Asks for a \"yes\" first.",
             "/snapshot — a real photo with your current camera and light settings (not the Live preview's "
             "fudged fast exposure). If your own experiment is running, sends its most recent capture instead.",
             "/screenshot — whatever's actually on the kiosk's touchscreen right now.",
@@ -1353,6 +1402,47 @@ class TelegramLinkService:
             return
         await self._send_photo_bytes(chat_id, "screenshot.png", png, "Current kiosk screen.")
 
+    async def _handle_stop_command(self, chat_id: int) -> None:
+        """Ends the sender's own running experiment early -- via
+        ExperimentRunner.stop(), never .abort(): every image captured so
+        far is kept (same "stopped by user" terminal state as any other
+        early-ended run, still fully usable in Gallery/download/AI summary
+        afterward), nothing is deleted. Requires an explicit "yes" first --
+        see _maybe_continue_stop_confirmation -- since a stopped run can't
+        be resumed even though nothing is lost. Strictly scoped like
+        /monitor: only the sender's own currently running/paused
+        experiment, resolved from the link, never a name they could type
+        or someone else's run."""
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
+            )
+            return
+        if self._runner is None:
+            await self._send_raw(chat_id, "That isn't available right now -- try again shortly.")
+            return
+
+        status = self._runner.status
+        if (
+            status.experimentId is None
+            or status.username is None
+            or _key(status.username) != _key(username)
+            or status.state not in ("running", "paused")
+        ):
+            await self._send_raw(chat_id, "You don't have an experiment running right now.")
+            return
+
+        self._stop_confirmations[chat_id] = status.experimentId
+        await self._send_raw(
+            chat_id,
+            f"Stop {status.experimentId} now? It has {status.imagesCaptured} image(s) captured so far -- "
+            "all of them are kept, nothing is deleted, but a stopped run can't be resumed. "
+            'Reply "yes" to stop it, or "no" to cancel.',
+        )
+
     async def _handle_monitor_command(self, chat_id: int) -> None:
         """/monitor subscribes the sender to their own currently-running
         experiment: anomalies (via MoldWatchService, whether or not
@@ -1439,3 +1529,7 @@ class TelegramLinkService:
             await self._send_photo(chat_id, response.image)
         if response.download is not None:
             await self._send_download(chat_id, response.download)
+        if response.liveImage is not None:
+            filename = "snapshot.jpg" if response.liveImage.mimeType == "image/jpeg" else "screenshot.png"
+            data = base64.b64decode(response.liveImage.base64Data)
+            await self._send_photo_bytes(chat_id, filename, data, response.liveImage.caption)

@@ -448,13 +448,29 @@ class AssistantDownloadRef(BaseModel):
     imageIds: Optional[List[str]] = None
 
 
+class AssistantLiveImageRef(BaseModel):
+    """A snapshot/screenshot captured live for this one reply -- unlike
+    AssistantImageRef, which always points at a real file that already
+    existed before the tool call, this is a fresh capture made *during* the
+    call with nothing persisted to disk (no experiment, no file, no URL to
+    point at). Sent inline as base64 in the response itself instead:
+    telegram_link.py decodes it straight back to bytes and uploads it via
+    the same _send_photo_bytes a slash command uses; the web chat renders
+    it as a data: URI <img>, no extra server round-trip needed."""
+
+    mimeType: str
+    base64Data: str
+    caption: str
+
+
 class AssistantChatResponse(BaseModel):
     reply: str
     proposal: Optional[ExperimentProposal] = None
     # Mutually exclusive in practice -- one tool call resolves to at most
-    # one of these three extra payloads, never more than one.
+    # one of these four extra payloads, never more than one.
     image: Optional[AssistantImageRef] = None
     download: Optional[AssistantDownloadRef] = None
+    liveImage: Optional[AssistantLiveImageRef] = None
 
 
 # ---------------------------------------------------------------------------

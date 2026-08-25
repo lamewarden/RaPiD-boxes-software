@@ -23,6 +23,7 @@ progress.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import shutil
@@ -40,6 +41,7 @@ from ..models import (
     AssistantChatResponse,
     AssistantDownloadRef,
     AssistantImageRef,
+    AssistantLiveImageRef,
     AssistantMessage,
     DeviceSettings,
     ExperimentProposal,
@@ -51,6 +53,7 @@ from ..models import (
 )
 from ..dsm_sharing import DsmSharingService
 from ..hardware.base import CameraUnavailableError, HardwareTimeoutError
+from ..kiosk_screenshot import KioskScreenshotUnavailable, capture_kiosk_screenshot
 from ..remote_sync import RemoteSyncService
 from ..storage import ExperimentDir, Storage, tally_by_user
 from . import vision
@@ -463,6 +466,37 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "take_snapshot",
+            "description": (
+                "Take a real photo RIGHT NOW with the device's current "
+                "camera and light settings -- an actual fresh capture, not "
+                "the Live preview and not an old file. Use for \"send me a "
+                "snapshot\"/\"what does the plant look like right now\"/"
+                "\"take a picture\". If the CURRENT user's own experiment "
+                "is running, the camera is busy with its schedule, so this "
+                "sends their run's most recent real capture instead."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "take_screenshot",
+            "description": (
+                "Capture whatever's actually showing on the kiosk's own "
+                "touchscreen right now, as a real image -- for remote "
+                "troubleshooting. Use for \"send me a screenshot\"/\"what's "
+                "on the screen\"/\"show me the current UI\". Device-wide, "
+                "not scoped to whoever's asking -- the kiosk is one shared "
+                "screen, unlike take_snapshot's per-user camera capture."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -810,16 +844,20 @@ class AssistantService:
 
                 tool_calls = result.get("tool_calls") or []
                 if tool_calls:
-                    proposal, image, download, reply = await self._resolve_tool_call(
+                    proposal, image, download, live_image, reply = await self._resolve_tool_call(
                         tool_calls[0], username
                     )
                 else:
-                    proposal, image, download, reply = None, None, None, (result.get("content") or "").strip()
+                    proposal, image, download, live_image, reply = (
+                        None, None, None, None, (result.get("content") or "").strip()
+                    )
             finally:
                 self._task = None
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
-            return AssistantChatResponse(reply=reply, proposal=proposal, image=image, download=download)
+            return AssistantChatResponse(
+                reply=reply, proposal=proposal, image=image, download=download, liveImage=live_image
+            )
 
     async def _call_llm(self, messages: list) -> dict:
         res = await self._client.post(
@@ -838,18 +876,23 @@ class AssistantService:
     async def _resolve_tool_call(
         self, tool_call: dict, requesting_username: Optional[str]
     ) -> tuple[
-        Optional[ExperimentProposal], Optional[AssistantImageRef], Optional[AssistantDownloadRef], str
+        Optional[ExperimentProposal],
+        Optional[AssistantImageRef],
+        Optional[AssistantDownloadRef],
+        Optional[AssistantLiveImageRef],
+        str,
     ]:
         """Dispatches one native tool_calls entry to its resolver. Only
         prefill_experiment ever carries a proposal, only show_image/
-        describe_image carry an image, and only download_experiment carries
-        a download -- every other tool answers with text alone. Most of
-        those are read-only lookups; upload_experiment_to_remote is the one
-        exception with a real side effect (it copies files to the CIFS
-        share), reported back as plain text rather than a structured ref
-        since there's no new local artifact to point at, unlike download's
-        zip. my_settings/my_storage deliberately ignore any username
-        the model might put in args (their schema takes none) and always use
+        describe_image carry an image, only download_experiment carries a
+        download, and only take_snapshot/take_screenshot carry a liveImage
+        -- every other tool answers with text alone. Most of those are
+        read-only lookups; upload_experiment_to_remote is the one exception
+        with a real side effect (it copies files to the CIFS share),
+        reported back as plain text rather than a structured ref since
+        there's no new local artifact to point at, unlike download's zip.
+        my_settings/my_storage deliberately ignore any username the model
+        might put in args (their schema takes none) and always use
         requesting_username -- unlike list_experiments/prefill_experiment,
         which may look up a named other user, these two never do."""
         name = tool_call.get("function", {}).get("name")
@@ -862,32 +905,72 @@ class AssistantService:
 
         if name == "prefill_experiment":
             proposal, reply = self.resolve_prefill_experiment(args, requesting_username)
-            return proposal, None, None, reply
+            return proposal, None, None, None, reply
         if name == "list_experiments":
-            return None, None, None, self.resolve_list_experiments(args, requesting_username)
+            return None, None, None, None, self.resolve_list_experiments(args, requesting_username)
         if name == "system_status":
-            return None, None, None, self.resolve_system_status()
+            return None, None, None, None, self.resolve_system_status()
         if name == "my_settings":
-            return None, None, None, self._resolve_my_settings(requesting_username)
+            return None, None, None, None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
-            return None, None, None, self._resolve_my_storage(requesting_username)
+            return None, None, None, None, self._resolve_my_storage(requesting_username)
         if name == "read_experiment_log":
-            return None, None, None, self._resolve_read_experiment_log(args, requesting_username)
+            return None, None, None, None, self._resolve_read_experiment_log(args, requesting_username)
         if name == "check_my_images":
-            return None, None, None, await self._resolve_check_my_images(args, requesting_username)
+            return None, None, None, None, await self._resolve_check_my_images(args, requesting_username)
         if name == "show_image":
             image, reply = self._resolve_show_image(args, requesting_username)
-            return None, image, None, reply
+            return None, image, None, None, reply
         if name == "describe_image":
             image, reply = await self._resolve_describe_image(args, requesting_username)
-            return None, image, None, reply
+            return None, image, None, None, reply
         if name == "download_experiment":
             download, reply = self._resolve_download_experiment(args, requesting_username)
-            return None, None, download, reply
+            return None, None, download, None, reply
         if name == "upload_experiment_to_remote":
-            return None, None, None, await self._resolve_upload_to_remote(args, requesting_username)
+            return None, None, None, None, await self._resolve_upload_to_remote(args, requesting_username)
+        if name == "take_snapshot":
+            live_image, reply = await self._resolve_take_snapshot(requesting_username)
+            return None, None, None, live_image, reply
+        if name == "take_screenshot":
+            live_image, reply = await self._resolve_take_screenshot()
+            return None, None, None, live_image, reply
         log.warning("model called unknown tool %r", name)
-        return None, None, None, "Sorry, something went wrong handling that request."
+        return None, None, None, None, "Sorry, something went wrong handling that request."
+
+    async def _resolve_take_snapshot(
+        self, requesting_username: Optional[str]
+    ) -> Tuple[Optional[AssistantLiveImageRef], str]:
+        """Tool wrapper around capture_snapshot -- reused as-is by
+        telegram_link.py's /snapshot slash command, so the natural-language
+        and slash-command paths always agree on what "a snapshot" means."""
+        if not requesting_username:
+            return None, "I don't know who's chatting -- pick your username on the home screen first."
+        frame, message = await self.capture_snapshot(requesting_username)
+        if frame is None:
+            return None, message
+        live_image = AssistantLiveImageRef(
+            mimeType="image/jpeg",
+            base64Data=base64.b64encode(frame).decode("ascii"),
+            caption=message,
+        )
+        return live_image, message
+
+    async def _resolve_take_screenshot(self) -> Tuple[Optional[AssistantLiveImageRef], str]:
+        """Tool wrapper around capture_kiosk_screenshot -- reused as-is by
+        telegram_link.py's /screenshot slash command. Device-wide, unlike
+        _resolve_take_snapshot: no requesting_username needed."""
+        try:
+            png = await capture_kiosk_screenshot()
+        except KioskScreenshotUnavailable as exc:
+            return None, f"Couldn't capture the screen: {exc}"
+        caption = "Current kiosk screen."
+        live_image = AssistantLiveImageRef(
+            mimeType="image/png",
+            base64Data=base64.b64encode(png).decode("ascii"),
+            caption=caption,
+        )
+        return live_image, caption
 
     def resolve_prefill_experiment(
         self, args: dict, requesting_username: Optional[str]

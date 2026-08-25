@@ -445,6 +445,11 @@ export interface AssistantMessage {
    *  echoed back in `history` -- the backend only ever reads `.content`. */
   image?: AssistantImageRef | null;
   download?: AssistantDownloadRef | null;
+  /** Frontend-only, and deliberately NOT persisted to chat history storage
+   *  (see AssistantChat.tsx's send()) -- a base64 photo is too heavy to keep
+   *  piling into localStorage across a 24h window, and it was a snapshot of
+   *  one specific moment anyway, not something worth reloading later. */
+  liveImage?: AssistantLiveImageRef | null;
 }
 
 /** One real, already-captured image resolved by the show_image tool --
@@ -484,11 +489,21 @@ export interface ExperimentProposal {
   config: SavedExperimentConfig;
 }
 
+/** A snapshot/screenshot captured live for this one reply -- unlike
+ *  AssistantImageRef, there's no persisted file or URL to point at, so the
+ *  bytes ride along inline as base64 (see rapidboxes/models.py). */
+export interface AssistantLiveImageRef {
+  mimeType: string;
+  base64Data: string;
+  caption: string;
+}
+
 export interface AssistantChatResponse {
   reply: string;
   proposal: ExperimentProposal | null;
   image: AssistantImageRef | null;
   download: AssistantDownloadRef | null;
+  liveImage: AssistantLiveImageRef | null;
 }
 
 /** AI-generated end-of-run summary (rapidboxes/assistant/summary.py),
