@@ -33,9 +33,11 @@ from rapidboxes.models import (
     ExperimentPhase,
     ExperimentState,
     RecoveryNotice,
+    RemoteSyncSettings,
     SavedExperimentConfig,
     TropismConfig,
 )
+from rapidboxes.remote_sync import RemoteSyncService
 from rapidboxes.storage import Storage
 
 
@@ -1046,6 +1048,116 @@ async def test_download_experiment_range_never_packages_another_users_run(app_co
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", firstN=1)
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "couldn't find" in reply
+
+
+# --- upload_experiment_to_remote: on-demand CIFS upload, strictly scoped ---
+
+
+def _connected_remote_sync(app_config: AppConfig, tmp_path: Path) -> RemoteSyncService:
+    service = RemoteSyncService(
+        RemoteSyncSettings(enabled=True, server="//host.example.org/share", username="LHR", researcher="ivan"),
+        storage_root=app_config.storage_root,
+        simulation=True,
+        mount_point=tmp_path / "mnt",
+    )
+    service.set_password("s3cret")
+    return service
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_requires_a_known_username(app_config: AppConfig, tmp_path: Path):
+    storage = Storage(app_config.storage_root)
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert download is None
+    assert "don't know who's chatting" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_when_not_configured_at_all(app_config: AppConfig):
+    """No RemoteSyncService attached at all (never wired up) -- same
+    degrade-gracefully precedent as an unconfigured Telegram bot."""
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)  # remote_sync=None
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "isn't connected" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_when_sync_is_switched_off(app_config: AppConfig, tmp_path: Path):
+    storage = Storage(app_config.storage_root)
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    remote_sync.settings.enabled = False
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "isn't connected" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_when_password_missing_after_restart(app_config: AppConfig, tmp_path: Path):
+    storage = Storage(app_config.storage_root)
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    remote_sync.clear_password()
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "isn't connected" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_no_experiment_found(app_config: AppConfig, tmp_path: Path):
+    storage = Storage(app_config.storage_root)
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert download is None
+    assert "couldn't find" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_copies_real_files_and_reports_the_real_path(app_config: AppConfig, tmp_path: Path):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+
+    assert download is None  # text-only tool, no structured ref
+    assert "Copied" in reply
+    destination = remote_sync.remote_path_for("ivan") / exp.experiment_id
+    assert str(destination) in reply
+    assert (destination / "dark_00000.png").exists()
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_never_packages_another_users_run(app_config: AppConfig, tmp_path: Path):
+    """upload_experiment_to_remote's schema takes no username -- even if
+    sabol has a run and ivan asks, only ivan's own experiments are ever
+    candidates, and it would land in ivan's own remote folder, never
+    sabol's."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("sabol", "sabol-run")
+    exp.write_metadata({"username": "sabol", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    service = AssistantService(app_config, storage, remote_sync=remote_sync)
+    call = _tool_call("upload_experiment_to_remote")
     _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply

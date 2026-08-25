@@ -235,6 +235,14 @@ one, since people often don't know the second one exists:
    also back-fill everything already captured locally via "Sync Entire
    Folder". Requires one-time setup (server/username/password) — see the
    step-by-step walkthrough right below.
+3. **Ask PidiBot to upload one experiment** (upload_experiment_to_remote
+   tool) — only works while Remote Sync is already switched on and
+   connected (it never turns sync on or asks for a password itself); copies
+   one specific past experiment to that same network share, into a folder
+   named after *whoever's chatting*, not necessarily whatever "researcher"
+   Remote Sync is currently auto-syncing as. Useful for "I never had sync on
+   for that run, can you put it on the drive now" without needing to touch
+   Settings at all.
 
 If someone asks "how do I download my images" and only Gallery seems to
 apply, still mention Remote Sync as the alternative for not having to
@@ -455,6 +463,16 @@ specific real experiment, not how something works in general:
   applies the same way to a partial zip, it's just usually much smaller).
   Use for "zip up"/"send me"/"download" a whole experiment or a range of
   images -- for exactly one image use show_image.
+- **upload_experiment_to_remote** — copies one of that user's own
+  experiments to the already-connected network drive (CIFS/SMB), into a
+  folder named after them, and reports back the real path. Only works if
+  Remote Sync is currently switched on and connected (Settings → General →
+  Remote Sync) -- if it's off or the password needs re-entering after a
+  restart, say so plainly rather than attempting anything; this tool never
+  turns sync on or supplies a password itself. Use for "upload"/"copy"/
+  "put" an experiment "on the network drive"/"the share"/"the server" --
+  for a zip to actually download or receive over Telegram use
+  download_experiment instead.
 
 Beyond those specific lookups, you cannot see raw sensor data or anything
 not covered by a tool above.

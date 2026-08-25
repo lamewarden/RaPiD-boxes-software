@@ -134,7 +134,7 @@ async def lifespan(app: FastAPI):
     # HardwareManager.restore_experiment_settings) -- read it back from hw
     # rather than the pre-recover() `device_settings`, so GET /api/settings
     # and the Camera Settings UI agree with what's actually driving captures.
-    assistant = AssistantService(config, storage, runner)
+    assistant = AssistantService(config, storage, runner, sync)
     telegram.attach_assistant(assistant)
     app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)

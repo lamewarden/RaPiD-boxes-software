@@ -612,6 +612,67 @@ async def test_bulk_sync_copies_only_this_researchers_experiments(client: AsyncC
     assert "Copied" in (status["bulkMessage"] or "")
 
 
+# ---------------------------------------------------------------------------
+# 6. sync_experiment -- on-demand upload of exactly one experiment (the
+#    assistant's upload_experiment_to_remote tool, not the automatic path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_experiment_copies_only_that_one_run(tmp_path: Path):
+    root = tmp_path / "experiments"
+    root.mkdir()
+    for name, owner in [("2026-01-01_alice_run-a", "alice"), ("2026-01-02_alice_run-b", "alice")]:
+        exp = root / name
+        (exp / "thumbs").mkdir(parents=True)
+        (exp / "dark_00000.jpg").write_bytes(b"jpeg-bytes")
+        (exp / "thumbs" / "dark_00000.jpg").write_bytes(b"thumb")
+        (exp / "metadata.json").write_text(json.dumps({"username": owner}))
+
+    service = make_service(tmp_path, storage_root=root)
+    ok, message, copied = await service.sync_experiment("alice", "2026-01-01_alice_run-a")
+
+    assert ok is True
+    assert copied == 2  # dark_00000.jpg + metadata.json, not the thumb
+    assert "Copied" in message
+    destination = service.remote_path_for("alice")
+    assert (destination / "2026-01-01_alice_run-a" / "dark_00000.jpg").exists()
+    assert (destination / "2026-01-01_alice_run-a" / "metadata.json").exists()
+    assert not (destination / "2026-01-01_alice_run-a" / "thumbs").exists()
+    # The other, non-requested experiment must not have been touched.
+    assert not (destination / "2026-01-02_alice_run-b").exists()
+
+
+@pytest.mark.asyncio
+async def test_sync_experiment_when_sync_is_off(tmp_path: Path):
+    service = make_service(tmp_path, settings=RemoteSyncSettings(enabled=False, researcher="alice"))
+    ok, message, copied = await service.sync_experiment("alice", "does-not-matter")
+    assert ok is False
+    assert copied == 0
+    assert "isn't connected" in message
+
+
+@pytest.mark.asyncio
+async def test_sync_experiment_when_password_missing_after_restart(tmp_path: Path):
+    service = make_service(tmp_path)
+    service.clear_password()  # simulates the post-restart credentialsRequired state
+    ok, message, copied = await service.sync_experiment("alice", "does-not-matter")
+    assert ok is False
+    assert copied == 0
+    assert "isn't connected" in message
+
+
+@pytest.mark.asyncio
+async def test_sync_experiment_for_a_nonexistent_folder(tmp_path: Path):
+    root = tmp_path / "experiments"
+    root.mkdir()
+    service = make_service(tmp_path, storage_root=root)
+    ok, message, copied = await service.sync_experiment("alice", "not-a-real-experiment")
+    assert ok is False
+    assert copied == 0
+    assert "isn't a real experiment folder" in message
+
+
 @pytest.mark.asyncio
 async def test_simulation_mode_degrades_gracefully_without_a_cifs_server(client: AsyncClient):
     """The whole stack must stay usable on a dev laptop with no share."""

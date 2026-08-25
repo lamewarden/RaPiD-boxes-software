@@ -36,6 +36,7 @@ from ..models import (
     ExperimentProposal,
     SavedExperimentConfig,
 )
+from ..remote_sync import RemoteSyncService
 from ..storage import ExperimentDir, Storage, tally_by_user
 from . import vision
 
@@ -371,6 +372,34 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "upload_experiment_to_remote",
+            "description": (
+                "Copies one of the CURRENT user's own experiments to the "
+                "connected network drive (CIFS/SMB, Settings -> General -> "
+                "Remote Sync), into their own folder there, and reports "
+                "back the real path once it's done. Only works if remote "
+                "sync is currently switched on and connected -- if it "
+                "isn't, say so rather than trying. Use when asked to "
+                "\"upload\"/\"copy\"/\"put\" an experiment \"on the network "
+                "drive\"/\"on the share\"/\"on the server\" -- for a zip to "
+                "download or send via Telegram use download_experiment "
+                "instead. Always scoped to whoever is chatting -- can only "
+                "copy their own experiments, never another user's."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -413,9 +442,15 @@ class AssistantService:
         config: AppConfig,
         storage: Storage,
         runner: Optional[ExperimentRunner] = None,
+        remote_sync: Optional[RemoteSyncService] = None,
     ):
         self._config = config
         self._storage = storage
+        # Read-only-ish: the one tool that has a real, visible side effect
+        # (upload_experiment_to_remote copies files to the CIFS share) goes
+        # through this. Optional for the same reason `runner` is -- tests
+        # that never exercise that tool don't need a real RemoteSyncService.
+        self._remote_sync = remote_sync
         # Read-only: current experiment status and camera availability
         # (system_status tool). Never used to start/stop/change anything --
         # see the module docstring; the assistant only ever reads the
@@ -521,8 +556,12 @@ class AssistantService:
         """Dispatches one native tool_calls entry to its resolver. Only
         prefill_experiment ever carries a proposal, only show_image/
         describe_image carry an image, and only download_experiment carries
-        a download -- every other tool is a read-only lookup, answered
-        directly. my_settings/my_storage deliberately ignore any username
+        a download -- every other tool answers with text alone. Most of
+        those are read-only lookups; upload_experiment_to_remote is the one
+        exception with a real side effect (it copies files to the CIFS
+        share), reported back as plain text rather than a structured ref
+        since there's no new local artifact to point at, unlike download's
+        zip. my_settings/my_storage deliberately ignore any username
         the model might put in args (their schema takes none) and always use
         requesting_username -- unlike list_experiments/prefill_experiment,
         which may look up a named other user, these two never do."""
@@ -558,6 +597,8 @@ class AssistantService:
         if name == "download_experiment":
             download, reply = self._resolve_download_experiment(args, requesting_username)
             return None, None, download, reply
+        if name == "upload_experiment_to_remote":
+            return None, None, None, await self._resolve_upload_to_remote(args, requesting_username)
         log.warning("model called unknown tool %r", name)
         return None, None, None, "Sorry, something went wrong handling that request."
 
@@ -1045,6 +1086,43 @@ class AssistantService:
         if not selected:
             return None, f"That range doesn't match any of {exp.experiment_id}'s {len(images)} image(s)."
         return [img["id"] for img in selected], None
+
+    async def _resolve_upload_to_remote(self, args: dict, requesting_username: Optional[str]) -> str:
+        """Copies one of the requester's own experiments to the connected
+        network share (CIFS/SMB) via RemoteSyncService.sync_experiment, into
+        their own subfolder there -- never invents a path, always the real
+        remote_sync.py layout (<mount>/<researcher>/<experiment>/...).
+        Strictly scoped like download_experiment/read_experiment_log: only
+        ever the requester's own experiments and their own subfolder,
+        regardless of whoever else's device sync might currently be
+        configured for.
+
+        Doesn't attempt to turn sync on, connect, or ask for a password --
+        same "degrades gracefully, no crash, tell them what to do instead"
+        precedent as every other optional-infrastructure tool here
+        (Telegram, remote sync's own credentialsRequired state in the UI)."""
+        if not requesting_username:
+            return "I don't know who's chatting -- pick your username on the home screen first."
+        if self._remote_sync is None or not self._remote_sync.settings.enabled or not self._remote_sync.password_set:
+            return (
+                "Remote sync isn't connected right now -- turn it on and connect "
+                "in Settings -> General -> Remote Sync first."
+            )
+
+        target_user = requesting_username.strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return (
+                f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
+                "Try being more specific about which run."
+            )
+
+        ok, message, _copied = await self._remote_sync.sync_experiment(target_user, exp.experiment_id)
+        if not ok:
+            return message
+        remote_path = self._remote_sync.remote_path_for(target_user) / exp.experiment_id
+        return f"{message} It's on the network drive at {remote_path}."
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

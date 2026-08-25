@@ -693,6 +693,54 @@ class RemoteSyncService:
         finally:
             self._bulk_in_progress = False
 
+    # --- on-demand "upload this one experiment now" -----------------------
+    async def sync_experiment(self, researcher: str, experiment_id: str) -> Tuple[bool, str, int]:
+        """Copies exactly one local experiment folder to the share -- distinct
+        from enqueue_bulk (every local experiment for a researcher) and
+        enqueue_image (one just-captured file, fire-and-forget from the
+        capture path). This is called directly (not queued) by the
+        assistant's upload_experiment_to_remote tool, so a chat request gets
+        a real answer -- and a real remote path -- back in the same turn,
+        rather than a queued background job with nothing to report yet.
+
+        `researcher` is always the requester's own username (see
+        assistant/service.py's _resolve_upload_to_remote) -- each researcher
+        has their own subfolder on the share (see the module docstring's
+        remote layout), so this can never write into someone else's folder,
+        regardless of whoever `self.settings.researcher` currently is.
+
+        Returns (ok, message, files_copied). Never raises -- same
+        never-break-the-caller precedent as every other public method here.
+        """
+        if not self.settings.enabled or not self._password:
+            return False, "Remote sync isn't connected right now.", 0
+        exp_dir = self._storage_root / experiment_id
+        if not exp_dir.is_dir():
+            return False, f"{experiment_id} isn't a real experiment folder.", 0
+
+        ok, message = await self.mount()
+        if not ok:
+            return False, f"Could not connect to the remote share: {message}", 0
+
+        copied = 0
+        failed = 0
+        for src in self._files_to_sync(exp_dir):
+            if await self._copy_one(src, researcher, experiment_id):
+                copied += 1
+            else:
+                failed += 1
+                self._defer(src, researcher, experiment_id)
+
+        if copied == 0 and failed == 0:
+            return False, f"{experiment_id} has no files to copy.", 0
+        if failed:
+            return (
+                False,
+                f"Copied {copied} of {copied + failed} file(s) -- {failed} failed and will retry automatically.",
+                copied,
+            )
+        return True, f"Copied {copied} file{'' if copied == 1 else 's'} to the remote share.", copied
+
     def _experiments_for(self, researcher: str) -> List[Path]:
         """This researcher's local experiment folders.
 
