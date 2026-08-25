@@ -5,6 +5,7 @@ import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
 import { clearChatHistory, loadChatHistory, saveChatHistory } from "@/lib/assistantHistory";
+import { renderMarkdownLite } from "@/lib/markdownLite";
 import type { AssistantMessage, ExperimentProposal } from "@shared/api";
 
 /**
@@ -145,7 +146,7 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
                 : "self-start bg-app-bg-secondary text-app-text-secondary"
             }`}
           >
-            {m.content}
+            {renderMarkdownLite(m.content)}
           </div>
         ))}
 
