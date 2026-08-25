@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Sparkles, Sprout, Sun } from "lucide-react";
+import { Sprout, Sun } from "lucide-react";
 import TopNav from "@/components/TopNav";
 import AssistantChat from "@/components/AssistantChat";
 
@@ -18,9 +18,8 @@ export default function Index() {
             title="IEB Image Facility raPIDBOx assistanT"
             className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/15 px-7 py-3 text-white shadow-lg transition-colors hover:bg-white/25"
           >
-            <img src="/pidibot-logo.png" alt="" className="h-[28px] w-[28px] object-contain" />
+            <img src="/pidibot-logo.png" alt="" className="h-[44px] w-[44px] object-contain" />
             <span className="text-[18px] font-bold">PidiBot</span>
-            <Sparkles className="h-[19px] w-[19px] text-white" strokeWidth={1.5} />
           </button>
           <h2 className="text-xl font-bold text-white mb-2">Select Your Program</h2>
           <p className="text-app-text-secondary text-sm mb-4">
