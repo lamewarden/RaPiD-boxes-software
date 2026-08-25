@@ -94,32 +94,50 @@ settings** — the API rejects changes with 409 "cannot change settings while
 an experiment is running" while one is active. This is intentional: you
 can't accidentally corrupt a run in progress by fiddling with Settings.
 
-### Camera & Illumination settings, in detail
+### Settings: Camera tab
 
-Two light sources, each with its own exposure range the camera auto-snaps
-to when you switch (so switching source can never leave you at an exposure
-that blacks out or blows out every capture):
+These fields live on the **Camera** tab specifically — not Illumination,
+even though one of them (exposure) is tied to which illumination source is
+active. The Camera tab has: Resolution, Color Mode, **Exposure**, ISO,
+Focus Mode, Focus Distance, and Zoom.
 
-- **IR** — the infrared illuminator, used for the Tropism dark phase and any
-  low-disturbance capture. Long exposures: 0.2 s–10 s, default 1.0 s (the
-  slider moves in 0.2 s notches).
-- **RGBW** — the visible-light LED flash. Short exposures: 10 ms–500 ms,
-  default 100 ms.
+- **Exposure** — its slider range depends on the illumination source
+  currently selected on the *Illumination* tab (see below), but the slider
+  itself, and the number you actually drag, is here on the Camera tab:
+  - **IR** source active → long exposures, 0.2 s–10 s, default 1.0 s (0.2 s
+    notches).
+  - **RGBW** source active → short exposures, 10 ms–500 ms, default 100 ms.
+  - Manually picking a value outside the current source's range snaps back
+    to that source's default automatically — not a bug, the guard against a
+    blacked-out or blown-out run.
+- **Zoom** — a **digital** center-crop (1.0x–5.0x): crops the middle of the
+  frame and scales back up to the configured resolution, applied to every
+  capture (experiment images and test photos alike), not just a preview
+  convenience.
+- **Focus Distance** is in **diopters** (1/metres), not centimetres — 10.0
+  focuses at 1/10 m = 10 cm; higher numbers focus closer.
 
-If you manually pick an exposure outside the new source's range, it snaps
-back to that source's default automatically — this is not a bug, it's the
-guard that stops a blacked-out or blown-out run.
+### Settings: Illumination tab
 
-Camera zoom is a **digital** center-crop (1.0x–5.0x) — it crops the middle
-of the frame and scales back up to the configured resolution, applied to
-every capture (experiment images and test photos alike), not just a preview
-convenience. Focus distance is in **diopters** (1/metres), not centimetres —
-10.0 focuses at 1/10 m = 10 cm; higher numbers focus closer.
+A **different** tab from Camera — no exposure/zoom/focus controls live
+here. What's actually on this tab:
 
-Where a change actually lands depends on which of the three "kinds of
-saved" above you're touching — see that section before telling someone
-"just change it in Settings," since the effect (this session only vs.
-forever vs. only when you load your own "Mine") differs a lot.
+- **Photo Illumination source picker** — the IR vs. RGBW toggle discussed
+  above. Each button shows its *resulting* exposure as informational text
+  (e.g. "1.0 s exposure") — that's a preview of what picking this source
+  will do to the Camera tab's exposure slider, **not an editable exposure
+  control itself**. Don't describe exposure as something you set here; you
+  only choose the light source here, and exposure follows from that choice
+  over on Camera.
+- **LED wiring** — pixel count, pixel order, top segment, lateral segment,
+  LED spacing/stride (how many pixels are skipped within a lit segment).
+- **IR board pins** — the two IR illuminator boards' GPIO pins (Board 1 /
+  Board 2).
+
+Where a change actually lands (either tab) depends on which of the three
+"kinds of saved" above you're touching — see that section before telling
+someone "just change it in Settings," since the effect (this session only
+vs. forever vs. only when you load your own "Mine") differs a lot.
 
 ### Settings: General tab
 
