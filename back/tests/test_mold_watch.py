@@ -56,7 +56,7 @@ async def telegram(app_config: AppConfig, monkeypatch):
     """Not `configured` (no token) so no real background polling runs --
     send_message is replaced with a recording stub so mold_watch's own
     behavior (does it call send, with what) can be asserted."""
-    service = TelegramLinkService(None, None, app_config.telegram_links_path)
+    service = TelegramLinkService(None, None, app_config.telegram_links_path, Storage(app_config.storage_root))
     sent = []
 
     async def fake_send(username, text):

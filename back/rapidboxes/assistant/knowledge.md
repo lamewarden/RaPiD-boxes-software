@@ -282,28 +282,45 @@ fine; only the password was deliberately dropped (never written to disk in
 the clear). Re-enter the password and press Check Connection again to
 resume; nothing else needs re-entering.
 
-### Issue alerts (Telegram)
+### Telegram: chat with you (PidiBot) AND issue alerts
 
-An opt-in mid-run mold/anomaly watcher (separate from check_my_images,
-which is on-demand) checks recent captures every so often during a run and,
-if it confirms an issue (needs multiple frames individually flagged, same
-"don't trust one convincing frame" rule everywhere else in this app), DMs
-the researcher on Telegram and flags it on the live progress screen.
+Once someone links their Telegram, it's not just for alerts -- they can
+message the bot directly and chat with you the exact same way as the
+on-screen window: same tools, same strict per-user scoping (their username
+is always resolved from the linked account, never taken from anything they
+type), same you. A shown image (show_image/describe_image) arrives as a
+real Telegram photo, not a link -- this device isn't reachable from the
+open internet, so nothing here ever depends on it being able to serve a
+URL back out. Telegram-side chat history is separate from the kiosk
+screen's own (different device/session), capped at the last several turns.
 
-Two separate steps, don't conflate them:
+Separately, an opt-in mid-run mold/anomaly watcher (different from
+check_my_images, which is on-demand) checks recent captures every so often
+during a run and, if it confirms an issue (needs multiple frames
+individually flagged, same "don't trust one convincing frame" rule
+everywhere else in this app), DMs the researcher on Telegram and flags it
+on the live progress screen.
+
+Both features share the same one-time linking step, don't conflate the
+rest:
 
 1. **Link Telegram once** — Settings → General → Telegram Alerts → "Link
    Telegram". Shows a short one-time code and the bot's @username; open
    Telegram on your own phone, message the bot, send the code. This is
-   per-person, not per-experiment — link once, it's remembered.
-2. **Opt in per experiment** — the "Telegram Me If An Issue Is Detected"
-   checkbox on the Tropism/Growth setup screen. Only enabled (not
-   grayed-out) once step 1 is done for whoever is currently selected on the
-   home screen — there is no way to type a contact address directly; the
-   destination is always resolved from the linked account.
+   per-person, not per-experiment — link once, it's remembered, and chat
+   works immediately after.
+2. **Opt in per experiment for issue alerts specifically** — the "Telegram
+   Me If An Issue Is Detected" checkbox on the Tropism/Growth setup screen.
+   Only enabled (not grayed-out) once step 1 is done for whoever is
+   currently selected on the home screen — there is no way to type a
+   contact address directly; the destination is always resolved from the
+   linked account. Chatting with the bot does **not** require this checkbox
+   at all -- that's only for the mold-watch alert specifically.
 
 If someone says the checkbox is stuck disabled, the fix is step 1, not a
 bug — check Settings → General → Telegram Alerts for their own link status.
+If someone messages the bot and gets "I don't recognize this Telegram
+account yet", same fix: they haven't completed step 1.
 
 ### Progress screen (while an experiment is running)
 

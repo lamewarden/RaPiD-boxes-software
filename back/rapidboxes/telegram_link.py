@@ -1,12 +1,14 @@
-"""Opt-in issue-alert delivery over Telegram (see assistant/mold_watch.py),
-replacing an earlier email-based design that was deferred for lack of any
-mail infrastructure. Telegram was chosen specifically because it needs
-neither a personal mailbox for the device nor any institutional mail relay
--- just a bot token (created once via @BotFather) and a per-researcher
-linking step.
+"""Telegram integration: opt-in issue-alert delivery (see
+assistant/mold_watch.py) AND a full chat interface to PidiBot, both riding
+the same linked account. Telegram was chosen for alerts specifically
+because it needs neither a personal mailbox for the device nor any
+institutional mail relay -- just a bot token (created once via @BotFather)
+and a per-researcher linking step; chat came after, once linking already
+existed, by routing any message that isn't a link code to the same
+AssistantService the web UI uses.
 
 Linking flow (private DM per researcher, not one shared group -- so an
-alert only ever reaches the person who opted in for their own experiment):
+alert, and a chat session, only ever reaches the person who opted in):
 
 1. A researcher taps "Link" in Settings -> General -> Telegram Alerts. The
    backend hands back a short-lived one-time code (request_link_code) and
@@ -16,7 +18,10 @@ alert only ever reaches the person who opted in for their own experiment):
 3. This service's background poll (Telegram's getUpdates, no webhook/public
    URL needed -- this device is not internet-reachable) picks up the
    message, matches the code, and persists chat_id under that username.
-4. From then on, send_message(username, text) can DM them directly.
+4. From then on, send_message(username, text) can DM them directly, and any
+   other message from that chat is treated as a chat turn with PidiBot (see
+   _handle_chat_message) -- same assistant, same tools, same strict
+   per-user scoping, just a different transport than the kiosk screen.
 
 Deliberately optional infrastructure: unset bot_token/bot_username means
 "not configured yet", not an error -- every public method degrades
@@ -30,18 +35,49 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import httpx
+
+from .assistant.service import AssistantUnavailable
+from .models import AssistantImageRef, AssistantMessage
+from .storage import Storage
+
+if TYPE_CHECKING:
+    from .assistant.service import AssistantService
 
 log = logging.getLogger("rapidboxes.telegram")
 
 API_BASE = "https://api.telegram.org"
 LINK_CODE_TTL_S = 600.0  # 10 minutes -- long enough to switch apps and type it, short enough that a stale code isn't a standing risk.
 POLL_INTERVAL_S = 3.0
+# Turns (user+assistant messages) kept per Telegram chat -- same "don't let
+# this grow forever" reasoning as the web UI's own localStorage history,
+# just server-side since there's no client to hold it for this channel.
+MAX_CHAT_HISTORY = 20
+
+# Same ambiguity the web UI's markdownLite.ts fixes (a bullet's leading
+# "* " misread as the start of an *italic* span), ported to Python since
+# Telegram gets plain text, not React elements, from PidiBot's replies.
+_BULLET_RE = re.compile(r"^(\s*)\*\s+", re.MULTILINE)
+_BOLD_RE = re.compile(r"\*\*([^\n*]+?)\*\*")
+_ITALIC_RE = re.compile(r"(?<!\*)\*([^\n*]+?)\*(?!\*)")
+
+
+def _strip_markdown_lite(text: str) -> str:
+    """Telegram's own Markdown parse modes use a different, stricter syntax
+    (and MarkdownV2 requires escaping most punctuation) -- rather than risk
+    a 400 from an unescaped character in arbitrary LLM output, send plain
+    text with the light markdown PidiBot actually uses stripped out instead
+    of rendered."""
+    text = _BULLET_RE.sub(r"\1• ", text)
+    text = _BOLD_RE.sub(r"\1", text)
+    text = _ITALIC_RE.sub(r"\1", text)
+    return text
 
 
 def _key(username: str) -> str:
@@ -65,14 +101,28 @@ def _save_links(path: Path, links: Dict[str, int]) -> None:
 
 
 class TelegramLinkService:
-    def __init__(self, bot_token: Optional[str], bot_username: Optional[str], links_path: Path):
+    def __init__(
+        self,
+        bot_token: Optional[str],
+        bot_username: Optional[str],
+        links_path: Path,
+        storage: Storage,
+    ):
         self._token = bot_token
         self.bot_username = bot_username
         self._links_path = links_path
         self._links: Dict[str, int] = _load_links(links_path)
+        self._storage = storage
+        # Set via attach_assistant() once AssistantService exists -- it's
+        # constructed after this service, once ExperimentRunner exists (same
+        # deferred-wiring reason as MoldWatchService.attach_runner).
+        self._assistant: Optional["AssistantService"] = None
         # code -> (username, expires_at). Only ever touched from the single
         # event loop thread (API handlers + the poll task), no lock needed.
         self._pending: Dict[str, Tuple[str, float]] = {}
+        # chat_id -> turns, for the chat-over-Telegram feature. Same
+        # single-event-loop-thread reasoning, no lock needed.
+        self._chat_history: Dict[int, List[AssistantMessage]] = {}
         self._update_offset = 0
         self._worker: Optional[asyncio.Task] = None
         self._client = httpx.AsyncClient(base_url=API_BASE, timeout=15.0)
@@ -83,6 +133,9 @@ class TelegramLinkService:
 
     def is_linked(self, username: str) -> bool:
         return _key(username) in self._links
+
+    def attach_assistant(self, assistant: "AssistantService") -> None:
+        self._assistant = assistant
 
     def request_link_code(self, username: str) -> str:
         """Fresh one-time code for `username`, replacing any still-pending
@@ -106,6 +159,9 @@ class TelegramLinkService:
         if chat_id is None:
             log.info("telegram not linked for %s; cannot send: %s", username, text)
             return False
+        return await self._send_raw(chat_id, text)
+
+    async def _send_raw(self, chat_id: int, text: str) -> bool:
         try:
             res = await self._client.post(
                 f"/bot{self._token}/sendMessage", json={"chat_id": chat_id, "text": text}
@@ -113,8 +169,30 @@ class TelegramLinkService:
             res.raise_for_status()
             return True
         except httpx.HTTPError as exc:
-            log.warning("telegram sendMessage failed for %s: %s", username, exc)
+            log.warning("telegram sendMessage failed for chat %s: %s", chat_id, exc)
             return False
+
+    async def _send_photo(self, chat_id: int, image: AssistantImageRef) -> None:
+        """Sends the same thumbnail the web chat shows inline -- Telegram's
+        `photo` param would need a URL it can fetch itself, but this device
+        isn't internet-reachable (same reason polling is used over a
+        webhook), so the file is uploaded directly instead."""
+        exp = self._storage.get_experiment(image.experimentId)
+        if exp is None:
+            return
+        path = exp.thumb_file(image.imageId)
+        if path is None:
+            return
+        try:
+            data = path.read_bytes()
+            res = await self._client.post(
+                f"/bot{self._token}/sendPhoto",
+                data={"chat_id": str(chat_id), "caption": image.caption},
+                files={"photo": (path.name, data, "image/jpeg")},
+            )
+            res.raise_for_status()
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("telegram sendPhoto failed for chat %s: %s", chat_id, exc)
 
     # --- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -147,7 +225,7 @@ class TelegramLinkService:
     async def _poll_once(self) -> None:
         # Long-polling (timeout>0) would tie up this connection for the
         # whole poll window; a short interval with timeout=0 is simpler and
-        # plenty responsive for a "type a 6-digit code" flow.
+        # plenty responsive for both the linking code and chat.
         res = await self._client.get(
             f"/bot{self._token}/getUpdates", params={"offset": self._update_offset, "timeout": 0}
         )
@@ -159,28 +237,69 @@ class TelegramLinkService:
             chat_id = (message.get("chat") or {}).get("id")
             if chat_id is None or not text:
                 continue
-            await self._try_complete_link(text, chat_id)
+            if await self._try_complete_link(text, chat_id):
+                continue
+            await self._handle_chat_message(chat_id, text)
 
-    async def _try_complete_link(self, text: str, chat_id: int) -> None:
+    async def _try_complete_link(self, text: str, chat_id: int) -> bool:
+        """Returns True if `text` was a valid pending code (and has now been
+        consumed) -- callers use this to decide whether to also treat the
+        message as a chat turn."""
         now = time.monotonic()
         self._pending = {c: (u, exp) for c, (u, exp) in self._pending.items() if exp > now}
         entry = self._pending.pop(text, None)
         if entry is None:
-            return
+            return False
         username, _ = entry
         self._links[username] = chat_id
         _save_links(self._links_path, self._links)
         log.info("telegram linked for %s", username)
-        try:
-            await self._client.post(
-                f"/bot{self._token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": (
-                        f'✅ Linked to RapiDBoxes as "{username}". You\'ll get a message here '
-                        "if an issue is detected during an experiment you opted in on."
-                    ),
-                },
+        await self._send_raw(
+            chat_id,
+            f'✅ Linked to RapiDBoxes as "{username}". You can chat with PidiBot right here, '
+            "and you'll get a message if an issue is detected during an experiment you opted "
+            "in on.",
+        )
+        return True
+
+    def _username_for_chat(self, chat_id: int) -> Optional[str]:
+        for username, linked_chat_id in self._links.items():
+            if linked_chat_id == chat_id:
+                return username
+        return None
+
+    async def _handle_chat_message(self, chat_id: int, text: str) -> None:
+        """Routes a non-code message to the same AssistantService the web
+        chat uses -- same tools, same strict per-user scoping (the
+        `username` passed here is never taken from anything the sender
+        typed, only from the link store), just a different transport."""
+        username = self._username_for_chat(chat_id)
+        if username is None:
+            await self._send_raw(
+                chat_id,
+                "I don't recognize this Telegram account yet -- link it first on the device: "
+                "Settings → General → Telegram Alerts.",
             )
-        except httpx.HTTPError:
-            pass  # best-effort confirmation only -- the link itself already succeeded
+            return
+        if self._assistant is None:
+            await self._send_raw(chat_id, "Chat isn't available right now -- try again shortly.")
+            return
+
+        history = self._chat_history.setdefault(chat_id, [])
+        try:
+            response = await self._assistant.chat(text, history, username)
+        except AssistantUnavailable as exc:
+            await self._send_raw(chat_id, f"The assistant isn't reachable right now: {exc}")
+            return
+        except Exception:
+            log.exception("telegram chat dispatch failed for %s", username)
+            await self._send_raw(chat_id, "Something went wrong handling that -- try again.")
+            return
+
+        history.append(AssistantMessage(role="user", content=text))
+        history.append(AssistantMessage(role="assistant", content=response.reply))
+        del history[:-MAX_CHAT_HISTORY]
+
+        await self._send_raw(chat_id, _strip_markdown_lite(response.reply))
+        if response.image is not None:
+            await self._send_photo(chat_id, response.image)

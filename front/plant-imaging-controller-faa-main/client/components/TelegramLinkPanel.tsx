@@ -79,9 +79,10 @@ export default function TelegramLinkPanel() {
         )}
       </div>
       <p className="mt-1.5 text-[10px] leading-[14px] text-app-text-muted">
-        Link your own Telegram to get a private message here if an issue (e.g. mold) is
-        detected during an experiment you opt into — see the "Telegram Me If An Issue Is
-        Detected" checkbox on the setup screen.
+        Link your own Telegram to chat with PidiBot right from your phone — same assistant, same
+        tools — and to get a private message here if an issue (e.g. mold) is detected during an
+        experiment you opt into (see the "Telegram Me If An Issue Is Detected" checkbox on the
+        setup screen).
       </p>
 
       {code && (

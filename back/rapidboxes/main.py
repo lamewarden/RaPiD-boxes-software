@@ -85,11 +85,11 @@ async def lifespan(app: FastAPI):
     async def on_experiment_finished(exp, status):
         await assistant_summary.generate_and_store(config, exp, status)
 
-    # Opt-in issue-alert delivery (see telegram_link.py). Degrades to a
-    # no-op if no admin has set a bot token/username yet -- see its own
-    # `configured` property.
+    # Opt-in issue-alert delivery + Telegram chat access to PidiBot (see
+    # telegram_link.py). Degrades to a no-op if no admin has set a bot
+    # token/username yet -- see its own `configured` property.
     telegram = TelegramLinkService(
-        config.telegram_bot_token, config.telegram_bot_username, config.telegram_links_path
+        config.telegram_bot_token, config.telegram_bot_username, config.telegram_links_path, storage
     )
     telegram.start()
 
@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI):
     # rather than the pre-recover() `device_settings`, so GET /api/settings
     # and the Camera Settings UI agree with what's actually driving captures.
     assistant = AssistantService(config, storage, runner)
+    telegram.attach_assistant(assistant)
     app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
