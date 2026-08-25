@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, MessageCirclePlus, X } from "lucide-react";
+import { Bot, MessageCirclePlus, RotateCcw, X } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
+import { clearChatHistory, loadChatHistory, saveChatHistory } from "@/lib/assistantHistory";
 import type { AssistantMessage, ExperimentProposal } from "@shared/api";
 
 /**
@@ -18,6 +19,12 @@ import type { AssistantMessage, ExperimentProposal } from "@shared/api";
  * opens straight into the chat -- per-message "Thinking…" is the only
  * loading state needed.
  *
+ * The conversation is persisted per-username in localStorage (see
+ * lib/assistantHistory.ts, ~24h TTL) so closing this overlay and reopening
+ * it doesn't lose the thread -- switching to a *different* username still
+ * starts fresh (each has its own key, and the picker isn't reachable while
+ * this overlay is open anyway). The header's reset icon clears it explicitly.
+ *
  * Safety property this UI must never violate: a returned `proposal` is only
  * ever offered as something to review on the real setup screen (the same
  * `loadedConfig` router-state mechanism TopNav's Import already uses) --
@@ -25,7 +32,8 @@ import type { AssistantMessage, ExperimentProposal } from "@shared/api";
  */
 export default function AssistantChat({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const username = getUsername();
+  const [messages, setMessages] = useState<AssistantMessage[]>(() => loadChatHistory(username));
   const [proposal, setProposal] = useState<ExperimentProposal | null>(null);
   const [composing, setComposing] = useState(false);
   const [sending, setSending] = useState(false);
@@ -34,6 +42,19 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, sending]);
+
+  // Persisted per-username (see lib/assistantHistory.ts) so closing this
+  // overlay and reopening it -- as the same user -- picks the conversation
+  // back up instead of starting over every time.
+  useEffect(() => {
+    saveChatHistory(username, messages);
+  }, [username, messages]);
+
+  const startNewChat = () => {
+    setMessages([]);
+    setProposal(null);
+    clearChatHistory(username);
+  };
 
   const send = async (text: string) => {
     setComposing(false);
@@ -84,12 +105,24 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
           <Bot className="h-[18px] w-[18px] text-app-violet-light" strokeWidth={1.5} />
           QA Assistant
         </span>
-        <button
-          onClick={onClose}
-          className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
-        >
-          <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
-        </button>
+        <div className="flex items-center gap-1">
+          {messages.length > 0 && (
+            <button
+              onClick={startNewChat}
+              disabled={sending}
+              title="Start a new chat (clears this saved conversation)"
+              className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RotateCcw className="h-[18px] w-[18px]" strokeWidth={1.5} />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-app-text-secondary transition-colors hover:bg-app-bg-tertiary hover:text-white"
+          >
+            <X className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          </button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
