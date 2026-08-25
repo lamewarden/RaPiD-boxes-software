@@ -543,6 +543,15 @@ class AssistantService:
                 f"Experiment '{status.experimentId}' ({status.username}) is {status.state.value}, "
                 f"phase {phase}, {status.imagesCaptured}/{status.imagesPlanned} images captured."
             )
+            # recoveryNotice is set once, right after a crash/power-loss/
+            # reboot recovery, and stays on the live status until this
+            # experiment finishes -- surface it here so "was it interrupted"
+            # gets a real answer (outage length + images missed) instead of
+            # silence, which is exactly the info a recovered run's own
+            # events.log line ("recovered: ...") also carries for later
+            # lookup via read_experiment_log.
+            if status.recoveryNotice is not None:
+                running += f"\n{status.recoveryNotice.message}"
 
         usage = shutil.disk_usage(self._config.storage_root)
         free_gb = usage.free / (1024**3)

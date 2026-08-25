@@ -27,7 +27,15 @@ from rapidboxes.config import AppConfig
 from rapidboxes.engine.runner import ExperimentRunner
 from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.main import create_app
-from rapidboxes.models import CameraSettings, DeviceSettings, SavedExperimentConfig, TropismConfig
+from rapidboxes.models import (
+    CameraSettings,
+    DeviceSettings,
+    ExperimentPhase,
+    ExperimentState,
+    RecoveryNotice,
+    SavedExperimentConfig,
+    TropismConfig,
+)
 from rapidboxes.storage import Storage
 
 
@@ -345,6 +353,35 @@ async def test_system_status_reports_idle_storage_and_camera(app_config: AppConf
     assert "No experiment is currently running" in reply
     assert "Storage:" in reply
     assert "Camera:" in reply
+
+
+@pytest.mark.asyncio
+async def test_system_status_reports_a_recovered_interruption(app_config: AppConfig):
+    """A running experiment that survived a crash/power-loss recovery must
+    have that surfaced here -- this is exactly what "was my experiment
+    interrupted?" resolves to, and the answer needs the real outage length
+    and skip count, not just silence."""
+    storage = Storage(app_config.storage_root)
+    hw = build_hardware(app_config, DeviceSettings())
+    runner = ExperimentRunner(hw, storage)
+    runner.status.state = ExperimentState.running
+    runner.status.phase = ExperimentPhase.dark
+    runner.status.experimentId = "2026-01-01_ivan_test"
+    runner.status.username = "ivan"
+    runner.status.imagesCaptured = 5
+    runner.status.imagesPlanned = 100
+    runner.status.recoveryNotice = RecoveryNotice(
+        message="Resumed after ~30 min offline (power loss or reboot) -- 3 images could not be captured.",
+        offlineSeconds=1800.0,
+        imagesSkipped=3,
+    )
+    service = AssistantService(app_config, storage, runner)
+
+    call = _tool_call("system_status")
+    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert proposal is None
+    assert "30 min offline" in reply
+    assert "3 images could not be captured" in reply
 
 
 @pytest.mark.asyncio

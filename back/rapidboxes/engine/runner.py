@@ -451,7 +451,8 @@ class ExperimentRunner:
                 outage_s, max(0, expected - prev.imagesCaptured)
             )
             latest.append_event(
-                f"finished state=done message={self.status.message} (recovered)"
+                f"finished state=done message={self.status.message} -- "
+                f"recovered: {self.status.recoveryNotice.message}"
             )
             self._write_metadata(latest)
             await self._hw.all_off()
@@ -488,6 +489,13 @@ class ExperimentRunner:
             self._pause_event.set()
             self.status.state = ExperimentState.running
             self.status.recoveryNotice = self._build_recovery_notice(outage_s, images_skipped)
+            # The phase-resumed event logged just below (in _enter_phase, via
+            # _run()) only says *where* it resumed, not the outage length or
+            # how many captures were missed -- log the full recoveryNotice
+            # text too, so read_experiment_log/the assistant can answer "was
+            # this run interrupted" with real numbers instead of just the
+            # fact that a resume happened.
+            latest.append_event(f"recovered: {self.status.recoveryNotice.message}")
         else:
             self._pause_event.clear()
             self.status.state = ExperimentState.paused

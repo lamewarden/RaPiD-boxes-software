@@ -149,6 +149,13 @@ async def test_recover_resumes_mid_phase_after_outage_and_reports_skipped_images
     assert runner.status.recoveryNotice.imagesSkipped == 3
     assert runner.status.recoveryNotice.offlineSeconds == pytest.approx(1850.0, abs=5.0)
 
+    # The outage length and skip count must land in events.log too -- not
+    # just the live status -- so read_experiment_log/the assistant can answer
+    # "was this run interrupted" with real numbers, not just "phase resumed".
+    events = runner.current_experiment.read_events()
+    assert "recovered:" in events
+    assert "3 images could not be captured" in events
+
     await runner._task  # run the resumed experiment to completion
 
     assert runner.status.state == ExperimentState.done
@@ -274,6 +281,10 @@ async def test_recover_marks_done_when_whole_schedule_elapsed_offline(tmp_path):
     assert runner.status.phase is None
     assert runner.status.recoveryNotice is not None
     assert runner.status.recoveryNotice.imagesSkipped > 0
+
+    events = runner.current_experiment.read_events()
+    assert "recovered:" in events
+    assert "h offline" in events or "min offline" in events
 
 
 @pytest.mark.asyncio
