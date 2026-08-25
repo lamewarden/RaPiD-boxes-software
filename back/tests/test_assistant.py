@@ -29,6 +29,7 @@ from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.main import create_app
 from rapidboxes.dsm_sharing import DsmSharingService
 from rapidboxes.models import (
+    EXPOSURE_PROFILES,
     CameraSettings,
     DeviceSettings,
     DsmSharingSettings,
@@ -1429,6 +1430,64 @@ async def test_start_experiment_from_launch_leaves_matching_source_untouched(cli
 
 
 @pytest.mark.asyncio
+async def test_start_experiment_from_launch_auto_corrects_stale_exposure_on_source_switch(
+    client: AsyncClient,
+):
+    """The real bug this session found and fixed, isolated: a naive
+    DeviceSettings.model_copy(update=...) would silently skip
+    _couple_exposure_to_source and leave IR's exposure applied under RGBW
+    lighting. Seeds a live exposure that's only valid for IR, switches to
+    RGBW with no camera_overrides at all (the "declined the override"
+    path), and confirms the live exposure lands on RGBW's own default
+    instead of staying stale."""
+    from rapidboxes import settings_store
+
+    app_state = client._app.state.app
+    ir_default = EXPOSURE_PROFILES["ir"]["default"]
+    settings_store.save_device_settings(
+        app_state.config.settings_path,
+        app_state.settings.model_copy(update={"camera": CameraSettings(exposureMicroseconds=ir_default)}),
+    )
+    await app_state.rebuild_hardware(
+        app_state.settings.model_copy(update={"camera": CameraSettings(exposureMicroseconds=ir_default)})
+    )
+    assert app_state.settings.camera.exposureMicroseconds == ir_default
+
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseHours=1,
+        lateralIlluminationHours=0,
+        intervalMinutes=1,
+        photoIlluminationSource="rgbw",
+    )
+    response, _message = await app_state.assistant.start_experiment_from_launch(saved, "run", "ivan")
+
+    assert response.status == "started"
+    assert app_state.settings.photoIlluminationSource == "rgbw"
+    assert app_state.settings.camera.exposureMicroseconds == EXPOSURE_PROFILES["rgbw"]["default"]
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_applies_grayscale_and_exposure_overrides(client: AsyncClient):
+    app_state = client._app.state.app
+    saved = SavedExperimentConfig(
+        protocol="tropism", darkPhaseHours=1, lateralIlluminationHours=0, intervalMinutes=1, photoIlluminationSource="ir"
+    )
+
+    response, _message = await app_state.assistant.start_experiment_from_launch(
+        saved, "run", "ivan", {"grayscale": False, "exposureMicroseconds": 2_000_000}
+    )
+
+    assert response.status == "started"
+    assert app_state.settings.camera.grayscale is False
+    # Explicit, already-validated override -- the coupling validator must
+    # leave a value it finds already in range untouched, not "fix" it away.
+    assert app_state.settings.camera.exposureMicroseconds == 2_000_000
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
 async def test_start_experiment_from_launch_without_runner_or_app_state_degrades(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)  # no runner, no attach_app_state
@@ -1472,13 +1531,26 @@ async def test_launch_wizard_end_to_end_through_telegram_actually_starts_a_run(c
     await telegram._maybe_continue_launch_wizard(42, "white")  # spectra
     await telegram._maybe_continue_launch_wizard(42, "1")  # interval
     await telegram._maybe_continue_launch_wizard(42, "25")  # intensity
-    await telegram._maybe_continue_launch_wizard(42, "ir")  # light source
+    # Live settings default to "ir" -- switching to "rgbw" here, with the
+    # exposure override declined, exercises the real bug this session found
+    # and fixed: a model_copy-based settings update would leave IR's stale
+    # 1s exposure applied under RGBW lighting (blown-out captures) instead
+    # of auto-snapping to RGBW's own default.
+    assert app_state.settings.photoIlluminationSource == "ir"
+    await telegram._maybe_continue_launch_wizard(42, "rgbw")  # light source
+    await telegram._maybe_continue_launch_wizard(42, "color")  # image color
+    await telegram._maybe_continue_launch_wizard(42, "no")  # exposure override -- declined
     await telegram._maybe_continue_launch_wizard(42, "no")  # issue alerts
     await telegram._maybe_continue_launch_wizard(42, "yes")  # confirm -> real start
 
     assert app_state.runner.status.state == ExperimentState.running
     assert app_state.runner.status.experimentName == "telegram-launched-run"
     assert app_state.runner.status.username == "ivan"
+    assert app_state.settings.photoIlluminationSource == "rgbw"
+    # Auto-corrected, not left stale -- this is the actual bug fix, proven
+    # end-to-end through the real DeviceSettings validator, not asserted in
+    # isolation.
+    assert app_state.settings.camera.exposureMicroseconds == EXPOSURE_PROFILES["rgbw"]["default"]
     final_text = sent[-1][1]["text"]
     assert "🚀" in final_text
     assert "Started" in final_text

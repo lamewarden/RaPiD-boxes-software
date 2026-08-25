@@ -41,6 +41,7 @@ from ..models import (
     AssistantDownloadRef,
     AssistantImageRef,
     AssistantMessage,
+    DeviceSettings,
     ExperimentProposal,
     ExperimentState,
     GrowthConfig,
@@ -559,7 +560,11 @@ class AssistantService:
         return config
 
     async def start_experiment_from_launch(
-        self, saved: SavedExperimentConfig, experiment_name: str, requesting_username: str
+        self,
+        saved: SavedExperimentConfig,
+        experiment_name: str,
+        requesting_username: str,
+        camera_overrides: Optional[Dict[str, object]] = None,
     ) -> Tuple[Optional[StartResponse], str]:
         """The one place this whole assistant layer is allowed to actually
         touch hardware -- called only by telegram_link.py's /launch wizard,
@@ -575,9 +580,13 @@ class AssistantService:
         intensity, photoIlluminationSource, reportOnIssueEnabled) --
         `saved.camera`/`.leds`/`.ir` are whatever the base experiment
         happened to have and were never shown to or confirmed by the human
-        this turn, so they are deliberately NOT applied here; only
-        photoIlluminationSource (an actual wizard question) is pushed to
-        DeviceSettings, and only if it actually changed."""
+        this turn, so they are never applied wholesale. `camera_overrides`
+        is the exception: only the specific camera fields the wizard
+        actually asked about and got an explicit answer for (grayscale --
+        always, since that question is now mandatory -- and
+        exposureMicroseconds, only if the human opted into overriding it),
+        pushed onto the live camera settings; anything not in this dict is
+        left exactly as the device already has it."""
         if self._runner is None or self._app_state is None:
             return None, "Starting an experiment isn't available right now -- try again shortly."
 
@@ -589,9 +598,27 @@ class AssistantService:
             )
 
         current_settings = self._app_state.settings
-        if saved.photoIlluminationSource != current_settings.photoIlluminationSource:
-            new_settings = current_settings.model_copy(
-                update={"photoIlluminationSource": saved.photoIlluminationSource}
+        camera_overrides = camera_overrides or {}
+        source_changed = saved.photoIlluminationSource != current_settings.photoIlluminationSource
+        if source_changed or camera_overrides:
+            new_camera = current_settings.camera
+            if camera_overrides:
+                new_camera = new_camera.model_copy(update=camera_overrides)
+            # Full reconstruction, NOT DeviceSettings.model_copy: model_copy
+            # skips validators, and _couple_exposure_to_source (models.py)
+            # is what keeps exposure paired with the illumination source --
+            # see settings_store.load_device_settings_for_new_session's own
+            # comment on this exact gotcha. Building via model_copy here
+            # would let a stale exposure (e.g. IR's 1s default) survive a
+            # switch to RGBW, blowing out every capture instead of
+            # automatically snapping to something usable for the new
+            # source -- exactly the failure mode this whole coupling
+            # exists to prevent.
+            new_settings = DeviceSettings(
+                camera=new_camera,
+                leds=current_settings.leds,
+                ir=current_settings.ir,
+                photoIlluminationSource=saved.photoIlluminationSource,
             )
             settings_store.save_device_settings(self._config.settings_path, new_settings)
             await self._app_state.rebuild_hardware(new_settings)

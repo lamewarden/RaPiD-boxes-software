@@ -390,7 +390,8 @@ except where noted:
   from bare defaults if nothing is found). Shows an overview of every
   settable parameter with its current value first, then asks about each
   one in turn -- measurement type, a name, then every protocol-specific
-  knob (phases, spectra, interval, intensity, light source), then Telegram
+  knob (phases, spectra, interval, intensity, light source), then colour
+  or black-and-white, then (see below) an exposure question, then Telegram
   issue alerts. A bad answer (out of range, not a real spectrum colour,
   etc.) gets a warning and the *same* question repeated, never silently
   accepted or skipped. Once every parameter is answered, it shows a full
@@ -407,6 +408,21 @@ except where noted:
   safe specifically *because* of the wizard: every value came from an
   explicit, range-checked human answer, shown back in full before anything
   happens, never something the model itself decided or invented.
+
+  **The exposure question, specifically**: exposure is normally set
+  *automatically* to match whichever light source was just chosen (same
+  IR/RGBW coupling as the Camera tab in Settings -- see "Settings: Camera
+  tab" above) -- the wizard asks a yes/no gate first ("do you want to
+  manually override it?") with an explicit warning before ever letting
+  someone type a raw value, and only asks for the actual number if they
+  say yes. Saying no (the common answer) leaves exposure on autopilot: if
+  the chosen light source differs from what's currently live, the exposure
+  is automatically re-paired with the new source rather than left stale --
+  it can never end up mismatched (e.g. an IR-speed exposure surviving a
+  switch to RGBW, which would blow out every single capture). If someone
+  does override it, the value they type is checked against that specific
+  source's real range right there (IR: 0.2–10s, RGBW: 10–500ms) before
+  being accepted.
 - **/unlink** — lets someone disconnect their own Telegram account
   themselves, without needing an admin to edit anything by hand.
 - **/help** — lists all of the above. Works even before linking, since

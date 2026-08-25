@@ -918,6 +918,117 @@ def test_parse_spectra_deduplicates_and_rejects_unknown_colours():
         _parse_spectra("red, purple")
 
 
+# --- /launch's image-color and exposure-override questions -----------------
+
+
+def test_parse_color_mode():
+    from rapidboxes.telegram_link import _parse_color_mode
+
+    assert _parse_color_mode("bw") is True
+    assert _parse_color_mode("Black-and-White") is True
+    assert _parse_color_mode("color") is False
+    assert _parse_color_mode("Colour") is False
+    with pytest.raises(ValueError, match='"color" or "bw"'):
+        _parse_color_mode("purple")
+
+
+def test_build_exposure_field_validates_against_the_chosen_sources_own_range():
+    from rapidboxes.telegram_link import _build_exposure_field
+
+    ir_field = _build_exposure_field("ir")
+    assert ir_field.parse("1.0") == 1_000_000  # IR default, 1s
+    with pytest.raises(ValueError, match=r"0.2 and 10 seconds"):
+        ir_field.parse("0.05")  # too fast for IR (RGBW-speed value)
+
+    rgbw_field = _build_exposure_field("rgbw")
+    assert rgbw_field.parse("0.05") == 50_000  # 50ms, valid for RGBW
+    with pytest.raises(ValueError, match=r"0.01 and 0.5 seconds"):
+        rgbw_field.parse("1.0")  # too slow for RGBW (IR-speed value)
+    with pytest.raises(ValueError, match="please send a number"):
+        rgbw_field.parse("not a number")
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_exposure_question_skipped_when_override_declined(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")
+    await service._maybe_continue_launch_wizard(42, "no")  # dark phase disabled
+    await service._maybe_continue_launch_wizard(42, "10")  # bending hours
+    await service._maybe_continue_launch_wizard(42, "white")  # spectra
+    await service._maybe_continue_launch_wizard(42, "20")  # interval
+    await service._maybe_continue_launch_wizard(42, "25")  # intensity
+    await service._maybe_continue_launch_wizard(42, "ir")  # light source
+    await service._maybe_continue_launch_wizard(42, "color")  # image color
+    await service._maybe_continue_launch_wizard(42, "no")  # exposure override declined
+
+    # The very next question must be issue alerts, not exposure -- the
+    # value question was never inserted at all.
+    next_question = calls[-1][1]["text"]
+    assert "issue" in next_question.lower() or "alert" in next_question.lower()
+    state = service._launch_wizards[42]
+    assert "exposureMicroseconds" not in [f.name for f in state.fields]
+    assert "exposureMicroseconds" not in state.camera_overrides
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_exposure_override_rejects_out_of_range_and_repeats(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")
+    await service._maybe_continue_launch_wizard(42, "no")
+    await service._maybe_continue_launch_wizard(42, "10")
+    await service._maybe_continue_launch_wizard(42, "white")
+    await service._maybe_continue_launch_wizard(42, "20")
+    await service._maybe_continue_launch_wizard(42, "25")
+    await service._maybe_continue_launch_wizard(42, "rgbw")  # light source
+    await service._maybe_continue_launch_wizard(42, "color")
+    await service._maybe_continue_launch_wizard(42, "yes")  # exposure override
+
+    state = service._launch_wizards[42]
+    index_before = state.index
+    await service._maybe_continue_launch_wizard(42, "5.0")  # way outside RGBW's 0.01-0.5s range
+
+    assert state.index == index_before  # re-asked, did not advance
+    warning = calls[-1][1]["text"]
+    assert "⚠️" in warning
+    assert "RGBW" in warning
+
+    await service._maybe_continue_launch_wizard(42, "0.05")  # now valid
+    assert state.index == index_before + 1
+    assert state.camera_overrides["exposureMicroseconds"] == 50_000
+    await assistant.aclose()
+    await service.shutdown()
+
+
+def test_build_launch_overview_shows_image_color_from_the_base_config(chat_config: AppConfig):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    base = SavedExperimentConfig(protocol="tropism", camera=CameraSettings(grayscale=True))
+
+    overview = service._build_launch_overview(base, resolved=False)
+
+    assert "Image color (black-and-white)" in overview
+
+
 # --- /help -------------------------------------------------------------------
 
 
@@ -1212,6 +1323,9 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
     await service._maybe_continue_launch_wizard(42, "12")  # interval
     await service._maybe_continue_launch_wizard(42, "60")  # intensity
     await service._maybe_continue_launch_wizard(42, "rgbw")  # light source
+    await service._maybe_continue_launch_wizard(42, "bw")  # image color
+    await service._maybe_continue_launch_wizard(42, "yes")  # exposure override
+    await service._maybe_continue_launch_wizard(42, "0.05")  # exposure, 50ms (valid for rgbw)
     await service._maybe_continue_launch_wizard(42, "no")  # issue alerts
 
     confirmation_text = calls[-1][1]["text"]
@@ -1219,6 +1333,8 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
     assert "Ivan's tropism run" in confirmation_text
     assert "48 h" in confirmation_text  # format_config_knobs's own unit spacing
     assert "RGBW" in confirmation_text
+    assert "black-and-white" in confirmation_text
+    assert "Exposure (manual override): 0.05s" in confirmation_text
     assert 42 in service._launch_wizards  # still open, awaiting yes/no
 
     await service._maybe_continue_launch_wizard(42, "yes")
@@ -1239,6 +1355,8 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
     assert staged.intensity == 60
     assert staged.photoIlluminationSource == "rgbw"
     assert staged.reportOnIssueEnabled is False
+    assert staged.camera.grayscale is True
+    assert staged.camera.exposureMicroseconds == 50_000
     # One-shot -- a second take must come back empty.
     assert assistant.take_pending_launch("ivan") is None
     await assistant.aclose()
@@ -1261,6 +1379,8 @@ async def test_launch_wizard_full_growth_flow_stages_a_pending_launch(chat_confi
     await service._maybe_continue_launch_wizard(42, "40")  # day intensity
     await service._maybe_continue_launch_wizard(42, "25")  # interval
     await service._maybe_continue_launch_wizard(42, "ir")  # light source
+    await service._maybe_continue_launch_wizard(42, "color")  # image color
+    await service._maybe_continue_launch_wizard(42, "no")  # exposure override -- declined
     await service._maybe_continue_launch_wizard(42, "yes")  # issue alerts
     await service._maybe_continue_launch_wizard(42, "yes")  # confirm
 
@@ -1274,6 +1394,10 @@ async def test_launch_wizard_full_growth_flow_stages_a_pending_launch(chat_confi
     assert staged.intervalMinutes == 25.0
     assert staged.photoIlluminationSource == "ir"
     assert staged.reportOnIssueEnabled is True
+    assert staged.camera.grayscale is False
+    # Declined the override -- exposure stays whatever the base config had
+    # (the default CameraSettings() exposure here), never invented.
+    assert staged.camera.exposureMicroseconds == CameraSettings().exposureMicroseconds
     await assistant.aclose()
     await service.shutdown()
 
@@ -1366,7 +1490,9 @@ async def test_launch_wizard_no_at_confirmation_cancels_without_staging(chat_con
     await service._maybe_continue_launch_wizard(42, "20")
     await service._maybe_continue_launch_wizard(42, "25")
     await service._maybe_continue_launch_wizard(42, "ir")
-    await service._maybe_continue_launch_wizard(42, "no")
+    await service._maybe_continue_launch_wizard(42, "color")
+    await service._maybe_continue_launch_wizard(42, "no")  # exposure override
+    await service._maybe_continue_launch_wizard(42, "no")  # issue alerts
     assert 42 in service._launch_wizards  # awaiting confirmation
 
     await service._maybe_continue_launch_wizard(42, "no")
@@ -1393,7 +1519,9 @@ async def test_launch_wizard_garbage_at_confirmation_reprompts(chat_config: AppC
     await service._maybe_continue_launch_wizard(42, "20")
     await service._maybe_continue_launch_wizard(42, "25")
     await service._maybe_continue_launch_wizard(42, "ir")
-    await service._maybe_continue_launch_wizard(42, "no")
+    await service._maybe_continue_launch_wizard(42, "color")
+    await service._maybe_continue_launch_wizard(42, "no")  # exposure override
+    await service._maybe_continue_launch_wizard(42, "no")  # issue alerts
 
     await service._maybe_continue_launch_wizard(42, "maybe")
 

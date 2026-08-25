@@ -80,6 +80,7 @@ from . import config_xml
 from .assistant import summary as assistant_summary
 from .assistant.service import AssistantUnavailable, format_config_knobs
 from .models import (
+    EXPOSURE_PROFILES,
     VALID_SPECTRA,
     AssistantDownloadRef,
     AssistantImageRef,
@@ -215,6 +216,15 @@ def _parse_name(text: str) -> str:
     return t
 
 
+def _parse_color_mode(text: str) -> bool:
+    t = text.strip().lower()
+    if t in ("bw", "b&w", "black and white", "black-and-white", "grayscale", "greyscale", "gray", "grey", "mono", "monochrome"):
+        return True
+    if t in ("color", "colour", "rgb"):
+        return False
+    raise ValueError('please answer "color" or "bw"')
+
+
 @dataclass
 class _LaunchField:
     name: str
@@ -234,6 +244,64 @@ _LAUNCH_PROTOCOL_FIELD = _LaunchField(
 _LAUNCH_NAME_FIELD = _LaunchField(
     "experimentName", "Name", "What should I call this experiment?", _parse_name, str
 )
+# Also handled specially: grayscale is nested under SavedExperimentConfig.
+# camera, not a top-level field, so it can't go through the generic
+# getattr(base, f.name)/model_copy(update=state.values) path the way
+# protocol-level knobs do -- see _handle_launch_answer/_ask_current_launch_field.
+_LAUNCH_COLOR_FIELD = _LaunchField(
+    "grayscale",
+    "Image color",
+    'Colour or black-and-white images? ("color" or "bw")',
+    _parse_color_mode,
+    lambda v: "black-and-white" if v else "color",
+)
+# A control-flow-only gate, never itself part of the resolved config (see
+# _handle_launch_answer) -- exposure is normally auto-paired with
+# photoIlluminationSource (EXPOSURE_PROFILES/_couple_exposure_to_source in
+# models.py); asking before letting anyone touch it directly is the whole
+# point of this question, per an explicit request to warn people here.
+_LAUNCH_EXPOSURE_OVERRIDE_FIELD = _LaunchField(
+    "exposureOverride",
+    "Exposure override",
+    "Exposure is normally set automatically to match your light source (IR needs 0.2-10s, "
+    "RGBW/white needs 10-500ms) -- do you want to manually override it anyway? Only say yes if "
+    "you're sure: a mismatched value can leave every image black or blown out. (yes/no)",
+    _parse_yes_no,
+    lambda v: "yes" if v else "no",
+)
+
+
+def _build_exposure_field(source: str) -> _LaunchField:
+    """Built fresh once the light source is actually known (see
+    _handle_launch_answer, only when someone opts into overriding exposure)
+    -- the valid range genuinely depends on it (EXPOSURE_PROFILES in
+    models.py), so a static field can't validate this correctly ahead of
+    time."""
+    profile = EXPOSURE_PROFILES.get(source, EXPOSURE_PROFILES["ir"])
+    lo_s = profile["min"] / 1_000_000
+    hi_s = profile["max"] / 1_000_000
+
+    def parse(text: str) -> int:
+        try:
+            seconds = float(text.strip())
+        except ValueError:
+            raise ValueError(
+                f"please send a number of seconds ({lo_s:g}-{hi_s:g} for {source.upper()})"
+            ) from None
+        microseconds = round(seconds * 1_000_000)
+        if not (profile["min"] <= microseconds <= profile["max"]):
+            raise ValueError(f"must be between {lo_s:g} and {hi_s:g} seconds for {source.upper()} lighting")
+        return microseconds
+
+    return _LaunchField(
+        "exposureMicroseconds",
+        "Exposure",
+        f"Exposure, in seconds ({lo_s:g}-{hi_s:g} for {source.upper()} lighting)?",
+        parse,
+        lambda v: f"{v / 1_000_000:g}s",
+    )
+
+
 _LAUNCH_ISSUE_ALERT_FIELD = _LaunchField(
     "reportOnIssueEnabled",
     "Telegram issue alerts",
@@ -352,6 +420,14 @@ class _LaunchWizardState:
     # Held separately from `values` -- SavedExperimentConfig has no
     # experimentName field, so this never goes into state.base.model_copy().
     experiment_name: Optional[str] = None
+    # Also held separately -- grayscale/exposureMicroseconds are nested
+    # under SavedExperimentConfig.camera, not top-level, so they can't go
+    # through model_copy(update=values) either. Only ever contains keys the
+    # human actually answered (grayscale always, once asked; exposure only
+    # if they opted into overriding it) -- passed on to
+    # AssistantService.start_experiment_from_launch so it knows exactly
+    # what to push to live DeviceSettings versus leave untouched.
+    camera_overrides: Dict[str, object] = dataclass_field(default_factory=dict)
     awaiting_confirmation: bool = False
     final_config: Optional[SavedExperimentConfig] = None
     last_activity: float = dataclass_field(default_factory=time.monotonic)
@@ -1072,10 +1148,13 @@ class TelegramLinkService:
             else "Let's set up a new experiment. No past run found, so here are the defaults:"
         )
         protocol_fields = _LAUNCH_TROPISM_FIELDS if base.protocol == "tropism" else _LAUNCH_GROWTH_FIELDS
-        all_fields = [*protocol_fields, _LAUNCH_ISSUE_ALERT_FIELD]
         lines = [f"{_LAUNCH_PROTOCOL_FIELD.label} ({base.protocol})"]
-        for f in all_fields:
+        for f in protocol_fields:
             lines.append(f"{f.label} ({f.format(getattr(base, f.name))})")
+        # Nested under base.camera, not a top-level field -- can't go
+        # through the generic getattr(base, f.name) loop above.
+        lines.append(f"{_LAUNCH_COLOR_FIELD.label} ({_LAUNCH_COLOR_FIELD.format(base.camera.grayscale)})")
+        lines.append(f"{_LAUNCH_ISSUE_ALERT_FIELD.label} ({_LAUNCH_ISSUE_ALERT_FIELD.format(base.reportOnIssueEnabled)})")
         body = "\n".join(lines)
         return (
             f"{intro}\n\n{body}\n\n"
@@ -1083,9 +1162,23 @@ class TelegramLinkService:
             "or resend the current one to keep it. Send /cancel anytime to stop."
         )
 
+    @staticmethod
+    def _current_launch_field_value(state: _LaunchWizardState, f: _LaunchField) -> object:
+        """Nested camera fields (grayscale/exposureMicroseconds) live under
+        state.base.camera / state.camera_overrides, not the flat
+        state.values/state.base the generic fields use -- see
+        _LaunchWizardState's own docstring comments for why."""
+        if f.name == "grayscale":
+            return state.camera_overrides.get("grayscale", state.base.camera.grayscale)
+        if f.name == "exposureMicroseconds":
+            return state.camera_overrides.get("exposureMicroseconds", state.base.camera.exposureMicroseconds)
+        if f.name == "exposureOverride":
+            return None  # a one-off gate, no meaningful "current" value to show
+        return state.values.get(f.name, getattr(state.base, f.name, None))
+
     async def _ask_current_launch_field(self, chat_id: int, state: _LaunchWizardState) -> None:
         f = state.fields[state.index]
-        current = state.values.get(f.name, getattr(state.base, f.name, None))
+        current = self._current_launch_field_value(state, f)
         current_text = f.format(current) if current is not None else "not set"
         await self._send_raw(chat_id, f"{f.prompt} (currently: {current_text})")
 
@@ -1094,20 +1187,29 @@ class TelegramLinkService:
         try:
             value = f.parse(text)
         except ValueError as exc:
-            current = state.values.get(f.name, getattr(state.base, f.name, None))
+            current = self._current_launch_field_value(state, f)
             current_text = f.format(current) if current is not None else "not set"
             await self._send_raw(chat_id, f"⚠️ {exc}. {f.prompt} (currently: {current_text})")
             return  # re-ask the same field -- index does not advance
 
         if f.name == "experimentName":
             state.experiment_name = value
+        elif f.name in ("grayscale", "exposureMicroseconds"):
+            state.camera_overrides[f.name] = value
+        elif f.name == "exposureOverride":
+            pass  # control-flow only -- never part of the resolved config
         else:
             state.values[f.name] = value
 
         if f.name == "protocol":
             extra = _LAUNCH_TROPISM_FIELDS if value == "tropism" else _LAUNCH_GROWTH_FIELDS
             state.fields.extend(extra)
+            state.fields.append(_LAUNCH_COLOR_FIELD)
+            state.fields.append(_LAUNCH_EXPOSURE_OVERRIDE_FIELD)
             state.fields.append(_LAUNCH_ISSUE_ALERT_FIELD)
+        elif f.name == "exposureOverride" and value:
+            source = state.values.get("photoIlluminationSource", state.base.photoIlluminationSource)
+            state.fields.insert(state.index + 1, _build_exposure_field(source))
 
         state.index += 1
 
@@ -1127,8 +1229,17 @@ class TelegramLinkService:
 
     async def _finish_launch_wizard(self, chat_id: int, state: _LaunchWizardState) -> None:
         state.awaiting_confirmation = True
-        state.final_config = state.base.model_copy(update=state.values)
-        summary = format_config_knobs(state.final_config)
+        final_config = state.base.model_copy(update=state.values)
+        if state.camera_overrides:
+            final_config.camera = final_config.camera.model_copy(update=state.camera_overrides)
+        state.final_config = final_config
+
+        lines = [format_config_knobs(final_config)]
+        lines.append(f"Image color: {'black-and-white' if final_config.camera.grayscale else 'color'}")
+        if "exposureMicroseconds" in state.camera_overrides:
+            lines.append(f"Exposure (manual override): {final_config.camera.exposureMicroseconds / 1_000_000:g}s")
+        summary = "\n".join(lines)
+
         await self._send_raw(
             chat_id,
             f'Ready to review:\n\nName: {state.experiment_name}\n{summary}\n\n'
@@ -1161,7 +1272,7 @@ class TelegramLinkService:
             return
 
         response, message = await self._assistant.start_experiment_from_launch(
-            state.final_config, state.experiment_name, state.username
+            state.final_config, state.experiment_name, state.username, state.camera_overrides
         )
         if response is not None and response.status == "started":
             await self._send_raw(chat_id, f"🚀 {message}")
