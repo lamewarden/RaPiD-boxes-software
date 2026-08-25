@@ -49,10 +49,7 @@ export default function TropismProgram() {
   const [checkingCamera, setCheckingCamera] = useState(false);
   const { guardedStart, dialog: lowSpaceDialog } = useLowSpaceGuard();
 
-  useEffect(() => {
-    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
-    if (!loaded || loaded.protocol !== "tropism") return;
-
+  const applyLoadedConfig = (loaded: SavedExperimentConfig, successMessage: string) => {
     setDarkPhaseEnabled(loaded.darkPhaseEnabled);
     setDarkPhase(loaded.darkPhaseHours);
     setLateralIllumination(loaded.lateralIlluminationHours);
@@ -75,15 +72,40 @@ export default function TropismProgram() {
           photoIlluminationSource: loaded.photoIlluminationSource,
         })
       )
-      .then(() => toast.success("Loaded previous experiment's settings, including camera and illumination."))
+      .then(() => toast.success(successMessage))
       .catch((e) =>
         toast.error(`Loaded phases/light, but could not apply device settings: ${(e as Error).message}`)
       );
+  };
 
+  useEffect(() => {
+    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
+    if (!loaded || loaded.protocol !== "tropism") return;
+    applyLoadedConfig(loaded, "Loaded previous experiment's settings, including camera and illumination.");
     // Clear the router state so a later remount (e.g. browser back) doesn't replay it.
     navigate(location.pathname, { replace: true, state: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  // A config confirmed through Telegram's /launch wizard -- one-shot, no
+  // browser session to carry it in like the location.state path above, so
+  // it's staged server-side instead and picked up here on mount. See
+  // AssistantService.stage_pending_launch / take_pending_launch.
+  useEffect(() => {
+    const username = getUsername();
+    if (!username) return;
+    api
+      .pendingLaunch(username, "tropism")
+      .then((res) => {
+        if (res.config) {
+          applyLoadedConfig(res.config, "Loaded the experiment PidiBot set up with you on Telegram.");
+        }
+      })
+      .catch(() => {
+        /* best-effort: no pending launch is the common case, not an error */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleStart = async () => {
     if (starting) return;

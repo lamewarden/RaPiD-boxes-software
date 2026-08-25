@@ -32,12 +32,22 @@ as Remote Sync's credentials_required state.
 Slash commands (/help, /status, /experiments, /unlink, /launch, /monitor)
 are deliberately plain deterministic Python, not a model round-trip: each
 one is a fixed "skill" backed by a "script" -- either a small handler right
-here, or (for /status, /experiments, /launch) a public resolve_*() method on
-AssistantService that already existed as a tool for the *general* chat path
-and needed no LLM involvement in the first place, just an explicit username/
-args tuple instead of a model-produced tool_call. Anything that isn't a
-recognized /command still goes to _handle_chat_message, the one place an
-actual model call happens. See _poll_once for the dispatch.
+here, or (for /status, /experiments, /launch's initial seed) a public
+resolve_*() method on AssistantService that already existed as a tool for
+the *general* chat path and needed no LLM involvement in the first place,
+just an explicit username/args tuple instead of a model-produced tool_call.
+Anything that isn't a recognized /command, and isn't an answer to an
+in-progress /launch wizard (see below), goes to _handle_chat_message, the
+one place an actual model call happens. See _poll_once for the dispatch.
+
+/launch is the one multi-turn command: a small deterministic state machine
+(_LaunchWizardState, _handle_launch_answer/_handle_launch_confirmation),
+one field at a time, each answer parsed and range-checked before being
+accepted -- a bad answer re-asks the same question rather than guessing or
+silently skipping it. It never starts anything itself; confirming at the
+end only stages the resolved config for the matching setup screen to load
+(AssistantService.stage_pending_launch), same boundary as every other tool
+here.
 
 /monitor additionally pins a live-updating progress-bar message to the
 chat (see _send_and_pin/_edit_message/_build_progress_text): edited in
@@ -55,16 +65,24 @@ import os
 import re
 import secrets
 import time
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
 import httpx
 
 from . import config_xml
 from .assistant import summary as assistant_summary
 from .assistant.service import AssistantUnavailable, format_config_knobs
-from .models import AssistantDownloadRef, AssistantImageRef, AssistantMessage, ExperimentStatus
+from .models import (
+    VALID_SPECTRA,
+    AssistantDownloadRef,
+    AssistantImageRef,
+    AssistantMessage,
+    ExperimentStatus,
+    SavedExperimentConfig,
+)
 from .storage import ExperimentDir, Storage
 
 if TYPE_CHECKING:
@@ -98,6 +116,226 @@ PROGRESS_TICK_S = 60.0
 # edit rate limits.
 PROGRESS_UPDATE_INTERVAL_S = 15 * 60.0
 PROGRESS_BAR_SEGMENTS = 10
+
+# How long a /launch wizard stays alive with no reply before it's treated as
+# abandoned and silently dropped on the next message from that chat (a fresh
+# /launch always starts clean regardless). Generous -- someone may set the
+# device down mid-conversation -- but bounded so a months-old half-answered
+# wizard can never resurface and confuse a completely unrelated later chat.
+LAUNCH_WIZARD_TIMEOUT_S = 3600.0
+
+
+# ---------------------------------------------------------------------------
+# /launch: a guided, one-field-at-a-time wizard for a new experiment's
+# config. Deterministic (a plain state machine, no model call) -- see the
+# module docstring. Never starts anything itself: confirming at the end
+# stages the resolved config for the matching setup screen to pick up (see
+# AssistantService.stage_pending_launch), the same "a human still presses
+# Start" boundary every other tool here respects.
+# ---------------------------------------------------------------------------
+
+
+def _parse_yes_no(text: str) -> bool:
+    t = text.strip().lower()
+    if t in ("yes", "y", "true", "on", "enable", "enabled"):
+        return True
+    if t in ("no", "n", "false", "off", "disable", "disabled"):
+        return False
+    raise ValueError("please answer yes or no")
+
+
+def _bounded_float(lo: float, hi: float, unit: str) -> Callable[[str], float]:
+    def parse(text: str) -> float:
+        try:
+            value = float(text.strip())
+        except ValueError:
+            raise ValueError(f"please send a number, {lo:g}-{hi:g} {unit}") from None
+        if not (lo <= value <= hi):
+            raise ValueError(f"must be between {lo:g} and {hi:g} {unit}")
+        return value
+
+    return parse
+
+
+def _bounded_int(lo: int, hi: int, unit: str) -> Callable[[str], int]:
+    def parse(text: str) -> int:
+        try:
+            value = int(text.strip())
+        except ValueError:
+            raise ValueError(f"please send a whole number, {lo}-{hi} {unit}") from None
+        if not (lo <= value <= hi):
+            raise ValueError(f"must be between {lo} and {hi} {unit}")
+        return value
+
+    return parse
+
+
+def _parse_spectra(text: str) -> List[str]:
+    parts = [p.strip().lower() for p in text.replace(",", " ").split() if p.strip()]
+    if not parts:
+        raise ValueError(f"please list at least one of: {', '.join(VALID_SPECTRA)}")
+    bad = [p for p in parts if p not in VALID_SPECTRA]
+    if bad:
+        raise ValueError(f"unknown colour(s) {', '.join(bad)} -- choose from: {', '.join(VALID_SPECTRA)}")
+    seen: List[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.append(p)
+    return seen
+
+
+def _parse_light_source(text: str) -> str:
+    t = text.strip().lower()
+    if t in ("ir", "infrared"):
+        return "ir"
+    if t in ("rgbw", "rgb", "color", "colour"):
+        return "rgbw"
+    raise ValueError('please answer "ir" or "rgbw"')
+
+
+def _parse_protocol(text: str) -> str:
+    t = text.strip().lower()
+    if t in ("tropism", "t"):
+        return "tropism"
+    if t in ("growth", "g"):
+        return "growth"
+    raise ValueError('please answer "tropism" or "growth"')
+
+
+@dataclass
+class _LaunchField:
+    name: str
+    label: str  # short, for the opening overview -- "Dark phase"
+    prompt: str  # a full question -- "Enable the dark phase? (yes/no)"
+    parse: Callable[[str], object]
+    format: Callable[[object], str]
+
+
+# Deliberately no "name" field: SavedExperimentConfig has no experimentName
+# of its own -- naming is orthogonal to "config to replay", same as the
+# existing web-chat "load previous experiment" flow, which also never
+# touches whatever name is already on the setup screen. Left for the human
+# to set/confirm there, exactly as today.
+_LAUNCH_PROTOCOL_FIELD = _LaunchField(
+    "protocol", "Measurement", 'Which measurement -- "tropism" or "growth"?', _parse_protocol, str
+)
+_LAUNCH_ISSUE_ALERT_FIELD = _LaunchField(
+    "reportOnIssueEnabled",
+    "Telegram issue alerts",
+    "Message you here on Telegram if an issue is detected mid-run? (yes/no)",
+    _parse_yes_no,
+    lambda v: "yes" if v else "no",
+)
+
+_LAUNCH_TROPISM_FIELDS = [
+    _LaunchField(
+        "darkPhaseEnabled",
+        "Dark phase",
+        'Enable the dark "apical hook" phase? (yes/no)',
+        _parse_yes_no,
+        lambda v: "enabled" if v else "disabled",
+    ),
+    _LaunchField(
+        "darkPhaseHours",
+        "Dark phase length",
+        "Dark phase length, in hours (0-350)?",
+        _bounded_float(0, 350, "hours"),
+        lambda v: f"{v:g}h",
+    ),
+    _LaunchField(
+        "lateralIlluminationHours",
+        "Bending (lateral light) length",
+        "Bending (lateral light) phase length, in hours (0-168)?",
+        _bounded_float(0, 168, "hours"),
+        lambda v: f"{v:g}h",
+    ),
+    _LaunchField(
+        "spectra",
+        "Spectra",
+        f"Which light colour(s) for the bending phase -- {', '.join(VALID_SPECTRA)}?",
+        _parse_spectra,
+        lambda v: ", ".join(v) if v else "(none)",
+    ),
+    _LaunchField(
+        "intervalMinutes",
+        "Capture interval",
+        "Capture interval, in minutes (1-240)?",
+        _bounded_float(1, 240, "min"),
+        lambda v: f"every {v:g} min",
+    ),
+    _LaunchField(
+        "intensity",
+        "Light intensity",
+        "Light intensity, in percent (0-100)?",
+        _bounded_int(0, 100, "%"),
+        lambda v: f"{v}%",
+    ),
+    _LaunchField(
+        "photoIlluminationSource",
+        "Photo light source",
+        'Photo light source -- "ir" or "rgbw"?',
+        _parse_light_source,
+        lambda v: v.upper(),
+    ),
+]
+
+_LAUNCH_GROWTH_FIELDS = [
+    _LaunchField(
+        "dayLengthHours",
+        "Day length",
+        "Day length, in hours (0-24)?",
+        _bounded_int(0, 24, "hours"),
+        lambda v: f"{v}h",
+    ),
+    _LaunchField(
+        "experimentLengthDays",
+        "Experiment length",
+        "Experiment length, in days (1-30)?",
+        _bounded_int(1, 30, "days"),
+        lambda v: f"{v} days",
+    ),
+    _LaunchField(
+        "spectra",
+        "Spectra",
+        f"Which light colour(s) -- {', '.join(VALID_SPECTRA)}?",
+        _parse_spectra,
+        lambda v: ", ".join(v) if v else "(none)",
+    ),
+    _LaunchField(
+        "dayIntensity",
+        "Day light intensity",
+        "Day light intensity, in percent (0-100)?",
+        _bounded_int(0, 100, "%"),
+        lambda v: f"{v}%",
+    ),
+    _LaunchField(
+        "intervalMinutes",
+        "Capture interval",
+        "Capture interval, in minutes (1-240)?",
+        _bounded_float(1, 240, "min"),
+        lambda v: f"every {v:g} min",
+    ),
+    _LaunchField(
+        "photoIlluminationSource",
+        "Photo light source",
+        'Photo light source -- "ir" or "rgbw"?',
+        _parse_light_source,
+        lambda v: v.upper(),
+    ),
+]
+
+
+@dataclass
+class _LaunchWizardState:
+    username: str
+    base: SavedExperimentConfig
+    fields: List[_LaunchField] = dataclass_field(default_factory=list)
+    index: int = 0
+    values: Dict[str, object] = dataclass_field(default_factory=dict)
+    awaiting_confirmation: bool = False
+    final_config: Optional[SavedExperimentConfig] = None
+    last_activity: float = dataclass_field(default_factory=time.monotonic)
+
 
 # Same ambiguity the web UI's markdownLite.ts fixes (a bullet's leading
 # "* " misread as the start of an *italic* span), ported to Python since
@@ -229,6 +467,10 @@ class TelegramLinkService:
         # loop can skip a pin that was refreshed recently without needing a
         # per-subscription scheduler.
         self._progress_last_edit: Dict[Tuple[str, int], float] = {}
+        # /launch wizards in progress, keyed by chat_id -- in-memory only,
+        # same reasoning as _progress_messages: nothing here needs to
+        # survive a restart, a fresh /launch just starts clean.
+        self._launch_wizards: Dict[int, _LaunchWizardState] = {}
         self._update_offset = 0
         self._worker: Optional[asyncio.Task] = None
         self._progress_worker: Optional[asyncio.Task] = None
@@ -612,11 +854,42 @@ class TelegramLinkService:
                 continue
             if await self._try_complete_link(text, chat_id):
                 continue
+            if await self._maybe_continue_launch_wizard(chat_id, text):
+                continue
             parsed = _parse_command(text)
             if parsed is not None:
                 await self._dispatch_command(chat_id, parsed[0], parsed[1])
                 continue
             await self._handle_chat_message(chat_id, text)
+
+    async def _maybe_continue_launch_wizard(self, chat_id: int, text: str) -> bool:
+        """Returns True if `text` was consumed by an in-progress /launch
+        wizard for this chat -- an answer, /cancel, or a fresh /launch
+        restarting it. A wizard sitting untouched past
+        LAUNCH_WIZARD_TIMEOUT_S is treated as abandoned and dropped instead,
+        so it can never resurface to confuse an unrelated later chat."""
+        state = self._launch_wizards.get(chat_id)
+        if state is None:
+            return False
+        if time.monotonic() - state.last_activity > LAUNCH_WIZARD_TIMEOUT_S:
+            del self._launch_wizards[chat_id]
+            return False
+
+        parsed = _parse_command(text)
+        if parsed is not None and parsed[0] == "/cancel":
+            del self._launch_wizards[chat_id]
+            await self._send_raw(chat_id, "Cancelled -- nothing was changed.")
+            return True
+        if parsed is not None and parsed[0] == "/launch":
+            await self._handle_launch_command(chat_id, parsed[1])
+            return True
+
+        state.last_activity = time.monotonic()
+        if state.awaiting_confirmation:
+            await self._handle_launch_confirmation(chat_id, state, text)
+        else:
+            await self._handle_launch_answer(chat_id, state, text)
+        return True
 
     async def _dispatch_command(self, chat_id: int, command: str, arg: str) -> None:
         """Every recognized /command is a fixed, deterministic handler (a
@@ -635,6 +908,8 @@ class TelegramLinkService:
             await self._handle_unlink_command(chat_id)
         elif command == "/launch":
             await self._handle_launch_command(chat_id, arg)
+        elif command == "/cancel":
+            await self._send_raw(chat_id, "Nothing active to cancel.")
         elif command == "/monitor":
             await self._handle_monitor_command(chat_id)
         else:
@@ -676,8 +951,9 @@ class TelegramLinkService:
             "/experiments — your own most recent experiments.",
             "/monitor — subscribe to your currently running experiment: anomalies, a blackout notice, and a "
             "completion summary with photos. Pins a live-updating progress bar here too.",
-            "/launch [what you want] — propose settings for a new experiment, from a past run or from scratch. "
-            "You still press Start on the device yourself.",
+            "/launch [what you want] — walks through setting up a new experiment, one question at a time, "
+            "starting from a past run's settings (or defaults). Ends with a summary to confirm before it's "
+            "loaded on the device -- you still press Start there yourself. /cancel stops it anytime.",
             "/unlink — disconnect this Telegram account from RapidBoxes.",
             "/help — this list.",
             "",
@@ -735,13 +1011,14 @@ class TelegramLinkService:
         )
 
     async def _handle_launch_command(self, chat_id: int, arg: str) -> None:
-        """Alias into the same propose-only flow the general chat already
-        has (resolve_prefill_experiment) -- deterministic, no model call,
-        and the underlying tool already never starts anything itself: the
-        reply always ends by saying to press Start on the device. What
-        /launch actually configures beyond "base it on a past run" is
-        intentionally still undecided -- this is the placeholder that's
-        real and useful today, not a stub."""
+        """Starts (or restarts) a guided, one-field-at-a-time wizard for a
+        new experiment's config. Seeds "currently set" defaults from a past
+        experiment the same way resolve_prefill_experiment already resolves
+        one (most recent, or matching `arg`'s free text) -- deterministic,
+        no model call. Confirming at the end only ever stages the config for
+        the matching setup screen to pick up (see
+        AssistantService.stage_pending_launch); this never starts anything
+        itself, same boundary as every other tool here."""
         username = self._username_for_chat(chat_id)
         if username is None:
             await self._send_raw(
@@ -753,10 +1030,101 @@ class TelegramLinkService:
         if self._assistant is None:
             await self._send_raw(chat_id, "That isn't available right now -- try again shortly.")
             return
+
         # No "username" arg -- always the requester's own past experiments,
         # even if their free text names someone else.
-        _proposal, reply = self._assistant.resolve_prefill_experiment({"reference": arg}, username)
-        await self._send_raw(chat_id, _strip_markdown_lite(reply))
+        proposal, _reply = self._assistant.resolve_prefill_experiment({"reference": arg}, username)
+        base = proposal.config if proposal is not None else SavedExperimentConfig()
+
+        state = _LaunchWizardState(username=username, base=base, fields=[_LAUNCH_PROTOCOL_FIELD])
+        self._launch_wizards[chat_id] = state
+
+        await self._send_raw(chat_id, self._build_launch_overview(base, resolved=proposal is not None))
+        await self._ask_current_launch_field(chat_id, state)
+
+    def _build_launch_overview(self, base: SavedExperimentConfig, resolved: bool) -> str:
+        intro = (
+            "Let's set up a new experiment. Here's what's currently set, from your last run:"
+            if resolved
+            else "Let's set up a new experiment. No past run found, so here are the defaults:"
+        )
+        protocol_fields = _LAUNCH_TROPISM_FIELDS if base.protocol == "tropism" else _LAUNCH_GROWTH_FIELDS
+        all_fields = [*protocol_fields, _LAUNCH_ISSUE_ALERT_FIELD]
+        lines = [f"{_LAUNCH_PROTOCOL_FIELD.label} ({base.protocol})"]
+        for f in all_fields:
+            lines.append(f"{f.label} ({f.format(getattr(base, f.name))})")
+        body = "\n".join(lines)
+        return (
+            f"{intro}\n\n{body}\n\n"
+            "I'll ask about each one, starting with the measurement type -- reply with a new value, "
+            "or resend the current one to keep it. Send /cancel anytime to stop."
+        )
+
+    async def _ask_current_launch_field(self, chat_id: int, state: _LaunchWizardState) -> None:
+        f = state.fields[state.index]
+        current = state.values.get(f.name, getattr(state.base, f.name, None))
+        current_text = f.format(current) if current is not None else "not set"
+        await self._send_raw(chat_id, f"{f.prompt} (currently: {current_text})")
+
+    async def _handle_launch_answer(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
+        f = state.fields[state.index]
+        try:
+            value = f.parse(text)
+        except ValueError as exc:
+            current = state.values.get(f.name, getattr(state.base, f.name, None))
+            current_text = f.format(current) if current is not None else "not set"
+            await self._send_raw(chat_id, f"⚠️ {exc}. {f.prompt} (currently: {current_text})")
+            return  # re-ask the same field -- index does not advance
+
+        state.values[f.name] = value
+
+        if f.name == "protocol":
+            extra = _LAUNCH_TROPISM_FIELDS if value == "tropism" else _LAUNCH_GROWTH_FIELDS
+            state.fields.extend(extra)
+            state.fields.append(_LAUNCH_ISSUE_ALERT_FIELD)
+
+        state.index += 1
+
+        # A disabled dark phase has no meaningful length to ask about.
+        if (
+            state.index < len(state.fields)
+            and state.fields[state.index].name == "darkPhaseHours"
+            and state.values.get("darkPhaseEnabled") is False
+        ):
+            state.values["darkPhaseHours"] = 0.0
+            state.index += 1
+
+        if state.index >= len(state.fields):
+            await self._finish_launch_wizard(chat_id, state)
+            return
+        await self._ask_current_launch_field(chat_id, state)
+
+    async def _finish_launch_wizard(self, chat_id: int, state: _LaunchWizardState) -> None:
+        state.awaiting_confirmation = True
+        state.final_config = state.base.model_copy(update=state.values)
+        summary = format_config_knobs(state.final_config)
+        await self._send_raw(
+            chat_id,
+            f'Ready to review:\n\n{summary}\n\nLook right? Reply "yes" to confirm, or "no" to cancel.',
+        )
+
+    async def _handle_launch_confirmation(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
+        answer = text.strip().lower()
+        if answer in ("yes", "y", "confirm", "confirmed", "start"):
+            del self._launch_wizards[chat_id]
+            if self._assistant is not None and state.final_config is not None:
+                self._assistant.stage_pending_launch(state.username, state.final_config)
+            await self._send_raw(
+                chat_id,
+                "I've loaded these into the setup screen on the device -- press Start there whenever "
+                "you're ready. I don't start experiments myself.",
+            )
+            return
+        if answer in ("no", "n", "cancel"):
+            del self._launch_wizards[chat_id]
+            await self._send_raw(chat_id, "Cancelled -- nothing was changed. Send /launch to start over.")
+            return
+        await self._send_raw(chat_id, 'Please reply "yes" to confirm or "no" to cancel.')
 
     async def _handle_monitor_command(self, chat_id: int) -> None:
         """/monitor subscribes the sender to their own currently-running

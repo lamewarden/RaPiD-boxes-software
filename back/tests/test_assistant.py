@@ -68,6 +68,7 @@ async def client(app_config: AppConfig):
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            ac._app = app  # type: ignore[attr-defined]  - some tests reach for app.state.app
             yield ac
 
 
@@ -131,6 +132,27 @@ async def test_chat_503_when_llm_unreachable(client: AsyncClient, monkeypatch):
     _mock_llm(monkeypatch, unreachable=True)
     res = await client.post("/api/assistant/chat", json={"message": "hi", "history": []})
     assert res.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_pending_launch_endpoint_is_one_shot(client: AsyncClient):
+    assistant = client._app.state.app.assistant  # type: ignore[attr-defined]
+    assistant.stage_pending_launch("ivan", SavedExperimentConfig(protocol="growth", dayLengthHours=18))
+
+    res = await client.get("/api/assistant/pending-launch", params={"username": "ivan"})
+    assert res.status_code == 200
+    assert res.json()["config"]["dayLengthHours"] == 18
+
+    # Consumed -- a second GET for the same user comes back empty.
+    res = await client.get("/api/assistant/pending-launch", params={"username": "ivan"})
+    assert res.json()["config"] is None
+
+
+@pytest.mark.asyncio
+async def test_pending_launch_endpoint_empty_for_unknown_user(client: AsyncClient):
+    res = await client.get("/api/assistant/pending-launch", params={"username": "nobody"})
+    assert res.status_code == 200
+    assert res.json()["config"] is None
 
 
 @pytest.mark.asyncio
@@ -1227,6 +1249,59 @@ async def test_upload_to_remote_never_packages_another_users_run(app_config: App
     _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
+
+
+# --- pending launch: staged by telegram_link.py's /launch wizard -----------
+
+
+def test_pending_launch_round_trips_and_is_one_shot(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    config = SavedExperimentConfig(protocol="growth", dayLengthHours=18)
+
+    service.stage_pending_launch("Ivan", config)
+    taken = service.take_pending_launch("ivan")  # case-insensitive, matches Telegram/linking precedent
+
+    assert taken is not None
+    assert taken.dayLengthHours == 18
+    assert service.take_pending_launch("ivan") is None  # consumed, not replayable
+
+
+def test_pending_launch_protocol_mismatch_leaves_it_staged(app_config: AppConfig):
+    """The Tropism and Growth setup screens both poll take_pending_launch
+    on mount -- a staged growth config must not be silently discarded just
+    because the Tropism screen happened to ask first."""
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    service.stage_pending_launch("ivan", SavedExperimentConfig(protocol="growth", dayLengthHours=18))
+
+    assert service.take_pending_launch("ivan", protocol="tropism") is None  # wrong screen, not consumed
+
+    taken = service.take_pending_launch("ivan", protocol="growth")  # right screen
+    assert taken is not None
+    assert taken.dayLengthHours == 18
+    assert service.take_pending_launch("ivan") is None  # now actually consumed
+
+
+def test_pending_launch_is_scoped_per_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    service.stage_pending_launch("ivan", SavedExperimentConfig(protocol="tropism"))
+
+    assert service.take_pending_launch("sabol") is None
+
+
+def test_pending_launch_expires_unclaimed(app_config: AppConfig, monkeypatch):
+    from rapidboxes.assistant import service as assistant_service_module
+
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    service.stage_pending_launch("ivan", SavedExperimentConfig(protocol="tropism"))
+
+    future = assistant_service_module.time.monotonic() + assistant_service_module.PENDING_LAUNCH_TTL_S + 1
+    monkeypatch.setattr(assistant_service_module.time, "monotonic", lambda: future)
+
+    assert service.take_pending_launch("ivan") is None
 
 
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------

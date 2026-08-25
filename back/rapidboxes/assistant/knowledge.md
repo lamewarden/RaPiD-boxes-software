@@ -383,16 +383,30 @@ except where noted:
   matching what system_status already means for the general chat path.
 - **/experiments** — the sender's own most recent experiments (same data as
   the list_experiments tool, no username arg accepted).
-- **/launch [what you want]** — proposes settings for a new experiment
-  based on a past run (or from scratch), the same propose-only flow as
-  asking in chat: a human still has to press Start on the device
-  themselves, this never starts anything on its own. What exactly /launch
-  configures beyond "base it on a past run" is still open -- this is the
-  interim, real behavior, not a stub.
+- **/launch [what you want]** — a guided, one-question-at-a-time wizard for
+  a new experiment's config, seeded from a past run's settings (`[what you
+  want]` picks which one, same free-text matching as elsewhere -- e.g.
+  "like my last tropism run" -- omit for the most recent, or starts from
+  bare defaults if nothing is found). Shows an overview of every settable
+  parameter with its current value first, then asks about each one in
+  turn: a bad answer (out of range, not a real spectrum colour, etc.) gets
+  a warning and the *same* question repeated, never silently accepted or
+  skipped. Once every parameter is answered, it shows a full summary and
+  asks for a final "yes"/"no" -- only on "yes" does it hand the config to
+  the matching setup screen (Tropism or Growth) to load automatically next
+  time it's opened. **Still never starts anything itself** -- a human has
+  to walk up and press Start on the device; this only saves them re-typing
+  every field there. `/cancel` stops a wizard in progress at any point,
+  discarding it; a fresh `/launch` also restarts it from scratch.
 - **/unlink** — lets someone disconnect their own Telegram account
   themselves, without needing an admin to edit anything by hand.
 - **/help** — lists all of the above. Works even before linking, since
   that's plausibly someone's very first message.
+
+While a /launch wizard is active in a chat, that chat's messages are
+answers to it, not new chat turns -- if someone seems to be mid-wizard and
+asks something unrelated, the right move is telling them to finish or
+`/cancel` it first, not answering as if it were a normal question.
 
 An unrecognized `/whatever` gets a direct "I don't know that command" reply
 rather than being sent to the model as a chat turn -- a slash-prefixed typo

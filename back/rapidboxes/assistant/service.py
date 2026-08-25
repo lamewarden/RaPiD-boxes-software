@@ -19,9 +19,10 @@ import asyncio
 import json
 import logging
 import shutil
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -44,6 +45,12 @@ from . import vision
 log = logging.getLogger("rapidboxes.assistant")
 
 _KNOWLEDGE_PATH = Path(__file__).parent / "knowledge.md"
+
+# How long a /launch wizard's confirmed config waits, unclaimed, for the
+# matching setup screen to pick it up -- long enough to walk from wherever
+# you were chatting on your phone back to the device, short enough that a
+# forgotten one doesn't silently reappear on the setup screen a day later.
+PENDING_LAUNCH_TTL_S = 3600.0
 
 
 class AssistantUnavailable(Exception):
@@ -482,9 +489,49 @@ class AssistantService:
         self._lock = asyncio.Lock()
         self._transcript: List[AssistantMessage] = []
         self._task: Optional[asyncio.Task] = None
+        # username -> (config, expires_at). Staged by telegram_link.py's
+        # /launch wizard once someone confirms; consumed the moment the
+        # matching setup screen reads it (GET /api/assistant/pending-launch),
+        # never twice -- same one-time-code shape as Telegram's own linking
+        # codes, just for a resolved config instead of a chat_id.
+        self._pending_launches: Dict[str, Tuple[SavedExperimentConfig, float]] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    # --- pending launch (staged by telegram_link.py's /launch wizard) ------
+    def stage_pending_launch(self, username: str, config: SavedExperimentConfig) -> None:
+        """Never starts anything itself -- just makes a fully-resolved config
+        available for the next visit to the matching setup screen to load,
+        the same way a web-chat proposal's "Use this" button does, but for a
+        Telegram-originated request with no browser session to carry it in."""
+        self._pending_launches[username.strip().lower()] = (config, time.monotonic() + PENDING_LAUNCH_TTL_S)
+
+    def take_pending_launch(
+        self, username: str, protocol: Optional[str] = None
+    ) -> Optional[SavedExperimentConfig]:
+        """One-shot: returns and clears whatever's staged for `username`, or
+        None if there's nothing there or it expired unclaimed.
+
+        `protocol`, when given, only consumes a match: the Tropism and
+        Growth setup screens both poll this on mount, and without this
+        filter whichever one happened to load first would pop (and
+        silently discard) a config meant for the *other* screen the moment
+        its protocol didn't match -- the second screen would then find
+        nothing. A mismatch leaves the entry staged for whoever actually
+        wants it."""
+        key = username.strip().lower()
+        entry = self._pending_launches.get(key)
+        if entry is None:
+            return None
+        config, expires_at = entry
+        if time.monotonic() > expires_at:
+            del self._pending_launches[key]
+            return None
+        if protocol is not None and config.protocol != protocol:
+            return None
+        del self._pending_launches[key]
+        return config
 
     # --- chat --------------------------------------------------------------
     async def chat(

@@ -51,10 +51,7 @@ export default function GrowthProgram() {
   const [checkingCamera, setCheckingCamera] = useState(false);
   const { guardedStart, dialog: lowSpaceDialog } = useLowSpaceGuard();
 
-  useEffect(() => {
-    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
-    if (!loaded || loaded.protocol !== "growth") return;
-
+  const applyLoadedConfig = (loaded: SavedExperimentConfig, successMessage: string) => {
     setDayLengthHours(loaded.dayLengthHours);
     setExperimentLengthDays(loaded.experimentLengthDays);
     setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
@@ -75,14 +72,38 @@ export default function GrowthProgram() {
           photoIlluminationSource: loaded.photoIlluminationSource,
         })
       )
-      .then(() => toast.success("Loaded previous experiment's settings, including camera and illumination."))
+      .then(() => toast.success(successMessage))
       .catch((e) =>
         toast.error(`Loaded phases/light, but could not apply device settings: ${(e as Error).message}`)
       );
+  };
 
+  useEffect(() => {
+    const loaded = location.state?.loadedConfig as SavedExperimentConfig | undefined;
+    if (!loaded || loaded.protocol !== "growth") return;
+    applyLoadedConfig(loaded, "Loaded previous experiment's settings, including camera and illumination.");
     navigate(location.pathname, { replace: true, state: {} });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  // A config confirmed through Telegram's /launch wizard -- see
+  // TropismProgram for why this is a separate server-staged path from
+  // location.state above.
+  useEffect(() => {
+    const username = getUsername();
+    if (!username) return;
+    api
+      .pendingLaunch(username, "growth")
+      .then((res) => {
+        if (res.config) {
+          applyLoadedConfig(res.config, "Loaded the experiment PidiBot set up with you on Telegram.");
+        }
+      })
+      .catch(() => {
+        /* best-effort: no pending launch is the common case, not an error */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleStart = async () => {
     if (starting) return;

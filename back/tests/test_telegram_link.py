@@ -1096,7 +1096,9 @@ async def test_launch_command_requires_linking(chat_config: AppConfig, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_launch_command_resolves_a_real_past_experiment(chat_config: AppConfig, monkeypatch):
+async def test_launch_command_seeds_the_overview_from_a_real_past_experiment(
+    chat_config: AppConfig, monkeypatch
+):
     service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
     storage = service._storage
     exp = storage.create_experiment("ivan", "tropism-run")
@@ -1117,15 +1119,21 @@ async def test_launch_command_resolves_a_real_past_experiment(chat_config: AppCo
 
     await service._dispatch_command(42, "/launch", "")
 
-    text = calls[0][1]["text"]
-    assert exp.experiment_id in text
-    assert "press Start yourself" in text
+    # Two messages: the overview (seeded from the real past run), then the
+    # first question (measurement type).
+    assert len(calls) == 2
+    overview = calls[0][1]["text"]
+    assert "from your last run" in overview
+    assert "12.5h" in overview  # dark phase length carried over verbatim
+    assert "RGBW" in overview
+    assert "measurement" in calls[1][1]["text"].lower()
+    assert 42 in service._launch_wizards
     await assistant.aclose()
     await service.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_launch_command_never_finds_another_users_experiment(chat_config: AppConfig, monkeypatch):
+async def test_launch_command_falls_back_to_defaults_when_nothing_found(chat_config: AppConfig, monkeypatch):
     service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
     storage = service._storage
     sabol_exp = storage.create_experiment("sabol", "sabol-run")
@@ -1136,10 +1144,271 @@ async def test_launch_command_never_finds_another_users_experiment(chat_config: 
     calls = _mock_post(monkeypatch, service)
 
     # Naming sabol in the free text does nothing -- /launch never takes a
-    # username argument, only "reference", so this stays scoped to ivan.
+    # username argument, only "reference", so this can never resolve to
+    # sabol's run; with no run of ivan's own either, it starts from bare
+    # defaults rather than refusing outright.
     await service._dispatch_command(42, "/launch", "like sabol's run")
 
-    assert "couldn't find" in calls[0][1]["text"]
+    assert "No past run found" in calls[0][1]["text"]
+    assert 42 in service._launch_wizards
+    await assistant.aclose()
+    await service.shutdown()
+
+
+# --- /launch wizard: the full guided flow ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_config: AppConfig, monkeypatch):
+    """End-to-end: every question answered validly, confirmed, and the
+    exact resolved config lands in AssistantService.take_pending_launch --
+    never anything invented, always what was actually typed."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fail_if_called(self, messages):
+        raise AssertionError("the /launch wizard must never call the model")
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fail_if_called)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")  # overview + first question (measurement)
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "yes")  # dark phase enabled
+    await service._maybe_continue_launch_wizard(42, "48")  # dark phase hours
+    await service._maybe_continue_launch_wizard(42, "10")  # bending hours
+    await service._maybe_continue_launch_wizard(42, "red, blue")  # spectra
+    await service._maybe_continue_launch_wizard(42, "12")  # interval
+    await service._maybe_continue_launch_wizard(42, "60")  # intensity
+    await service._maybe_continue_launch_wizard(42, "rgbw")  # light source
+    await service._maybe_continue_launch_wizard(42, "no")  # issue alerts
+
+    confirmation_text = calls[-1][1]["text"]
+    assert "Ready to review" in confirmation_text
+    assert "48 h" in confirmation_text  # format_config_knobs's own unit spacing
+    assert "RGBW" in confirmation_text
+    assert 42 in service._launch_wizards  # still open, awaiting yes/no
+
+    await service._maybe_continue_launch_wizard(42, "yes")
+
+    assert 42 not in service._launch_wizards
+    final_text = calls[-1][1]["text"]
+    assert "loaded these into the setup screen" in final_text
+    assert "I don't start experiments myself" in final_text
+
+    staged = assistant.take_pending_launch("ivan")
+    assert staged is not None
+    assert staged.protocol == "tropism"
+    assert staged.darkPhaseEnabled is True
+    assert staged.darkPhaseHours == 48.0
+    assert staged.lateralIlluminationHours == 10.0
+    assert staged.spectra == ["red", "blue"]
+    assert staged.intervalMinutes == 12.0
+    assert staged.intensity == 60
+    assert staged.photoIlluminationSource == "rgbw"
+    assert staged.reportOnIssueEnabled is False
+    # One-shot -- a second take must come back empty.
+    assert assistant.take_pending_launch("ivan") is None
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_full_growth_flow_stages_a_pending_launch(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "growth")
+    await service._maybe_continue_launch_wizard(42, "18")  # day length hours
+    await service._maybe_continue_launch_wizard(42, "21")  # experiment length days
+    await service._maybe_continue_launch_wizard(42, "white")  # spectra
+    await service._maybe_continue_launch_wizard(42, "40")  # day intensity
+    await service._maybe_continue_launch_wizard(42, "25")  # interval
+    await service._maybe_continue_launch_wizard(42, "ir")  # light source
+    await service._maybe_continue_launch_wizard(42, "yes")  # issue alerts
+    await service._maybe_continue_launch_wizard(42, "yes")  # confirm
+
+    staged = assistant.take_pending_launch("ivan")
+    assert staged is not None
+    assert staged.protocol == "growth"
+    assert staged.dayLengthHours == 18
+    assert staged.experimentLengthDays == 21
+    assert staged.spectra == ["white"]
+    assert staged.dayIntensity == 40
+    assert staged.intervalMinutes == 25.0
+    assert staged.photoIlluminationSource == "ir"
+    assert staged.reportOnIssueEnabled is True
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_dark_phase_hours_skipped_when_disabled(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "no")  # dark phase disabled
+
+    # Next question must be the bending phase, not dark phase length.
+    next_question = calls[-1][1]["text"]
+    assert "Bending" in next_question or "bending" in next_question
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_invalid_answer_warns_and_repeats_the_same_question(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    state = service._launch_wizards[42]
+    assert state.index == 0  # still on the measurement question
+
+    await service._maybe_continue_launch_wizard(42, "banana")  # not tropism/growth
+
+    warning = calls[-1][1]["text"]
+    assert "⚠️" in warning
+    assert state.index == 0  # did not advance
+
+    await service._maybe_continue_launch_wizard(42, "500")  # dark phase hours out of range (0-350)
+    # First get past the protocol + darkPhaseEnabled questions validly.
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "yes")
+    before = state.index
+    await service._maybe_continue_launch_wizard(42, "not a number")
+    assert state.index == before
+    assert "⚠️" in calls[-1][1]["text"]
+    assert "please send a number" in calls[-1][1]["text"]
+
+    await service._maybe_continue_launch_wizard(42, "500")  # out of bounds
+    assert state.index == before
+    assert "must be between" in calls[-1][1]["text"]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_cancel_mid_flow(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "/cancel")
+
+    assert 42 not in service._launch_wizards
+    assert "Cancelled" in calls[-1][1]["text"]
+    assert assistant.take_pending_launch("ivan") is None
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_no_at_confirmation_cancels_without_staging(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "no")
+    await service._maybe_continue_launch_wizard(42, "10")
+    await service._maybe_continue_launch_wizard(42, "white")
+    await service._maybe_continue_launch_wizard(42, "20")
+    await service._maybe_continue_launch_wizard(42, "25")
+    await service._maybe_continue_launch_wizard(42, "ir")
+    await service._maybe_continue_launch_wizard(42, "no")
+    assert 42 in service._launch_wizards  # awaiting confirmation
+
+    await service._maybe_continue_launch_wizard(42, "no")
+
+    assert 42 not in service._launch_wizards
+    assert assistant.take_pending_launch("ivan") is None
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_garbage_at_confirmation_reprompts(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "no")
+    await service._maybe_continue_launch_wizard(42, "10")
+    await service._maybe_continue_launch_wizard(42, "white")
+    await service._maybe_continue_launch_wizard(42, "20")
+    await service._maybe_continue_launch_wizard(42, "25")
+    await service._maybe_continue_launch_wizard(42, "ir")
+    await service._maybe_continue_launch_wizard(42, "no")
+
+    await service._maybe_continue_launch_wizard(42, "maybe")
+
+    assert 42 in service._launch_wizards
+    assert 'confirm' in calls[-1][1]["text"].lower()
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_restarts_cleanly_on_a_fresh_launch(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+    service.attach_assistant(assistant)
+    _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "tropism")
+    assert service._launch_wizards[42].index == 1
+
+    await service._maybe_continue_launch_wizard(42, "/launch")
+
+    fresh = service._launch_wizards[42]
+    assert fresh.index == 0
+    assert fresh.fields == [telegram_link_module._LAUNCH_PROTOCOL_FIELD]
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_abandoned_past_timeout_is_dropped(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fake_call(self, messages):
+        return {"role": "assistant", "content": "ok, that's a normal chat reply"}
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    state = service._launch_wizards[42]
+    state.last_activity = (
+        telegram_link_module.time.monotonic() - telegram_link_module.LAUNCH_WIZARD_TIMEOUT_S - 1
+    )
+
+    consumed = await service._maybe_continue_launch_wizard(42, "hello")
+    assert consumed is False
+    assert 42 not in service._launch_wizards
     await assistant.aclose()
     await service.shutdown()
 

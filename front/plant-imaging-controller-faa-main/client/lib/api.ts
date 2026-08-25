@@ -190,6 +190,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message, history, username }),
     }),
+  /** A config staged by Telegram's /launch wizard once someone confirms it
+   *  -- one-shot, consumed by this call, so a second call for the same
+   *  user comes back null rather than replaying it. `protocol` scopes the
+   *  consumption to a match: the Tropism and Growth screens both poll this
+   *  on mount, and without it whichever loads first would silently
+   *  discard a config meant for the other. */
+  pendingLaunch: (username: string, protocol: "tropism" | "growth") =>
+    jsonFetch<{ config: SavedExperimentConfig | null }>(
+      `/api/assistant/pending-launch?username=${encodeURIComponent(username)}&protocol=${protocol}`
+    ),
 };
 
 /** Resolve the WebSocket URL for live status against the current origin. */
