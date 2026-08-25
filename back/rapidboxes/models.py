@@ -714,3 +714,94 @@ class RemoteSyncStatus(BaseModel):
     # True on a dev laptop (RAPIDBOXES_SIMULATION=1): no real CIFS mount is
     # attempted; the share is emulated by a local directory.
     simulation: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Synology DSM sharing links (Settings -> General -> Sharing Links), used by
+# the assistant's upload_experiment_to_remote tool to hand back a real,
+# clickable, internet-reachable URL instead of just a local network path.
+# A DIFFERENT server/account than Remote Sync's CIFS share -- see
+# rapidboxes/dsm_sharing.py's module docstring for why this exists
+# separately rather than reusing the CIFS credentials. Same password
+# handling as Remote Sync: session-only, never persisted, never returned.
+# ---------------------------------------------------------------------------
+
+DSM_HOST_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$"
+_DSM_HOST_RE = re.compile(DSM_HOST_PATTERN)
+
+# A DSM-internal filesystem path (e.g. "/volume1/ueb-if"), NOT a CIFS UNC
+# path -- File Station's own API addresses folders this way, and Synology's
+# volume numbering can't be derived from the share name, so this is entered
+# by whoever set up the NAS, same as the CIFS server string.
+DSM_SHARE_ROOT_PATTERN = r"^/[A-Za-z0-9][A-Za-z0-9._/-]{0,253}$"
+_DSM_SHARE_ROOT_RE = re.compile(DSM_SHARE_ROOT_PATTERN)
+
+
+def validate_dsm_host(host: str) -> str:
+    value = (host or "").strip()
+    if not value:
+        raise ValueError("host is required")
+    if not _DSM_HOST_RE.match(value):
+        raise ValueError("host must be a plain hostname (letters, digits, dots, hyphens)")
+    return value
+
+
+def validate_dsm_share_root(path: str) -> str:
+    value = (path or "").strip()
+    if not value:
+        raise ValueError("share root is required")
+    if not _DSM_SHARE_ROOT_RE.match(value):
+        raise ValueError("share root must be an absolute DSM path, e.g. /volume1/ueb-if")
+    if any(segment == ".." for segment in value.split("/")):
+        raise ValueError("share root must not contain '..' segments")
+    return value
+
+
+class DsmSharingSettings(BaseModel):
+    """The persisted (non-secret) half of the DSM-sharing configuration."""
+
+    enabled: bool = False
+    host: str = ""
+    port: int = 5001
+    username: str = ""
+    # DSM-internal path whose <share_root>/<username>/<experiment_id>
+    # subfolder is where Remote Sync's CIFS copies actually land on this
+    # NAS's own filesystem (see the module docstring in dsm_sharing.py).
+    shareRoot: str = ""
+
+    @model_validator(mode="after")
+    def _check(self) -> "DsmSharingSettings":
+        if self.host:
+            validate_dsm_host(self.host)
+        if self.shareRoot:
+            validate_dsm_share_root(self.shareRoot)
+        return self
+
+
+class DsmSharingUpdate(BaseModel):
+    """PUT /api/settings/dsm-sharing body. `password` is write-only, same
+    precedent as RemoteSyncUpdate: never echoed back, never persisted."""
+
+    enabled: Optional[bool] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = Field(default=None, max_length=256)
+    shareRoot: Optional[str] = None
+
+
+class DsmSharingStatus(BaseModel):
+    """GET /api/settings/dsm-sharing — everything the UI shows. No password."""
+
+    enabled: bool = False
+    host: str = ""
+    port: int = 5001
+    username: str = ""
+    shareRoot: str = ""
+    passwordSet: bool = False
+    # Switched on, but the in-memory password is gone (a restart) -- nothing
+    # can generate a link until a human re-enters it. Same state/meaning as
+    # RemoteSyncStatus.credentialsRequired.
+    credentialsRequired: bool = False
+    lastResult: Optional[str] = None  # "ok" | "error"
+    lastError: Optional[str] = None

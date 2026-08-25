@@ -4,6 +4,9 @@ import type {
   AssistantMessage,
   CameraSettings,
   DeviceSettings,
+  DsmSharingCheckResult,
+  DsmSharingStatus,
+  DsmSharingUpdate,
   ExperimentAiSummary,
   ExperimentConfig,
   ExperimentStatus,
@@ -137,6 +140,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ researcher }),
     }),
+  dsmSharing: () => jsonFetch<DsmSharingStatus>("/api/settings/dsm-sharing"),
+  /** Patch the DSM sharing config. `password` is write-only and never comes back. */
+  saveDsmSharing: (update: DsmSharingUpdate) =>
+    jsonFetch<DsmSharingStatus>("/api/settings/dsm-sharing", {
+      method: "PUT",
+      body: JSON.stringify(update),
+    }),
+  checkDsmSharing: () =>
+    jsonFetch<DsmSharingCheckResult>("/api/settings/dsm-sharing/check", { method: "POST" }),
   telegramStatus: (username: string) =>
     jsonFetch<TelegramStatus>(`/api/telegram/status?username=${encodeURIComponent(username)}`),
   requestTelegramLinkCode: (username: string) =>

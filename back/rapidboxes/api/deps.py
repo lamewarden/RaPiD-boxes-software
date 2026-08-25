@@ -7,6 +7,7 @@ from fastapi import Request
 
 from ..assistant.service import AssistantService
 from ..config import AppConfig
+from ..dsm_sharing import DsmSharingService
 from ..engine.runner import ExperimentRunner
 from ..hardware.manager import HardwareManager, build_hardware
 from ..models import DeviceSettings
@@ -29,6 +30,9 @@ class AppState:
     assistant: AssistantService
     # Opt-in issue-alert delivery (Telegram DM). See rapidboxes/telegram_link.py.
     telegram: TelegramLinkService
+    # Synology DSM sharing links -- a different NAS/account than `sync`
+    # above. See rapidboxes/dsm_sharing.py.
+    dsm_sharing: DsmSharingService
 
     async def rebuild_hardware(self, settings: DeviceSettings) -> None:
         """Swap in fresh hardware after a settings change (idle only).

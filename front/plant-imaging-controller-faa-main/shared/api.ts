@@ -361,6 +361,42 @@ export interface RemoteSyncCheckResult {
   status: RemoteSyncStatus;
 }
 
+// ---------------------------------------------------------------------------
+// Synology DSM sharing links (Settings -> General -> Sharing Links).
+// Mirrors DsmSharingStatus / DsmSharingUpdate in back/rapidboxes/models.py.
+// A DIFFERENT NAS/account than Remote Sync above -- see
+// back/rapidboxes/dsm_sharing.py's module docstring for why. Same
+// session-only password precedent: never returned by any endpoint.
+// ---------------------------------------------------------------------------
+
+export interface DsmSharingStatus {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  /** DSM-internal path, e.g. "/volume1/ueb-if" -- NOT a CIFS UNC path. */
+  shareRoot: string;
+  passwordSet: boolean;
+  credentialsRequired: boolean;
+  lastResult: "ok" | "error" | null;
+  lastError: string | null;
+}
+
+export interface DsmSharingUpdate {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  shareRoot?: string;
+}
+
+export interface DsmSharingCheckResult {
+  ok: boolean;
+  message: string;
+  status: DsmSharingStatus;
+}
+
 // --- Telegram issue-alert linking (see rapidboxes/telegram_link.py) -------
 
 export interface TelegramStatus {

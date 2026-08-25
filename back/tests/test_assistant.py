@@ -27,9 +27,11 @@ from rapidboxes.config import AppConfig
 from rapidboxes.engine.runner import ExperimentRunner
 from rapidboxes.hardware.manager import build_hardware
 from rapidboxes.main import create_app
+from rapidboxes.dsm_sharing import DsmSharingService
 from rapidboxes.models import (
     CameraSettings,
     DeviceSettings,
+    DsmSharingSettings,
     ExperimentPhase,
     ExperimentState,
     RecoveryNotice,
@@ -1142,6 +1144,70 @@ async def test_upload_to_remote_copies_real_files_and_reports_the_real_path(app_
     destination = remote_sync.remote_path_for("ivan") / exp.experiment_id
     assert str(destination) in reply
     assert (destination / "dark_00000.png").exists()
+
+
+def _connected_dsm_sharing(tmp_path: Path) -> DsmSharingService:
+    service = DsmSharingService(
+        DsmSharingSettings(enabled=True, host="ds-ueb-if.example.org", username="ivan", shareRoot="/volume1/ueb-if"),
+        settings_path=tmp_path / "dsm.json",
+    )
+    service.set_password("s3cret")
+    return service
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_includes_a_real_link_when_dsm_sharing_is_connected(
+    app_config: AppConfig, tmp_path: Path, monkeypatch
+):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    dsm_sharing = _connected_dsm_sharing(tmp_path)
+
+    async def fake_create_share_link(username, experiment_id):
+        return True, "https://ds-ueb-if.example.org:5001/sharing/rsZdI8dEq"
+
+    monkeypatch.setattr(dsm_sharing, "create_share_link", fake_create_share_link)
+
+    service = AssistantService(app_config, storage, remote_sync=remote_sync, dsm_sharing=dsm_sharing)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+
+    assert download is None
+    assert "https://ds-ueb-if.example.org:5001/sharing/rsZdI8dEq" in reply
+
+
+@pytest.mark.asyncio
+async def test_upload_to_remote_falls_back_to_local_path_when_dsm_sharing_fails(
+    app_config: AppConfig, tmp_path: Path, monkeypatch
+):
+    """DSM sharing being connected but unable to produce a link (wrong
+    share root, permission issue, whatever) must not break the whole
+    reply -- the local network path is still a complete, useful answer."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    remote_sync = _connected_remote_sync(app_config, tmp_path)
+    dsm_sharing = _connected_dsm_sharing(tmp_path)
+
+    async def failing_create_share_link(username, experiment_id):
+        return False, "DSM couldn't share that path (code 408)."
+
+    monkeypatch.setattr(dsm_sharing, "create_share_link", failing_create_share_link)
+
+    service = AssistantService(app_config, storage, remote_sync=remote_sync, dsm_sharing=dsm_sharing)
+    call = _tool_call("upload_experiment_to_remote")
+    _proposal, _image, download, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+
+    assert download is None
+    assert "Copied" in reply
+    destination = remote_sync.remote_path_for("ivan") / exp.experiment_id
+    assert str(destination) in reply
 
 
 @pytest.mark.asyncio

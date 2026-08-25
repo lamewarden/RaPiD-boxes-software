@@ -123,6 +123,14 @@ class AppConfig(BaseSettings):
     # notification, sent right after ExperimentRunner.recover().
     telegram_monitors_path: Path = Path.home() / "rapidboxes" / "telegram_monitors.json"
 
+    # Synology DSM sharing links (Settings -> General -> Sharing Links, see
+    # rapidboxes/dsm_sharing.py) -- a DIFFERENT NAS/account than Remote Sync's
+    # CIFS share above (confirmed by DNS: the two hostnames resolve to
+    # different IPs), used only to hand out a real clickable URL for an
+    # experiment already copied there by Remote Sync. Same
+    # unset-means-not-configured-yet precedent as the CIFS/Telegram fields.
+    dsm_sharing_path: Path = Path.home() / "rapidboxes" / "dsm_sharing.json"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)

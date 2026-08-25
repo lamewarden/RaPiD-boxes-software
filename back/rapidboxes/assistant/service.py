@@ -36,6 +36,7 @@ from ..models import (
     ExperimentProposal,
     SavedExperimentConfig,
 )
+from ..dsm_sharing import DsmSharingService
 from ..remote_sync import RemoteSyncService
 from ..storage import ExperimentDir, Storage, tally_by_user
 from . import vision
@@ -380,9 +381,11 @@ _TOOLS = [
                 "Copies one of the CURRENT user's own experiments to the "
                 "connected network drive (CIFS/SMB, Settings -> General -> "
                 "Remote Sync), into their own folder there, and reports "
-                "back the real path once it's done. Only works if remote "
-                "sync is currently switched on and connected -- if it "
-                "isn't, say so rather than trying. Use when asked to "
+                "back either a real clickable link (if Sharing Links is "
+                "also set up) or the local network path once it's done. "
+                "Only works if remote sync is currently switched on and "
+                "connected -- if it isn't, say so rather than trying. Use "
+                "when asked to "
                 "\"upload\"/\"copy\"/\"put\" an experiment \"on the network "
                 "drive\"/\"on the share\"/\"on the server\" -- for a zip to "
                 "download or send via Telegram use download_experiment "
@@ -443,6 +446,7 @@ class AssistantService:
         storage: Storage,
         runner: Optional[ExperimentRunner] = None,
         remote_sync: Optional[RemoteSyncService] = None,
+        dsm_sharing: Optional[DsmSharingService] = None,
     ):
         self._config = config
         self._storage = storage
@@ -451,6 +455,11 @@ class AssistantService:
         # through this. Optional for the same reason `runner` is -- tests
         # that never exercise that tool don't need a real RemoteSyncService.
         self._remote_sync = remote_sync
+        # A different NAS/account than remote_sync above -- see
+        # dsm_sharing.py. Optional; when unset or not connected,
+        # upload_experiment_to_remote still works, it just reports the local
+        # network path instead of a real clickable URL.
+        self._dsm_sharing = dsm_sharing
         # Read-only: current experiment status and camera availability
         # (system_status tool). Never used to start/stop/change anything --
         # see the module docstring; the assistant only ever reads the
@@ -1100,7 +1109,15 @@ class AssistantService:
         Doesn't attempt to turn sync on, connect, or ask for a password --
         same "degrades gracefully, no crash, tell them what to do instead"
         precedent as every other optional-infrastructure tool here
-        (Telegram, remote sync's own credentialsRequired state in the UI)."""
+        (Telegram, remote sync's own credentialsRequired state in the UI).
+
+        If DSM sharing (dsm_sharing.py) is *also* connected -- a separate
+        NAS/account from the CIFS share, see its own module docstring for
+        why -- this additionally asks it for a real, clickable, internet-
+        reachable link and includes that in the reply instead of just the
+        local network path. If DSM sharing isn't set up, the local path
+        alone is still a complete, useful answer, so that failure is silent
+        (no "couldn't get a link" noise for something never configured)."""
         if not requesting_username:
             return "I don't know who's chatting -- pick your username on the home screen first."
         if self._remote_sync is None or not self._remote_sync.settings.enabled or not self._remote_sync.password_set:
@@ -1121,6 +1138,13 @@ class AssistantService:
         ok, message, _copied = await self._remote_sync.sync_experiment(target_user, exp.experiment_id)
         if not ok:
             return message
+
+        if self._dsm_sharing is not None and self._dsm_sharing.settings.enabled and self._dsm_sharing.password_set:
+            link_ok, link_result = await self._dsm_sharing.create_share_link(target_user, exp.experiment_id)
+            if link_ok:
+                return f"{message} Here's a link: {link_result}"
+            log.info("DSM share-link creation failed for %s: %s", exp.experiment_id, link_result)
+
         remote_path = self._remote_sync.remote_path_for(target_user) / exp.experiment_id
         return f"{message} It's on the network drive at {remote_path}."
 

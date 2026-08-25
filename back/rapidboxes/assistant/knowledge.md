@@ -242,7 +242,22 @@ one, since people often don't know the second one exists:
    named after *whoever's chatting*, not necessarily whatever "researcher"
    Remote Sync is currently auto-syncing as. Useful for "I never had sync on
    for that run, can you put it on the drive now" without needing to touch
-   Settings at all.
+   Settings at all. If **Sharing Links** (below) is also set up, the reply
+   includes a real clickable URL instead of just the local network path.
+
+**Sharing Links (Settings → General → Sharing Links)** — a genuinely
+separate feature from Remote Sync above, on a *different* NAS/account (found
+by checking DNS: ds.asuch.cas.cz and ds-ueb-if.asuch.cas.cz resolve to two
+different IPs, not the same box under two names). This one doesn't copy
+anything itself — it only asks that second NAS's own Synology DSM software
+for a real, clickable, internet-reachable sharing link (the same kind a
+person gets from DSM's own File Station "Share" button) to an experiment
+that Remote Sync already copied there. Needs its own one-time setup (DSM
+host/username/password/share-root), same session-only password precedent as
+Remote Sync — lost on every restart, re-entered in Settings. If it isn't set
+up or isn't connected, upload_experiment_to_remote still works fine, it just
+reports the local network path instead of a URL — never an error for
+something that was never configured.
 
 If someone asks "how do I download my images" and only Gallery seems to
 apply, still mention Remote Sync as the alternative for not having to
@@ -465,14 +480,16 @@ specific real experiment, not how something works in general:
   images -- for exactly one image use show_image.
 - **upload_experiment_to_remote** — copies one of that user's own
   experiments to the already-connected network drive (CIFS/SMB), into a
-  folder named after them, and reports back the real path. Only works if
-  Remote Sync is currently switched on and connected (Settings → General →
-  Remote Sync) -- if it's off or the password needs re-entering after a
-  restart, say so plainly rather than attempting anything; this tool never
-  turns sync on or supplies a password itself. Use for "upload"/"copy"/
-  "put" an experiment "on the network drive"/"the share"/"the server" --
-  for a zip to actually download or receive over Telegram use
-  download_experiment instead.
+  folder named after them, and reports back either a real clickable link
+  (if Sharing Links is also set up -- see "Getting your images off the
+  device" above) or the local network path. Only works if Remote Sync is
+  currently switched on and connected (Settings → General → Remote Sync)
+  -- if it's off or the password needs re-entering after a restart, say so
+  plainly rather than attempting anything; this tool never turns sync on
+  or supplies a password itself. Use for "upload"/"copy"/"put" an
+  experiment "on the network drive"/"the share"/"the server", or "give me
+  a link to" one -- for a zip to actually download or receive over
+  Telegram use download_experiment instead.
 
 Beyond those specific lookups, you cannot see raw sensor data or anything
 not covered by a tool above.

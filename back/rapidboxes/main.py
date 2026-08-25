@@ -19,6 +19,7 @@ from .assistant import summary as assistant_summary
 from .assistant.mold_watch import MoldWatchService
 from .assistant.service import AssistantService
 from .config import AppConfig, get_config
+from .dsm_sharing import DsmSharingService, load_dsm_sharing_settings
 from .engine.runner import ExperimentRunner
 from .hardware.manager import build_hardware
 from .remote_sync import RemoteSyncService, load_remote_sync_settings
@@ -28,6 +29,7 @@ from .storage import Storage
 from .telegram_link import TelegramLinkService
 from .api import (
     assistant as assistant_api,
+    dsm_sharing as dsm_sharing_api,
     experiments,
     health,
     images,
@@ -79,6 +81,20 @@ async def lifespan(app: FastAPI):
     if sync.credentials_required:
         log.warning(
             "remote sync is switched on but has no password after this restart; "
+            "it stays inactive until the password is re-entered in Settings"
+        )
+
+    # Synology DSM sharing links (see dsm_sharing.py) -- a different NAS/
+    # account than `sync` above. Same credentials-lost-on-restart precedent;
+    # no background worker, since link creation only ever happens on an
+    # on-demand chat request, not per-capture.
+    dsm_sharing = DsmSharingService(
+        load_dsm_sharing_settings(config.dsm_sharing_path),
+        settings_path=config.dsm_sharing_path,
+    )
+    if dsm_sharing.credentials_required:
+        log.warning(
+            "DSM sharing is switched on but has no password after this restart; "
             "it stays inactive until the password is re-entered in Settings"
         )
 
@@ -134,15 +150,16 @@ async def lifespan(app: FastAPI):
     # HardwareManager.restore_experiment_settings) -- read it back from hw
     # rather than the pre-recover() `device_settings`, so GET /api/settings
     # and the Camera Settings UI agree with what's actually driving captures.
-    assistant = AssistantService(config, storage, runner, sync)
+    assistant = AssistantService(config, storage, runner, sync, dsm_sharing)
     telegram.attach_assistant(assistant)
-    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram)
+    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram, dsm_sharing)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
         yield
     finally:
         await runner.shutdown()
         await sync.shutdown()
+        await dsm_sharing.shutdown()
         await mold_watch.shutdown()
         await telegram.shutdown()
         await assistant.aclose()
@@ -164,6 +181,7 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
 
     for module in (
         assistant_api,
+        dsm_sharing_api,
         experiments,
         images,
         settings_api,
