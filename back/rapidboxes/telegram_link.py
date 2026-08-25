@@ -152,6 +152,29 @@ def _parse_yes_no(text: str) -> bool:
     raise ValueError("please answer yes or no")
 
 
+# Recognized anywhere mid-wizard as "stop asking me one field at a time --
+# keep everything as currently shown and take me to the final summary."
+# Deliberately broad substring matches (typos and all -- "aproove" is a
+# real one seen in production) rather than an exact-phrase list: the
+# consequence of a false positive is mild (jumps to a summary the human
+# still has to explicitly say "yes" to, same safety gate as always) while
+# a false negative just means falling back to answering fields one by one,
+# so erring toward recognizing more phrasings is the right tradeoff here.
+_LAUNCH_SKIP_SIGNALS = (
+    "approve all", "approve everything", "aproove all", "aproove everything",
+    "run it", "start it", "launch it", "go ahead", "go for it", "just run",
+    "just start", "just launch", "looks good", "sounds good", "all good",
+    "that's fine", "thats fine", "as is", "as-is", "keep everything",
+    "keep current", "keep it as", "use current", "confirm all",
+    "confirm everything", "skip to", "skip ahead", "skip the rest",
+)
+
+
+def _wants_to_skip_launch_wizard(text: str) -> bool:
+    normalized = " ".join(text.strip().lower().split())
+    return any(signal in normalized for signal in _LAUNCH_SKIP_SIGNALS)
+
+
 def _bounded_float(lo: float, hi: float, unit: str) -> Callable[[str], float]:
     def parse(text: str) -> float:
         try:
@@ -1252,16 +1275,16 @@ class TelegramLinkService:
         current_text = f.format(current) if current is not None else "not set"
         await self._send_raw(chat_id, f"{f.prompt} (currently: {current_text})")
 
-    async def _handle_launch_answer(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
-        f = state.fields[state.index]
-        try:
-            value = f.parse(text)
-        except ValueError as exc:
-            current = self._current_launch_field_value(state, f)
-            current_text = f.format(current) if current is not None else "not set"
-            await self._send_raw(chat_id, f"⚠️ {exc}. {f.prompt} (currently: {current_text})")
-            return  # re-ask the same field -- index does not advance
-
+    @staticmethod
+    def _apply_launch_answer(state: _LaunchWizardState, f: _LaunchField, value: object) -> None:
+        """Stores one field's already-resolved value and advances
+        state.index, including protocol's field-list expansion and
+        exposureOverride's conditional follow-up insert. Shared by
+        _handle_launch_answer (value came from parsing real typed text) and
+        _auto_fill_remaining_launch_fields (value came straight from
+        what's already current, needing no parsing) -- both need the exact
+        same storage/advance/side-effect logic, just a different source
+        for `value`."""
         if f.name == "experimentName":
             state.experiment_name = value
         elif f.name in ("grayscale", "exposureMicroseconds"):
@@ -1292,6 +1315,46 @@ class TelegramLinkService:
             state.values["darkPhaseHours"] = 0.0
             state.index += 1
 
+    def _auto_fill_remaining_launch_fields(self, state: _LaunchWizardState) -> None:
+        """"Approve everything, run it as-is" shortcut: fills every field
+        from state.index onward with whatever's already shown as
+        "currently: ..." (state.base's seeded value), continuing right
+        through fields that only get added once an earlier one is answered
+        (protocol's tropism/growth-specific block, exposureOverride's own
+        follow-up). exposureOverride itself defaults to "no" here -- a
+        manual exposure override is never silently assumed just because
+        the rest was auto-approved. experimentName is the one field with
+        no sensible "current" value to keep at all (SavedExperimentConfig
+        has no such field), so it gets a real generated name instead of
+        being left unset -- start_experiment_from_launch requires one."""
+        while state.index < len(state.fields):
+            f = state.fields[state.index]
+            if f.name == "experimentName":
+                value = f"telegram-launch-{datetime.now().strftime('%H%M%S')}"
+            else:
+                value = self._current_launch_field_value(state, f)
+                if value is None and f.name == "exposureOverride":
+                    value = False
+            self._apply_launch_answer(state, f, value)
+
+    async def _handle_launch_answer(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
+        f = state.fields[state.index]
+
+        if _wants_to_skip_launch_wizard(text):
+            self._auto_fill_remaining_launch_fields(state)
+            await self._finish_launch_wizard(chat_id, state)
+            return
+
+        try:
+            value = f.parse(text)
+        except ValueError as exc:
+            current = self._current_launch_field_value(state, f)
+            current_text = f.format(current) if current is not None else "not set"
+            await self._send_raw(chat_id, f"⚠️ {exc}. {f.prompt} (currently: {current_text})")
+            return  # re-ask the same field -- index does not advance
+
+        self._apply_launch_answer(state, f, value)
+
         if state.index >= len(state.fields):
             await self._finish_launch_wizard(chat_id, state)
             return
@@ -1318,7 +1381,7 @@ class TelegramLinkService:
 
     async def _handle_launch_confirmation(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
         answer = text.strip().lower()
-        if answer in ("yes", "y", "confirm", "confirmed", "start"):
+        if answer in ("yes", "y", "confirm", "confirmed", "start") or _wants_to_skip_launch_wizard(answer):
             del self._launch_wizards[chat_id]
             await self._confirm_and_start_launch(chat_id, state)
             return
@@ -1518,6 +1581,25 @@ class TelegramLinkService:
         except Exception:
             log.exception("telegram chat dispatch failed for %s", username)
             await self._send_raw(chat_id, "Something went wrong handling that -- try again.")
+            return
+
+        # A plain-English "start it"/"stop it" hands off to the same real,
+        # deterministic flow the /launch and /stop slash commands use --
+        # never a shortcut around them. response.reply is deliberately not
+        # sent in this branch: _handle_launch_command/_handle_stop_command
+        # send their own first message (the wizard's overview + first
+        # question, or the stop confirmation prompt) instead.
+        if response.chatAction == "start_launch":
+            history.append(AssistantMessage(role="user", content=text))
+            history.append(AssistantMessage(role="assistant", content="(started the /launch wizard)"))
+            del history[:-MAX_CHAT_HISTORY]
+            await self._handle_launch_command(chat_id, text)
+            return
+        if response.chatAction == "stop":
+            history.append(AssistantMessage(role="user", content=text))
+            history.append(AssistantMessage(role="assistant", content="(asked to confirm stopping the experiment)"))
+            del history[:-MAX_CHAT_HISTORY]
+            await self._handle_stop_command(chat_id)
             return
 
         history.append(AssistantMessage(role="user", content=text))

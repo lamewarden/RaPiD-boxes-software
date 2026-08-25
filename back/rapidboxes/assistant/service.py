@@ -183,7 +183,18 @@ _TOOLS = [
                 "protocol Sabol did Monday\") into a real proposal built from "
                 "that run's own saved config. Only call this for a clear "
                 "start/repeat/reuse intent, never for a plain question about "
-                "past experiments -- use list_experiments for that instead."
+                "past experiments -- use list_experiments for that instead. "
+                "Set startNow=true whenever they clearly want it to actually "
+                "begin right now, not just be shown -- e.g. \"start it\", "
+                "\"launch a new tropism run like yesterday\", \"go ahead and "
+                "begin\". There is no contradiction between chatting and "
+                "starting: on Telegram, startNow=true hands this exact "
+                "request straight to the real step-by-step confirmation "
+                "wizard (every setting shown and range-checked, one explicit "
+                "final \"yes\" required before anything actually happens) -- "
+                "the same one /launch enters, just reached by talking instead "
+                "of typing a slash command. Elsewhere (no such wizard exists) "
+                "startNow is safely ignored and this always just proposes."
             ),
             "parameters": {
                 "type": "object",
@@ -195,6 +206,10 @@ _TOOLS = [
                     "reference": {
                         "type": "string",
                         "description": "their own words for which run, e.g. 'yesterday', 'last tropism run'",
+                    },
+                    "startNow": {
+                        "type": "boolean",
+                        "description": "true only if they clearly want it to begin immediately, not just be reviewed",
                     },
                 },
             },
@@ -511,6 +526,25 @@ _TOOLS = [
                 "screen the kiosk happens to be on. Device-wide, not scoped "
                 "to whoever's asking -- the kiosk is one shared screen, "
                 "unlike take_snapshot's per-user camera capture."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_experiment",
+            "description": (
+                "Call this when the user's plain-English message expresses "
+                "real intent to stop/end/cancel their own CURRENTLY RUNNING "
+                "experiment right now -- e.g. \"stop my experiment\", "
+                "\"cancel my run\", \"end it now\". Not for a question about "
+                "whether something is running (use system_status for that). "
+                "This never stops anything by itself: on Telegram it hands "
+                "off to the real confirmation flow /stop uses -- it states "
+                "exactly how many images have been captured so far and "
+                "requires an explicit \"yes\" before actually stopping "
+                "anything (every image already captured is always kept)."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -862,19 +896,24 @@ class AssistantService:
 
                 tool_calls = result.get("tool_calls") or []
                 if tool_calls:
-                    proposal, image, download, live_image, reply = await self._resolve_tool_call(
+                    proposal, image, download, live_image, chat_action, reply = await self._resolve_tool_call(
                         tool_calls[0], username
                     )
                 else:
-                    proposal, image, download, live_image, reply = (
-                        None, None, None, None, (result.get("content") or "").strip()
+                    proposal, image, download, live_image, chat_action, reply = (
+                        None, None, None, None, None, (result.get("content") or "").strip()
                     )
             finally:
                 self._task = None
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
             return AssistantChatResponse(
-                reply=reply, proposal=proposal, image=image, download=download, liveImage=live_image
+                reply=reply,
+                proposal=proposal,
+                image=image,
+                download=download,
+                liveImage=live_image,
+                chatAction=chat_action,
             )
 
     async def _call_llm(self, messages: list) -> dict:
@@ -898,21 +937,26 @@ class AssistantService:
         Optional[AssistantImageRef],
         Optional[AssistantDownloadRef],
         Optional[AssistantLiveImageRef],
+        Optional[str],
         str,
     ]:
         """Dispatches one native tool_calls entry to its resolver. Only
         prefill_experiment ever carries a proposal, only show_image/
         describe_image carry an image, only download_experiment carries a
         download, and only take_snapshot/take_screenshot carry a liveImage
-        -- every other tool answers with text alone. Most of those are
-        read-only lookups; upload_experiment_to_remote is the one exception
-        with a real side effect (it copies files to the CIFS share),
-        reported back as plain text rather than a structured ref since
-        there's no new local artifact to point at, unlike download's zip.
-        my_settings/my_storage deliberately ignore any username the model
-        might put in args (their schema takes none) and always use
-        requesting_username -- unlike list_experiments/prefill_experiment,
-        which may look up a named other user, these two never do."""
+        -- every other tool answers with text alone. chat_action (the 5th
+        element) is set only by prefill_experiment (when its startNow arg
+        is true and a real match was found) and stop_experiment -- see
+        AssistantChatResponse.chatAction's own docstring; every other tool
+        leaves it None. Most tools are read-only lookups;
+        upload_experiment_to_remote is the one exception with a real side
+        effect (it copies files to the CIFS share), reported back as plain
+        text rather than a structured ref since there's no new local
+        artifact to point at, unlike download's zip. my_settings/my_storage
+        deliberately ignore any username the model might put in args (their
+        schema takes none) and always use requesting_username -- unlike
+        list_experiments/prefill_experiment, which may look up a named
+        other user, these two never do."""
         name = tool_call.get("function", {}).get("name")
         try:
             args = json.loads(tool_call.get("function", {}).get("arguments") or "{}")
@@ -923,38 +967,50 @@ class AssistantService:
 
         if name == "prefill_experiment":
             proposal, reply = self.resolve_prefill_experiment(args, requesting_username)
-            return proposal, None, None, None, reply
+            # No proposal-found requirement here -- /launch itself already
+            # falls back to bare defaults when nothing matches (see
+            # _handle_launch_command's own docstring), so "start now" with
+            # no match still hands off to the wizard the same way.
+            chat_action = "start_launch" if args.get("startNow") is True else None
+            return proposal, None, None, None, chat_action, reply
         if name == "list_experiments":
-            return None, None, None, None, self.resolve_list_experiments(args, requesting_username)
+            return None, None, None, None, None, self.resolve_list_experiments(args, requesting_username)
         if name == "system_status":
-            return None, None, None, None, self.resolve_system_status()
+            return None, None, None, None, None, self.resolve_system_status()
         if name == "my_settings":
-            return None, None, None, None, self._resolve_my_settings(requesting_username)
+            return None, None, None, None, None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
-            return None, None, None, None, self._resolve_my_storage(requesting_username)
+            return None, None, None, None, None, self._resolve_my_storage(requesting_username)
         if name == "read_experiment_log":
-            return None, None, None, None, self._resolve_read_experiment_log(args, requesting_username)
+            return None, None, None, None, None, self._resolve_read_experiment_log(args, requesting_username)
         if name == "check_my_images":
-            return None, None, None, None, await self._resolve_check_my_images(args, requesting_username)
+            return None, None, None, None, None, await self._resolve_check_my_images(args, requesting_username)
         if name == "show_image":
             image, reply = self._resolve_show_image(args, requesting_username)
-            return None, image, None, None, reply
+            return None, image, None, None, None, reply
         if name == "describe_image":
             image, reply = await self._resolve_describe_image(args, requesting_username)
-            return None, image, None, None, reply
+            return None, image, None, None, None, reply
         if name == "download_experiment":
             download, reply = self._resolve_download_experiment(args, requesting_username)
-            return None, None, download, None, reply
+            return None, None, download, None, None, reply
         if name == "upload_experiment_to_remote":
-            return None, None, None, None, await self._resolve_upload_to_remote(args, requesting_username)
+            return None, None, None, None, None, await self._resolve_upload_to_remote(args, requesting_username)
         if name == "take_snapshot":
             live_image, reply = await self._resolve_take_snapshot(requesting_username)
-            return None, None, None, live_image, reply
+            return None, None, None, live_image, None, reply
         if name == "take_screenshot":
             live_image, reply = await self._resolve_take_screenshot()
-            return None, None, None, live_image, reply
+            return None, None, None, live_image, None, reply
+        if name == "stop_experiment":
+            reply = (
+                "I can't stop an experiment directly from chat here -- on Telegram, just confirm "
+                "and I'll stop it for you (every image captured so far is always kept); elsewhere, "
+                "use the Stop button on its Progress screen."
+            )
+            return None, None, None, None, "stop", reply
         log.warning("model called unknown tool %r", name)
-        return None, None, None, None, "Sorry, something went wrong handling that request."
+        return None, None, None, None, None, "Sorry, something went wrong handling that request."
 
     async def _resolve_take_snapshot(
         self, requesting_username: Optional[str]

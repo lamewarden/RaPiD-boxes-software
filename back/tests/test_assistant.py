@@ -225,7 +225,7 @@ async def test_prefill_resolves_real_past_experiment(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ivan", reference="yesterday")
-        proposal, _image, _download, _live_image, _summary = await service._resolve_tool_call(call, requesting_username=None)
+        proposal, _image, _download, _live_image, _chat_action, _summary = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is not None
         assert proposal.experimentId == exp.experiment_id
         assert proposal.sourceUsername == "ivan"
@@ -243,7 +243,7 @@ async def test_prefill_no_match_returns_no_proposal(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ghost", reference="yesterday")
-        proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+        proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is None
         assert "couldn't find" in reply
     finally:
@@ -251,11 +251,80 @@ async def test_prefill_no_match_returns_no_proposal(app_config: AppConfig):
 
 
 @pytest.mark.asyncio
+async def test_prefill_start_now_sets_chat_action_with_or_without_a_real_match(
+    app_config: AppConfig,
+):
+    """chatAction is telegram_link.py's only signal to hand a plain-English
+    "start it" off to the real /launch wizard. Fires on startNow=true
+    whether or not a past-experiment match was found -- matching
+    _handle_launch_command's own "starts from bare defaults if nothing is
+    found" behavior for the literal /launch command, so "start it" (no
+    match) behaves exactly like typing /launch with an unmatched reference,
+    not like a dead end."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "prior-run")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    exp.write_config_xml(config_xml.serialize(SavedExperimentConfig()), "prior-run")
+    service = AssistantService(app_config, storage)
+    try:
+        call = _tool_call("prefill_experiment", reference="my run", startNow=True)
+        proposal, _image, _download, _live_image, chat_action, _reply = await service._resolve_tool_call(
+            call, requesting_username="ivan"
+        )
+        assert proposal is not None
+        assert chat_action == "start_launch"
+
+        call = _tool_call("prefill_experiment", reference="nonexistent-run", startNow=True)
+        proposal, _image, _download, _live_image, chat_action, _reply = await service._resolve_tool_call(
+            call, requesting_username="nobody"
+        )
+        assert proposal is None
+        assert chat_action == "start_launch"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prefill_without_start_now_never_sets_chat_action(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "prior-run")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    exp.write_config_xml(config_xml.serialize(SavedExperimentConfig()), "prior-run")
+    service = AssistantService(app_config, storage)
+    try:
+        call = _tool_call("prefill_experiment", reference="my run")
+        proposal, _image, _download, _live_image, chat_action, _reply = await service._resolve_tool_call(
+            call, requesting_username="ivan"
+        )
+        assert proposal is not None
+        assert chat_action is None
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stop_experiment_tool_sets_chat_action_and_a_safe_fallback_reply(app_config: AppConfig):
+    """Tool-level check only -- telegram_link.py is what actually acts on
+    chatAction=="stop"; here we just confirm the fallback reply (shown
+    as-is anywhere that doesn't intercept chatAction, e.g. the web chat)
+    never claims to have stopped anything itself."""
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("stop_experiment")
+    proposal, _image, _download, _live_image, chat_action, reply = await service._resolve_tool_call(
+        call, requesting_username="ivan"
+    )
+    assert proposal is None
+    assert chat_action == "stop"
+    assert "Stop button" in reply
+
+
+@pytest.mark.asyncio
 async def test_unknown_tool_name_degrades_gracefully(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("delete_everything")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "went wrong" in reply
 
@@ -267,7 +336,7 @@ async def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig
     runner = ExperimentRunner(hw, storage)
     service = AssistantService(app_config, storage, runner)
     call = {"function": {"name": "system_status", "arguments": "not valid json"}}
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply  # empty args -> still resolves
 
@@ -288,7 +357,7 @@ async def test_list_experiments_no_username_defaults_to_requester(app_config: Ap
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "for ivan" in reply
     assert " — ivan — " in reply
@@ -304,7 +373,7 @@ async def test_list_experiments_explicit_all_shows_everyone(app_config: AppConfi
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="all")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "all users" in reply
     assert reply.count(" — ivan — ") == 2
@@ -322,7 +391,7 @@ async def test_list_experiments_no_username_no_requester_shows_everyone(app_conf
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "all users" in reply
 
@@ -336,7 +405,7 @@ async def test_list_experiments_filters_by_named_user(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="sabol")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "for sabol" in reply
     assert " — sabol — " in reply
@@ -352,7 +421,7 @@ async def test_list_experiments_respects_limit(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", limit=2)
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "Last 2 experiment(s)" in reply
 
 
@@ -361,7 +430,7 @@ async def test_list_experiments_no_match(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="ghost")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiments found" in reply
 
@@ -377,7 +446,7 @@ async def test_system_status_reports_idle_storage_and_camera(app_config: AppConf
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply
     assert "Device storage:" in reply
@@ -407,7 +476,7 @@ async def test_system_status_reports_a_recovered_interruption(app_config: AppCon
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "30 min offline" in reply
     assert "3 images could not be captured" in reply
@@ -435,7 +504,7 @@ async def test_system_status_reports_elapsed_remaining_and_expected_finish(app_c
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
 
     assert "2h 0m elapsed" in reply
     assert "2h 0m remaining" in reply
@@ -464,7 +533,7 @@ async def test_system_status_distinguishes_real_usage_from_the_preflight_estimat
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "so far: 639 MB" in reply
     assert "pre-flight estimate" in reply
@@ -477,7 +546,7 @@ async def test_system_status_without_runner_degrades_gracefully(app_config: AppC
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)  # no runner passed
     call = _tool_call("system_status")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "isn't available" in reply
 
 
@@ -501,7 +570,7 @@ async def test_my_settings_reports_persisted_settings_and_mine_baseline(app_conf
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "RGBW" in reply  # current persisted setting
     assert "Your saved 'Mine' baseline (ivan)" in reply
@@ -514,7 +583,7 @@ async def test_my_settings_no_mine_baseline_says_so(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "No personal 'Mine' baseline saved yet" in reply
 
@@ -524,7 +593,7 @@ async def test_my_settings_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -536,7 +605,7 @@ async def test_my_settings_ignores_username_argument_from_model(app_config: AppC
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = {"function": {"name": "my_settings", "arguments": json.dumps({"username": "someone-else"})}}
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert "ivan" in reply.lower() or "No personal 'Mine' baseline saved yet for ivan" in reply
 
 
@@ -549,7 +618,7 @@ async def test_my_storage_reports_own_usage_only(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "ivan has 1 experiment(s)" in reply
     assert "sabol" not in reply
@@ -561,7 +630,7 @@ async def test_my_storage_no_experiments_yet(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no stored experiments yet" in reply
 
@@ -571,7 +640,7 @@ async def test_my_storage_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -588,7 +657,7 @@ async def test_read_experiment_log_returns_own_events(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert exp.experiment_id in reply
     assert "started protocol=tropism username=ivan" in reply
@@ -608,7 +677,7 @@ async def test_read_experiment_log_reports_exact_measured_size(app_config: AppCo
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "2 MB" in reply
     assert "exact, measured" in reply
@@ -625,7 +694,7 @@ async def test_read_experiment_log_never_reads_another_users_run(app_config: App
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "couldn't find" in reply
 
@@ -639,7 +708,7 @@ async def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "No logged events" in reply
 
@@ -649,7 +718,7 @@ async def test_read_experiment_log_requires_a_known_username(app_config: AppConf
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -670,7 +739,7 @@ async def test_check_my_images_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    _proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -679,7 +748,7 @@ async def test_check_my_images_no_experiment_found(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "couldn't find" in reply
 
@@ -693,7 +762,7 @@ async def test_check_my_images_no_images_yet(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no images to check yet" in reply
 
@@ -712,7 +781,7 @@ async def test_check_my_images_below_threshold_not_confirmed(app_config: AppConf
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no confirmed mold" in reply
 
@@ -735,7 +804,7 @@ async def test_check_my_images_at_threshold_confirmed(app_config: AppConfig, mon
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, _image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "Mold appears present in 3" in reply
     assert "Visible mold growth" in reply
@@ -755,7 +824,7 @@ async def test_show_image_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert image is None
     assert "don't know who's chatting" in reply
 
@@ -765,7 +834,7 @@ async def test_show_image_no_experiment_found(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't find" in reply
 
@@ -778,7 +847,7 @@ async def test_show_image_no_images_yet(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "no captured images yet" in reply
 
@@ -793,7 +862,7 @@ async def test_show_image_defaults_to_the_last_capture(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is not None
     assert image.imageId == "dark_00002"
     assert image.experimentId == exp.experiment_id
@@ -811,11 +880,11 @@ async def test_show_image_first_and_last(app_config: AppConfig):
     service = AssistantService(app_config, storage)
 
     call = _tool_call("show_image", which="first")
-    _proposal, image, _download, _live_image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image.imageId == "dark_00000"
 
     call = _tool_call("show_image", which="last")
-    _proposal, image, _download, _live_image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image.imageId == "dark_00002"
 
 
@@ -914,7 +983,7 @@ async def test_show_image_by_exact_name(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image", which="dark_00001")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is not None
     assert image.imageId == "dark_00001"
     assert image.url == f"/api/images/{exp.experiment_id}/dark_00001"
@@ -929,7 +998,7 @@ async def test_show_image_unknown_name_reported_clearly(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image", which="bending_09999")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't find an image" in reply
 
@@ -945,7 +1014,7 @@ async def test_show_image_never_shows_another_users_experiment(app_config: AppCo
 
     service = AssistantService(app_config, storage)
     call = _tool_call("show_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't find" in reply
 
@@ -958,7 +1027,7 @@ async def test_describe_image_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert image is None
     assert "don't know who's chatting" in reply
 
@@ -968,7 +1037,7 @@ async def test_describe_image_no_experiment_found(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't find" in reply
 
@@ -981,7 +1050,7 @@ async def test_describe_image_no_images_yet(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "no captured images yet" in reply
 
@@ -997,7 +1066,7 @@ async def test_describe_image_calls_vision_and_returns_the_image(app_config: App
 
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image", which="dark_00000")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert reply == "A green seedling on a dark plate, evenly lit, nothing unusual."
     assert image is not None
     assert image.imageId == "dark_00000"
@@ -1015,7 +1084,7 @@ async def test_describe_image_reports_vision_failure_gracefully(app_config: AppC
 
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't run the image description" in reply
 
@@ -1037,7 +1106,7 @@ async def test_describe_image_never_describes_another_users_image(app_config: Ap
 
     service = AssistantService(app_config, storage)
     call = _tool_call("describe_image")
-    _proposal, image, _download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, image, _download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert image is None
     assert "couldn't find" in reply
     assert called["n"] == 0
@@ -1051,7 +1120,7 @@ async def test_download_experiment_requires_a_known_username(app_config: AppConf
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert download is None
     assert "don't know who's chatting" in reply
 
@@ -1061,7 +1130,7 @@ async def test_download_experiment_no_experiment_found(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
 
@@ -1075,7 +1144,7 @@ async def test_download_experiment_resolves_real_data(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is not None
     assert download.experimentId == exp.experiment_id
     assert download.url == f"/api/experiments/{exp.experiment_id}/download"
@@ -1094,7 +1163,7 @@ async def test_download_experiment_never_packages_another_users_run(app_config: 
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
 
@@ -1117,7 +1186,7 @@ async def test_download_experiment_first_n_images(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", firstN=3)
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is not None
     assert download.imageIds == ["dark_00000", "dark_00001", "dark_00002"]
     assert download.filename == f"{exp.experiment_id}_3-images.zip"
@@ -1134,7 +1203,7 @@ async def test_download_experiment_last_n_images(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", lastN=2)
-    _proposal, _image, download, _live_image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is not None
     assert download.imageIds == ["dark_00003", "dark_00004"]
 
@@ -1148,7 +1217,7 @@ async def test_download_experiment_explicit_index_range(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", startIndex=2, endIndex=4)
-    _proposal, _image, download, _live_image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is not None
     assert download.imageIds == ["dark_00001", "dark_00002", "dark_00003"]
 
@@ -1161,7 +1230,7 @@ async def test_download_experiment_no_range_args_packages_the_whole_thing(app_co
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment")
-    _proposal, _image, download, _live_image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is not None
     assert download.imageIds is None
     assert download.url == f"/api/experiments/{exp.experiment_id}/download"
@@ -1176,7 +1245,7 @@ async def test_download_experiment_range_on_empty_experiment(app_config: AppConf
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", firstN=3)
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "no captured images yet" in reply
 
@@ -1190,7 +1259,7 @@ async def test_download_experiment_range_never_packages_another_users_run(app_co
 
     service = AssistantService(app_config, storage)
     call = _tool_call("download_experiment", firstN=1)
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
 
@@ -1215,7 +1284,7 @@ async def test_upload_to_remote_requires_a_known_username(app_config: AppConfig,
     remote_sync = _connected_remote_sync(app_config, tmp_path)
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert download is None
     assert "don't know who's chatting" in reply
 
@@ -1227,7 +1296,7 @@ async def test_upload_to_remote_when_not_configured_at_all(app_config: AppConfig
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)  # remote_sync=None
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "isn't connected" in reply
 
@@ -1239,7 +1308,7 @@ async def test_upload_to_remote_when_sync_is_switched_off(app_config: AppConfig,
     remote_sync.settings.enabled = False
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "isn't connected" in reply
 
@@ -1251,7 +1320,7 @@ async def test_upload_to_remote_when_password_missing_after_restart(app_config: 
     remote_sync.clear_password()
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "isn't connected" in reply
 
@@ -1262,7 +1331,7 @@ async def test_upload_to_remote_no_experiment_found(app_config: AppConfig, tmp_p
     remote_sync = _connected_remote_sync(app_config, tmp_path)
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
 
@@ -1277,7 +1346,7 @@ async def test_upload_to_remote_copies_real_files_and_reports_the_real_path(app_
     remote_sync = _connected_remote_sync(app_config, tmp_path)
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
 
     assert download is None  # text-only tool, no structured ref
     assert "Copied" in reply
@@ -1314,7 +1383,7 @@ async def test_upload_to_remote_includes_a_real_link_when_dsm_sharing_is_connect
 
     service = AssistantService(app_config, storage, remote_sync=remote_sync, dsm_sharing=dsm_sharing)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
 
     assert download is None
     assert "https://ds-ueb-if.example.org:5001/sharing/rsZdI8dEq" in reply
@@ -1342,7 +1411,7 @@ async def test_upload_to_remote_falls_back_to_local_path_when_dsm_sharing_fails(
 
     service = AssistantService(app_config, storage, remote_sync=remote_sync, dsm_sharing=dsm_sharing)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
 
     assert download is None
     assert "Copied" in reply
@@ -1364,7 +1433,7 @@ async def test_upload_to_remote_never_packages_another_users_run(app_config: App
     remote_sync = _connected_remote_sync(app_config, tmp_path)
     service = AssistantService(app_config, storage, remote_sync=remote_sync)
     call = _tool_call("upload_experiment_to_remote")
-    _proposal, _image, download, _live_image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, download, _live_image, _chat_action, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert download is None
     assert "couldn't find" in reply
 
@@ -1748,6 +1817,58 @@ async def test_launch_wizard_end_to_end_through_telegram_actually_starts_a_run(c
     assert "🚀" in final_text
     assert "Started" in final_text
     assert "Expected to finish" in final_text
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_skip_shortcut_end_to_end_actually_starts_a_run(
+    client: AsyncClient, monkeypatch
+):
+    """Reported problem: replying "I approve all settings - run it" to the
+    wizard's very first question got a rigid "please answer 'tropism' or
+    'growth'" instead of being recognized as "keep everything as shown and
+    take me to the final review." Proves the shortcut works from the very
+    first question (before protocol is even answered, so the
+    protocol-specific fields don't exist in state.fields yet) all the way
+    through a real start on the real (simulated) hardware -- not just that
+    it stops erroring."""
+    app_state = client._app.state.app  # type: ignore[attr-defined]
+    telegram = app_state.telegram
+    telegram._links["ivan"] = 42
+
+    sent = []
+
+    async def fake_post(url, json=None, **kw):
+        sent.append((url, json))
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                pass
+
+        return _Resp()
+
+    monkeypatch.setattr(telegram._client, "post", fake_post)
+
+    await telegram._dispatch_command(42, "/launch", "")
+    assert "Which measurement" in sent[-1][1]["text"]
+
+    await telegram._maybe_continue_launch_wizard(42, "I aproove all settings - run it")
+
+    # Jumped straight to the summary/confirmation, not another field prompt
+    # or a warning -- no past run existed, so it used SavedExperimentConfig's
+    # own bare defaults (protocol=tropism, darkPhaseHours=90, etc.).
+    summary_text = sent[-1][1]["text"]
+    assert "Ready to review" in summary_text
+    assert 'Reply "yes"' in summary_text
+    assert "⚠️" not in summary_text
+
+    await telegram._maybe_continue_launch_wizard(42, "yes")
+
+    assert app_state.runner.status.state == ExperimentState.running
+    assert app_state.runner.status.username == "ivan"
+    assert app_state.runner.status.experimentName.startswith("telegram-launch-")
+    final_text = sent[-1][1]["text"]
+    assert "Started" in final_text
     await app_state.runner.abort()
 
 

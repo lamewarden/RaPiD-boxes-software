@@ -471,6 +471,15 @@ class AssistantChatResponse(BaseModel):
     image: Optional[AssistantImageRef] = None
     download: Optional[AssistantDownloadRef] = None
     liveImage: Optional[AssistantLiveImageRef] = None
+    # Set when the model recognized real intent to start or stop an
+    # experiment right now (start_experiment/stop_experiment tools), not
+    # just a question about one. `reply` above is still a complete, safe
+    # answer on its own (a review-only proposal, or "use the Stop button")
+    # for any consumer that ignores this field -- telegram_link.py is the
+    # only one that acts on it, handing off to the same real step-by-step
+    # confirmation flow /launch or /stop already use, never starting or
+    # stopping anything by itself just because the model asked.
+    chatAction: Optional[Literal["start_launch", "stop"]] = None
 
 
 # ---------------------------------------------------------------------------

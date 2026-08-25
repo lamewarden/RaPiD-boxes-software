@@ -7,6 +7,7 @@ that would reach it (completing a link sends a confirmation DM, so even the
 "does linking work" tests need this, not just the send_message tests)."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -480,6 +481,101 @@ async def test_chat_message_requesting_a_screenshot_sends_a_real_photo_not_a_dow
     filename, content, _content_type = files["photo"]
     assert filename == "screenshot.png"
     assert content == b"\x89PNG\r\n\x1a\nfake-screenshot-bytes"
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_chat_message_expressing_start_intent_hands_off_to_the_real_wizard(
+    chat_config: AppConfig, monkeypatch
+):
+    """The other half of "there's no contradiction between chatting and
+    starting" -- a plain-English "go ahead and start a run" (mocked as the
+    model calling prefill_experiment with startNow=true, same pattern as
+    every other routing test here) hands off to the exact same wizard
+    /launch itself enters, instead of a text reply that just points at
+    /launch. response.reply is never sent in this case -- the wizard's own
+    overview + first question is what the person actually sees."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    assistant = AssistantService(chat_config, storage)
+
+    async def fake_call(self, messages):
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "prefill_experiment",
+                        "arguments": json.dumps({"reference": "my last run", "startNow": True}),
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_chat_message(42, "go ahead and start a run like my last one")
+
+    assert 42 in service._launch_wizards
+    sent_texts = [body["text"] for _, body in calls]
+    assert any("Let's set up a new experiment" in t for t in sent_texts)
+    assert any("Which measurement" in t for t in sent_texts)
+    # response.reply (prefill_experiment's ordinary "review it yourself"
+    # text) was never sent -- the wizard's own messages replaced it.
+    assert not any("press Start yourself" in t for t in sent_texts)
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_chat_message_expressing_stop_intent_hands_off_to_the_real_confirmation(
+    chat_config: AppConfig, monkeypatch
+):
+    """Symmetric with the start-intent test above: "stop my experiment"
+    (mocked as the model calling stop_experiment) hands off to the same
+    real confirmation /stop uses, stating the actual image count -- not a
+    generic text reply."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+
+    fake_runner = _FakeRunner(
+        ExperimentStatus(
+            state=ExperimentState.running,
+            experimentId=exp.experiment_id,
+            username="ivan",
+            imagesCaptured=7,
+        )
+    )
+    service.attach_runner(fake_runner)  # type: ignore[arg-type]
+    assistant = AssistantService(chat_config, storage)
+
+    async def fake_call(self, messages):
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "stop_experiment", "arguments": "{}"}}
+            ],
+        }
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_chat_message(42, "please cancel my run")
+
+    assert service._stop_confirmations.get(42) == exp.experiment_id
+    sent_texts = [body["text"] for _, body in calls]
+    assert any("7 image(s) captured" in t for t in sent_texts)
+    # stop_experiment's own fallback reply (meant for channels with no
+    # confirmation flow, like the web UI) was never sent here.
+    assert not any("Stop button" in t for t in sent_texts)
     await assistant.aclose()
     await service.shutdown()
 
@@ -1135,6 +1231,19 @@ def test_parse_color_mode():
     assert _parse_color_mode("Colour") is False
     with pytest.raises(ValueError, match='"color" or "bw"'):
         _parse_color_mode("purple")
+
+
+def test_wants_to_skip_launch_wizard_recognizes_common_phrasings_and_typos():
+    from rapidboxes.telegram_link import _wants_to_skip_launch_wizard
+
+    assert _wants_to_skip_launch_wizard("I aproove all settings - run it") is True
+    assert _wants_to_skip_launch_wizard("go ahead and start it") is True
+    assert _wants_to_skip_launch_wizard("looks good, launch it") is True
+    assert _wants_to_skip_launch_wizard("As-Is please") is True
+    # A real field answer is never mistaken for the shortcut.
+    assert _wants_to_skip_launch_wizard("tropism") is False
+    assert _wants_to_skip_launch_wizard("yes") is False
+    assert _wants_to_skip_launch_wizard("42") is False
 
 
 def test_build_exposure_field_validates_against_the_chosen_sources_own_range():
