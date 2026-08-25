@@ -174,7 +174,7 @@ The fourth tab — static credits, nothing configurable, no locking, no
 "Default"/"Mine"/"Save" row (same reasoning as General). Contents:
 
 - **About** — RaPiD-boxes was developed by the team of the IEB Prague
-  Imaging Core Facility, headed by Malínská Kateřina.
+  Imaging Core Facility.
 - **Credits** — Original prototype & Backend: Ivan Kashkan. UI: Judith
   Garcia Gonzalez. Hardware prototyping: Vojtěch Knirsch, Matěj Drs. Head of
   Core Facility: Malínská Kateřina.
