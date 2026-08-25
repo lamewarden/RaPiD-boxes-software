@@ -15,10 +15,11 @@ export default function Index() {
         <div className="text-center w-full">
           <button
             onClick={() => setAssistantOpen(true)}
+            title="IEB Image Facility raPIDBOx assistanT"
             className="mb-3 inline-flex items-center gap-2 rounded-full border border-app-violet/50 bg-app-violet/15 px-4 py-1.5 text-white shadow-lg transition-colors hover:bg-app-violet/25"
           >
             <Flower2 className="h-[16px] w-[16px] text-app-violet-light" strokeWidth={1.5} />
-            <span className="text-[12px] font-bold">QA Assistant</span>
+            <span className="text-[12px] font-bold">PidiBot</span>
             <Sparkles className="h-[13px] w-[13px] text-app-violet-light" strokeWidth={1.5} />
           </button>
           <h2 className="text-xl font-bold text-white mb-2">Select Your Program</h2>

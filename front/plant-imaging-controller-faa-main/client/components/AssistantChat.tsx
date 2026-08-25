@@ -101,9 +101,12 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-app-bg-primary">
       <div className="flex items-center justify-between border-b border-app-border-primary bg-app-bg-secondary px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[15px] font-bold uppercase tracking-wide text-white">
+        <span
+          className="flex items-center gap-1.5 text-[15px] font-bold uppercase tracking-wide text-white"
+          title="IEB Image Facility raPIDBOx assistanT"
+        >
           <Bot className="h-[18px] w-[18px] text-app-violet-light" strokeWidth={1.5} />
-          QA Assistant
+          PidiBot
         </span>
         <div className="flex items-center gap-1">
           {messages.length > 0 && (
