@@ -20,7 +20,7 @@ element is missing from an older file:
       added <camera zoom>. Older files' awb/settle attributes are simply
       ignored; a missing zoom defaults to 1.0 (no crop).
   v6  added <report enabled=.../> (reportOnIssueEnabled). Deliberately does
-      NOT carry the notifyEmail address -- see SavedExperimentConfig.
+      NOT carry the Telegram link itself -- see SavedExperimentConfig.
 """
 from __future__ import annotations
 

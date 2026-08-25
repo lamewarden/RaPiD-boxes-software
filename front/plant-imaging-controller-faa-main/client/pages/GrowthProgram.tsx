@@ -26,7 +26,6 @@ const DEFAULT_VALUES = {
   dayIntensity: 25,
   interval: 30,
   reportOnIssueEnabled: false,
-  notifyEmail: "",
 };
 
 export default function GrowthProgram() {
@@ -44,7 +43,6 @@ export default function GrowthProgram() {
   const [reportOnIssueEnabled, setReportOnIssueEnabled] = useState(
     DEFAULT_VALUES.reportOnIssueEnabled
   );
-  const [notifyEmail, setNotifyEmail] = useState(DEFAULT_VALUES.notifyEmail);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -62,8 +60,8 @@ export default function GrowthProgram() {
     setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
     setDayIntensity(loaded.dayIntensity);
     setInterval(loaded.intervalMinutes);
-    // See TropismProgram: replays whether alerting was on, but deliberately
-    // not the raw email address.
+    // See TropismProgram: replays whether alerting was on -- Telegram
+    // linking is per-user, not per-config.
     setReportOnIssueEnabled(loaded.reportOnIssueEnabled);
 
     api
@@ -111,10 +109,6 @@ export default function GrowthProgram() {
         toast.error("Select at least one spectrum colour.");
         return;
       }
-      if (reportOnIssueEnabled && !notifyEmail) {
-        toast.error("Set a notify email or turn off issue alerts.");
-        return;
-      }
       const res = await guardedStart({
         protocol: "growth",
         experimentName,
@@ -125,7 +119,6 @@ export default function GrowthProgram() {
         dayIntensity,
         intervalMinutes: interval,
         reportOnIssueEnabled,
-        notifyEmail: notifyEmail || null,
       });
       if (!res) return; // user cancelled the low-space dialog
       if (res.status === "busy") {
@@ -169,7 +162,6 @@ export default function GrowthProgram() {
     setDayIntensity(DEFAULT_VALUES.dayIntensity);
     setInterval(DEFAULT_VALUES.interval);
     setReportOnIssueEnabled(DEFAULT_VALUES.reportOnIssueEnabled);
-    setNotifyEmail(DEFAULT_VALUES.notifyEmail);
     toast.success("Growth settings reset to defaults.");
   };
 
@@ -244,14 +236,7 @@ export default function GrowthProgram() {
             />
           </div>
 
-          <IssueAlertsField
-            enabled={reportOnIssueEnabled}
-            email={notifyEmail}
-            onChange={(enabled, email) => {
-              setReportOnIssueEnabled(enabled);
-              setNotifyEmail(email);
-            }}
-          />
+          <IssueAlertsField enabled={reportOnIssueEnabled} onChange={setReportOnIssueEnabled} />
 
         </div>
 

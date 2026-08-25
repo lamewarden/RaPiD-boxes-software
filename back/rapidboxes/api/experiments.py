@@ -28,6 +28,14 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
 @router.post("", response_model=StartResponse)
 async def start_experiment(config: ExperimentConfig, state: AppState = Depends(get_state)):
+    # Defense in depth: the UI only lets reportOnIssueEnabled be ticked once
+    # Telegram is linked (see IssueAlertsField.tsx), but that's a client-side
+    # gate -- re-check here too, since a request could otherwise ask for
+    # alerts nothing can ever deliver.
+    if config.reportOnIssueEnabled and not state.telegram.is_linked(config.username):
+        raise HTTPException(
+            400, "Link Telegram in Settings -> General before enabling issue alerts"
+        )
     # This is how the backend learns who the active researcher is: the name is
     # client-side state (localStorage, see client/lib/session.ts) that arrives
     # with every experiment config. Remote sync uses it as the destination

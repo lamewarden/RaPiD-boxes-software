@@ -105,10 +105,24 @@ class AppConfig(BaseSettings):
     assistant_vision_model: str = "command-a"
     assistant_archive_dir: Path = Path.home() / "rapidboxes" / "assistant_archive"
 
+    # Opt-in issue-alert delivery (MoldWatchService, see telegram_link.py).
+    # Both deliberately have no default -- unlike assistant_api_key this
+    # whole feature is optional: unset means "not configured yet", not an
+    # error, and reportOnIssueEnabled simply can't be turned on until an
+    # admin creates a bot (via @BotFather) and sets these two from
+    # /etc/rapidboxes.env, same as the LLM key -- never from source.
+    telegram_bot_token: Optional[str] = None
+    # No leading "@" -- shown in the UI as "@{telegram_bot_username}".
+    telegram_bot_username: Optional[str] = None
+    # Per-user chat_id links, keyed by lowercased RapiDBoxes username. Same
+    # directory convention as settings_path/user_defaults_path.
+    telegram_links_path: Path = Path.home() / "rapidboxes" / "telegram_links.json"
+
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
         self.assistant_archive_dir.mkdir(parents=True, exist_ok=True)
+        self.telegram_links_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

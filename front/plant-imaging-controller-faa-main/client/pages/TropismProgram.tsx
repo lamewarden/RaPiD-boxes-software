@@ -22,7 +22,6 @@ const DEFAULT_VALUES = {
   interval: 3,
   intensity: 25,
   reportOnIssueEnabled: false,
-  notifyEmail: "",
 };
 
 export default function TropismProgram() {
@@ -42,7 +41,6 @@ export default function TropismProgram() {
   const [reportOnIssueEnabled, setReportOnIssueEnabled] = useState(
     DEFAULT_VALUES.reportOnIssueEnabled
   );
-  const [notifyEmail, setNotifyEmail] = useState(DEFAULT_VALUES.notifyEmail);
   const [starting, setStarting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [experimentName, setExperimentNameState] = useState(getExperimentName());
@@ -61,9 +59,9 @@ export default function TropismProgram() {
     setSelectedSpectra(new Set(loaded.spectra?.length ? loaded.spectra : ["white"]));
     setInterval(loaded.intervalMinutes);
     setIntensity(loaded.intensity);
-    // Replays whether alerting was on, but deliberately NOT the raw email --
-    // a reused config on a shared device shouldn't silently start emailing
-    // whoever set it up last; re-enter the address to opt back in.
+    // Replays whether alerting was on -- Telegram linking is per-user, not
+    // per-config, so unlike an email address there's nothing here that
+    // could silently point alerts at the wrong person.
     setReportOnIssueEnabled(loaded.reportOnIssueEnabled);
 
     api
@@ -118,10 +116,6 @@ export default function TropismProgram() {
         toast.error("Enable dark phase or set lateral illumination > 0h.");
         return;
       }
-      if (reportOnIssueEnabled && !notifyEmail) {
-        toast.error("Set a notify email or turn off issue alerts.");
-        return;
-      }
       const res = await guardedStart({
         protocol: "tropism",
         experimentName,
@@ -133,7 +127,6 @@ export default function TropismProgram() {
         intervalMinutes: interval,
         intensity,
         reportOnIssueEnabled,
-        notifyEmail: notifyEmail || null,
       });
       if (!res) return; // user cancelled the low-space dialog
       if (res.status === "busy") {
@@ -178,7 +171,6 @@ export default function TropismProgram() {
     setInterval(DEFAULT_VALUES.interval);
     setIntensity(DEFAULT_VALUES.intensity);
     setReportOnIssueEnabled(DEFAULT_VALUES.reportOnIssueEnabled);
-    setNotifyEmail(DEFAULT_VALUES.notifyEmail);
   };
 
   const getColorForValue = (value: number, max: number, colorScheme: string) => {
@@ -294,14 +286,7 @@ export default function TropismProgram() {
           />
         </div>
 
-        <IssueAlertsField
-          enabled={reportOnIssueEnabled}
-          email={notifyEmail}
-          onChange={(enabled, email) => {
-            setReportOnIssueEnabled(enabled);
-            setNotifyEmail(email);
-          }}
-        />
+        <IssueAlertsField enabled={reportOnIssueEnabled} onChange={setReportOnIssueEnabled} />
 
         </div>
 

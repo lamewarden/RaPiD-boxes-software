@@ -39,27 +39,6 @@ EXPOSURE_PROFILES = {
 }
 
 
-# Opt-in "email me if a problem is detected" address (Phase 4 of the assistant
-# agent-brain work). Deliberately permissive (RFC 5322 is not worth
-# replicating in a regex) -- just enough to reject obviously-malformed input
-# before it's used as a mail header, since this eventually reaches a
-# `To:`/subject line once send_email() is wired up.
-EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
-_EMAIL_RE = re.compile(EMAIL_PATTERN)
-
-
-def validate_notify_email(email: str) -> str:
-    """Return `email` if it looks like a valid address, else raise ValueError."""
-    value = (email or "").strip()
-    if not value:
-        raise ValueError("email is required")
-    if len(value) > 254:
-        raise ValueError("email is too long (max 254 characters)")
-    if not _EMAIL_RE.match(value):
-        raise ValueError("must look like a valid email address")
-    return value
-
-
 def exposure_for_source(source: str, current: Optional[int] = None) -> int:
     """The exposure to use for `source`, keeping `current` if it already suits.
 
@@ -96,12 +75,13 @@ class TropismConfig(BaseModel):
     intervalMinutes: float = Field(default=20.0, ge=1, le=240)
     intensity: int = Field(default=25, ge=0, le=100)
 
-    # Opt-in issue alerting (mold/anomaly detection during the run). Kept off
-    # SavedExperimentConfig deliberately -- see MoldWatchService -- so a real
-    # address is never written into the per-experiment XML that gets zipped,
-    # downloaded, and remote-synced to a shared institutional drive.
+    # Opt-in issue alerting (mold/anomaly detection during the run), delivered
+    # over Telegram -- see telegram_link.py. Requires the requesting user to
+    # already have a linked Telegram chat (checked server-side at start, not
+    # here: this model has no access to the link store); no address/contact
+    # field lives on the config at all, unlike an email-based design, so
+    # there is nothing here to leak into the per-experiment XML.
     reportOnIssueEnabled: bool = False
-    notifyEmail: Optional[str] = Field(default=None, max_length=254)
 
     @model_validator(mode="after")
     def _check(self) -> "TropismConfig":
@@ -114,10 +94,6 @@ class TropismConfig(BaseModel):
             raise ValueError("at least one imaging phase (dark or bending) must be > 0h")
         if bending and not self.spectra:
             raise ValueError("bending phase needs at least one spectrum colour")
-        if self.reportOnIssueEnabled and not self.notifyEmail:
-            raise ValueError("notifyEmail is required when reportOnIssueEnabled is set")
-        if self.notifyEmail:
-            self.notifyEmail = validate_notify_email(self.notifyEmail)
         return self
 
 
@@ -142,10 +118,9 @@ class GrowthConfig(BaseModel):
     # Imaging cadence, uniform across day and night.
     intervalMinutes: float = Field(default=30.0, ge=1, le=240)
 
-    # Opt-in issue alerting -- see TropismConfig for why this isn't mirrored
-    # into SavedExperimentConfig.
+    # Opt-in issue alerting, delivered over Telegram -- see TropismConfig for
+    # why this isn't mirrored into SavedExperimentConfig.
     reportOnIssueEnabled: bool = False
-    notifyEmail: Optional[str] = Field(default=None, max_length=254)
 
     @model_validator(mode="after")
     def _check(self) -> "GrowthConfig":
@@ -154,10 +129,6 @@ class GrowthConfig(BaseModel):
             raise ValueError(f"invalid spectra {bad}; allowed: {VALID_SPECTRA}")
         if not self.spectra:
             raise ValueError("day phase needs at least one spectrum colour")
-        if self.reportOnIssueEnabled and not self.notifyEmail:
-            raise ValueError("notifyEmail is required when reportOnIssueEnabled is set")
-        if self.notifyEmail:
-            self.notifyEmail = validate_notify_email(self.notifyEmail)
         return self
 
 
@@ -392,8 +363,9 @@ class SavedExperimentConfig(BaseModel):
     experimentLengthDays: int = Field(default=14, ge=1, le=30)
     dayIntensity: int = Field(default=25, ge=0, le=100)
     # Whether issue alerting was on for this run -- replayed on Import (see
-    # TropismProgram.tsx/GrowthProgram.tsx), unlike notifyEmail, which is
-    # deliberately NOT part of this snapshot (see TropismConfig).
+    # TropismProgram.tsx/GrowthProgram.tsx). There is no contact field to
+    # mirror here at all: delivery is Telegram, resolved server-side from a
+    # per-user link, never a per-experiment address (see TropismConfig).
     reportOnIssueEnabled: bool = False
     # A full snapshot of DeviceSettings as it stood when this run started: a
     # historical record of how these images were taken, and the payload Import
@@ -459,6 +431,26 @@ class AssistantChatResponse(BaseModel):
     # Mutually exclusive with proposal in practice -- one tool call resolves
     # to at most one of the two extra payloads, never both.
     image: Optional[AssistantImageRef] = None
+
+
+# ---------------------------------------------------------------------------
+# Telegram issue-alert linking (Settings -> General -> Telegram Alerts).
+# See rapidboxes/telegram_link.py.
+# ---------------------------------------------------------------------------
+
+
+class TelegramStatusResponse(BaseModel):
+    # False if no admin has set a bot token/username yet -- the whole
+    # feature is simply unavailable, distinct from "configured but this
+    # user hasn't linked".
+    configured: bool
+    linked: bool
+    botUsername: Optional[str] = None
+
+
+class TelegramLinkCodeResponse(BaseModel):
+    code: str
+    botUsername: str
 
 
 # ---------------------------------------------------------------------------

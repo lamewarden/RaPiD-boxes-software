@@ -1,85 +1,68 @@
-import { useState } from "react";
-import { Mail } from "lucide-react";
-import { toast } from "sonner";
-import OnScreenKeyboard from "@/components/OnScreenKeyboard";
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { useEffect, useState } from "react";
+import { Send } from "lucide-react";
+import { api } from "@/lib/api";
+import { getUsername } from "@/lib/session";
 
 /**
- * Opt-in "email me if an issue is detected" toggle, shared by
+ * Opt-in "Telegram me if an issue is detected" toggle, shared by
  * TropismProgram/GrowthProgram (Phase 4 of the assistant agent-brain work --
- * see MoldWatchService on the backend). Ticking the box with no email on
- * file opens the on-screen keyboard immediately, since the backend rejects
- * reportOnIssueEnabled without a notifyEmail.
+ * see MoldWatchService on the backend). Unlike an email-based design there's
+ * no contact field to type here: the destination is resolved server-side
+ * from a one-time Telegram link (Settings -> General -> Telegram Alerts).
+ * The checkbox stays disabled, with a pointer to that screen, until this
+ * user has actually linked -- the backend rejects reportOnIssueEnabled
+ * without one anyway, so this just surfaces that up front instead of
+ * failing at Start.
  */
 export default function IssueAlertsField({
   enabled,
-  email,
   onChange,
 }: {
   enabled: boolean;
-  email: string;
-  onChange: (enabled: boolean, email: string) => void;
+  onChange: (enabled: boolean) => void;
 }) {
-  const [editingEmail, setEditingEmail] = useState(false);
+  const [linked, setLinked] = useState<boolean | null>(null);
+  const username = getUsername();
 
-  const toggle = () => {
-    if (enabled) {
-      onChange(false, email);
-      return;
-    }
-    if (email && EMAIL_RE.test(email)) {
-      onChange(true, email);
-    } else {
-      setEditingEmail(true);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .telegramStatus(username)
+      .then((s) => {
+        if (!cancelled) setLinked(s.linked);
+      })
+      .catch(() => {
+        if (!cancelled) setLinked(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [username]);
+
+  const disabled = linked !== true;
 
   return (
-    <>
-      <div className="flex h-[38px] px-2.5 items-center gap-2 self-stretch flex-shrink-0 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
-        <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={toggle}
-            className="w-4 h-4 cursor-pointer"
-          />
-          <span className="text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
-            Email Me If An Issue Is Detected
-          </span>
-        </label>
-        <button
-          type="button"
-          onClick={() => setEditingEmail(true)}
-          className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-app-text-secondary hover:bg-app-bg-tertiary transition-colors max-w-[220px] min-w-0"
-        >
-          <Mail className="h-[13px] w-[13px] flex-shrink-0" strokeWidth={1.5} />
-          <span className="truncate">{email || "Set email…"}</span>
-        </button>
-      </div>
-
-      {editingEmail && (
-        <OnScreenKeyboard
-          title="Notify email (issue alerts)"
-          initialValue={email}
-          onCancel={() => setEditingEmail(false)}
-          onConfirm={(v) => {
-            const trimmed = v.trim();
-            if (!trimmed) {
-              setEditingEmail(false);
-              onChange(false, "");
-              return;
-            }
-            if (!EMAIL_RE.test(trimmed)) {
-              toast.error("Enter a valid email address.");
-              return;
-            }
-            setEditingEmail(false);
-            onChange(true, trimmed);
-          }}
+    <div className="flex h-[38px] px-2.5 items-center gap-2 self-stretch flex-shrink-0 rounded-[10px] border border-app-border-primary bg-app-bg-secondary">
+      <label
+        className={`flex items-center gap-2 flex-shrink-0 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
         />
+        <span className="text-app-text-muted text-[10px] font-bold leading-[15px] tracking-[0.5px] uppercase">
+          Telegram Me If An Issue Is Detected
+        </span>
+      </label>
+      {disabled && (
+        <span className="ml-auto flex items-center gap-1.5 truncate text-[10px] text-app-text-muted">
+          <Send className="h-[12px] w-[12px] flex-shrink-0" strokeWidth={1.5} />
+          Link Telegram in Settings → General first
+        </span>
       )}
-    </>
+    </div>
   );
 }

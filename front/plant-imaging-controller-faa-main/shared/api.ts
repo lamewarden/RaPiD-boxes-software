@@ -15,11 +15,11 @@ export interface TropismConfig {
   spectra: Spectrum[];
   intervalMinutes: number;
   intensity: number;
-  /** Opt-in mid-run issue alerting (mold/anomaly detection) -- see
-   *  back/rapidboxes/assistant/mold_watch.py. notifyEmail is required
-   *  whenever this is true. */
+  /** Opt-in mid-run issue alerting (mold/anomaly detection), delivered over
+   *  Telegram -- see back/rapidboxes/telegram_link.py. Requires the
+   *  requesting user to already have a linked Telegram chat (checked
+   *  server-side at start); no contact field lives on this config at all. */
   reportOnIssueEnabled: boolean;
-  notifyEmail: string | null;
 }
 
 export type PhotoIlluminationSource = "ir" | "rgbw";
@@ -34,7 +34,6 @@ export interface GrowthConfig {
   dayIntensity: number;
   intervalMinutes: number;
   reportOnIssueEnabled: boolean;
-  notifyEmail: string | null;
 }
 
 export type ExperimentConfig = TropismConfig | GrowthConfig;
@@ -362,6 +361,21 @@ export interface RemoteSyncCheckResult {
   status: RemoteSyncStatus;
 }
 
+// --- Telegram issue-alert linking (see rapidboxes/telegram_link.py) -------
+
+export interface TelegramStatus {
+  /** False if no admin has set a bot token/username yet -- the whole
+   *  feature is unavailable, distinct from "configured but not linked". */
+  configured: boolean;
+  linked: boolean;
+  botUsername: string | null;
+}
+
+export interface TelegramLinkCode {
+  code: string;
+  botUsername: string;
+}
+
 /** The saved/loaded per-experiment <name>.xml: phases + light + illumination + camera, no identity fields. */
 export interface SavedExperimentConfig {
   protocol: "tropism" | "growth";
@@ -379,7 +393,7 @@ export interface SavedExperimentConfig {
   ir: IrSettings;
   camera: CameraSettings;
   /** Whether issue alerting was on for this run -- replayed on Import,
-   *  unlike the email address itself, which this snapshot never carries
+   *  unlike the Telegram link itself, which this snapshot never carries
    *  (see back/rapidboxes/models.py's TropismConfig docstring). */
   reportOnIssueEnabled: boolean;
 }

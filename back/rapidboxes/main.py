@@ -25,6 +25,7 @@ from .remote_sync import RemoteSyncService, load_remote_sync_settings
 from .retention import cleanup_expired_experiments
 from .settings_store import load_device_settings_for_new_session
 from .storage import Storage
+from .telegram_link import TelegramLinkService
 from .api import (
     assistant as assistant_api,
     experiments,
@@ -34,6 +35,7 @@ from .api import (
     remote_sync as remote_sync_api,
     settings as settings_api,
     system,
+    telegram as telegram_api,
     update,
     users,
     ws,
@@ -72,23 +74,27 @@ async def lifespan(app: FastAPI):
     async def on_experiment_finished(exp, status):
         await assistant_summary.generate_and_store(config, exp, status)
 
+    # Opt-in issue-alert delivery (see telegram_link.py). Degrades to a
+    # no-op if no admin has set a bot token/username yet -- see its own
+    # `configured` property.
+    telegram = TelegramLinkService(
+        config.telegram_bot_token, config.telegram_bot_username, config.telegram_links_path
+    )
+    telegram.start()
+
     # Opt-in mid-run mold/anomaly watcher (see assistant/mold_watch.py). Fans
     # out from the same on_image_captured hook remote sync already uses --
     # `runner` isn't constructed yet at this point, but dispatch_image_captured
     # isn't called until real captures happen, well after `runner` below is
     # assigned, so the closure resolving it lazily is safe.
-    mold_watch = MoldWatchService(config, storage)
+    mold_watch = MoldWatchService(config, storage, telegram)
     mold_watch.start()
 
     def dispatch_image_captured(path, experiment_id: str, username: str) -> None:
         sync.enqueue_image(path, experiment_id, username)
         live = runner.status.config if runner.status.experimentId == experiment_id else None
         mold_watch.enqueue_image(
-            path,
-            experiment_id,
-            username,
-            report_enabled=bool(getattr(live, "reportOnIssueEnabled", False)),
-            notify_email=getattr(live, "notifyEmail", None),
+            path, experiment_id, username, report_enabled=bool(getattr(live, "reportOnIssueEnabled", False))
         )
 
     runner = ExperimentRunner(
@@ -105,7 +111,7 @@ async def lifespan(app: FastAPI):
     # rather than the pre-recover() `device_settings`, so GET /api/settings
     # and the Camera Settings UI agree with what's actually driving captures.
     assistant = AssistantService(config, storage, runner)
-    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant)
+    app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
         yield
@@ -113,6 +119,7 @@ async def lifespan(app: FastAPI):
         await runner.shutdown()
         await sync.shutdown()
         await mold_watch.shutdown()
+        await telegram.shutdown()
         await assistant.aclose()
         log.info("RaPiD-boxes stopped; hardware released")
 
@@ -137,6 +144,7 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
         settings_api,
         remote_sync_api,
         system,
+        telegram_api,
         update,
         users,
         preview,

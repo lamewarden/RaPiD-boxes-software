@@ -160,6 +160,9 @@ live here. Its own on-screen sections, top to bottom:
   whether SSH is currently reachable.
 - **Remote Sync** — the CIFS network-share backup setup, detailed in its own
   walkthrough right below.
+- **Telegram Alerts** — one-time linking step for the opt-in "issue
+  detected" alert (see "Issue alerts (Telegram)" below): tap Link, get a
+  short code, send it to the bot from your own phone.
 - **Update** — checks for and applies OTA software updates from the repo,
   and can roll back to the previous version.
 
@@ -278,6 +281,29 @@ this is not a lost setting. Server, username, and on/off all persisted
 fine; only the password was deliberately dropped (never written to disk in
 the clear). Re-enter the password and press Check Connection again to
 resume; nothing else needs re-entering.
+
+### Issue alerts (Telegram)
+
+An opt-in mid-run mold/anomaly watcher (separate from check_my_images,
+which is on-demand) checks recent captures every so often during a run and,
+if it confirms an issue (needs multiple frames individually flagged, same
+"don't trust one convincing frame" rule everywhere else in this app), DMs
+the researcher on Telegram and flags it on the live progress screen.
+
+Two separate steps, don't conflate them:
+
+1. **Link Telegram once** — Settings → General → Telegram Alerts → "Link
+   Telegram". Shows a short one-time code and the bot's @username; open
+   Telegram on your own phone, message the bot, send the code. This is
+   per-person, not per-experiment — link once, it's remembered.
+2. **Opt in per experiment** — the "Telegram Me If An Issue Is Detected"
+   checkbox on the Tropism/Growth setup screen. Only enabled (not
+   grayed-out) once step 1 is done for whoever is currently selected on the
+   home screen — there is no way to type a contact address directly; the
+   destination is always resolved from the linked account.
+
+If someone says the checkbox is stuck disabled, the fix is step 1, not a
+bug — check Settings → General → Telegram Alerts for their own link status.
 
 ### Progress screen (while an experiment is running)
 
@@ -404,6 +430,7 @@ scroll through a wall of text on this box.
 | A handful of images right after a reboot look zoomed differently or lost color, mid-experiment | A now-fixed bug where a resumed experiment briefly used fresh session defaults instead of its own saved camera config | It *was* a real, now-fixed bug; old affected frames stay wrong | Tell them plainly this was a real, fixed bug; the specific old frames from around that reboot cannot be recovered. Current runs are not affected. |
 | Remote Sync shows "off"/"needs password" right after a restart, even though it was configured before | Password is deliberately not persisted across restarts, for security | No — intentional, every restart | Re-enter the password in Settings → General → Remote Sync; server/username/on-off are unaffected. |
 | Old experiments disappeared from Gallery | Automatic 90-day retention cleanup | No — intentional | Back up important experiments (Gallery → Folders → download) well before 90 days old. |
+| "Telegram Me If An Issue Is Detected" checkbox is grayed out and won't tick | This user hasn't linked Telegram yet -- the checkbox requires a completed link, there's no way to type a contact address directly | No — intentional | Go to Settings → General → Telegram Alerts → "Link Telegram", then come back to the setup screen. |
 | "Low space" when starting a new experiment | Estimated storage needed exceeds free space | No — a real, working guard | Use the offered "free space" option to remove that user's own old experiments, or delete/download some via Gallery → Folders first. |
 | Typed an existing username and got no warning it "already exists" | Intentional — usernames are case-insensitive and reusing one just resumes that person's folder | No — intentional | Nothing to fix; that is the expected behavior. |
 | Asked "how do I download my images" (or similar) and pushed back that there's "something else" beyond the answer given | There are genuinely two separate ways to get images off the device -- manual Gallery zip download AND automatic Remote Sync -- and only one may have been mentioned | No — a real second option, not a misunderstanding | See "Getting your images off the device" above; always mention both Gallery download and Remote Sync, not just one. |

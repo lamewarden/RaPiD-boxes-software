@@ -4,14 +4,15 @@ fed from the same on_image_captured hook already wired into
 ExperimentRunner -- see main.py's dispatch_image_captured, which fans a
 capture out to both services.
 
-Only ever active for a user who ticked "report on issue" and gave an email
-address at experiment setup (TropismConfig.reportOnIssueEnabled/notifyEmail).
-Every K captures for that run, it re-checks the most recent frames with the
-same >= MOLD_CONFIRM_THRESHOLD-frame rule as the end-of-run summary (see
-vision.py) -- never trusting one convincing frame. Once confirmed, it flags
-the run exactly once (ExperimentRunner.mark_issue_detected -- live over the
-WS, and durable via events.log) and would email the address on file, except
-email sending has no provider configured yet: see send_email() below.
+Only ever active for a user who ticked "report on issue" at experiment
+setup (TropismConfig.reportOnIssueEnabled) AND already has a linked
+Telegram chat (see ../telegram_link.py) -- there is no per-request contact
+field at all; the destination is resolved from the link store by username
+at send time. Every K captures for that run, it re-checks the most recent
+frames with the same >= MOLD_CONFIRM_THRESHOLD-frame rule as the end-of-run
+summary (see vision.py) -- never trusting one convincing frame. Once
+confirmed, it flags the run exactly once (ExperimentRunner.mark_issue_detected
+-- live over the WS, and durable via events.log) and DMs the researcher.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from typing import Dict, List, Optional, Set
 from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..storage import Storage
+from ..telegram_link import TelegramLinkService
 from . import vision
 
 log = logging.getLogger("rapidboxes.assistant.mold_watch")
@@ -39,18 +41,10 @@ CHECK_EVERY_N_IMAGES = 5
 CHECK_WINDOW = vision.MAX_SAMPLE_FRAMES
 
 
-def send_email(to: str, subject: str, body: str) -> None:
-    """Not implemented -- needs an SMTP relay or transactional-email provider
-    and credentials before this can send anything (deferred, see the Phase 4
-    plan). Detection, opt-in UI, and event-log/status flagging all work today
-    without it; wiring a real provider in is a single-function change."""
-    log.info("send_email is a stub (no provider configured); would have sent to %s: %s", to, subject)
-
-
 @dataclass
 class _Job:
     experiment_id: str
-    email: str
+    username: str
     image_ids: List[str] = field(default_factory=list)
 
 
@@ -60,9 +54,10 @@ class MoldWatchService:
     `enqueue_image`, which is synchronous, non-blocking and swallows
     everything -- a slow or failing check must never delay a capture."""
 
-    def __init__(self, config: AppConfig, storage: Storage):
+    def __init__(self, config: AppConfig, storage: Storage, telegram: TelegramLinkService):
         self._config = config
         self._storage = storage
+        self._telegram = telegram
         # Set via attach_runner() once the runner exists -- main.py must wire
         # this service's own enqueue_image into the runner's on_image_captured
         # callback at *construction* time, before the runner object itself
@@ -96,12 +91,12 @@ class MoldWatchService:
 
     # --- the capture path (must never block or raise) ---------------------
     def enqueue_image(
-        self, image_path: Path, experiment_id: str, username: str, report_enabled: bool, notify_email: Optional[str]
+        self, image_path: Path, experiment_id: str, username: str, report_enabled: bool
     ) -> None:
         try:
             if experiment_id in self._flagged:
                 return
-            if not report_enabled or not notify_email:
+            if not report_enabled:
                 # Not opted in for this run -- drop any stale counters so a
                 # later differently-configured run with the same id (can't
                 # normally happen, folder names are unique, but cheap to be
@@ -120,7 +115,7 @@ class MoldWatchService:
                 return
             self._counts[experiment_id] = 0
             self._queue.put_nowait(
-                _Job(experiment_id=experiment_id, email=notify_email, image_ids=list(recent))
+                _Job(experiment_id=experiment_id, username=username, image_ids=list(recent))
             )
         except Exception:  # pragma: no cover - defensive
             log.debug("could not queue image for mold watch", exc_info=True)
@@ -156,8 +151,6 @@ class MoldWatchService:
         )
         exp.append_event(f"issue detected: {detail}")
         await self._runner.mark_issue_detected(job.experiment_id, detail)
-        send_email(
-            job.email,
-            subject=f"RaPiD-boxes: possible issue detected in {job.experiment_id}",
-            body=detail,
+        await self._telegram.send_message(
+            job.username, f"⚠️ RaPiD-boxes: possible issue detected in {job.experiment_id}.\n{detail}"
         )

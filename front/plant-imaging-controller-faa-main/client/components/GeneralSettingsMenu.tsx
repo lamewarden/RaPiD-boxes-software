@@ -2,6 +2,7 @@ import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { useSystemInfo } from "@/hooks/useSystemInfo";
 import RemoteSyncPanel from "@/components/RemoteSyncPanel";
+import TelegramLinkPanel from "@/components/TelegramLinkPanel";
 import UpdatePanel from "@/components/UpdatePanel";
 import { formatBytes } from "@/lib/format";
 
@@ -135,6 +136,8 @@ export default function GeneralSettingsMenu() {
           </div>
 
           <RemoteSyncPanel />
+
+          <TelegramLinkPanel />
 
           <UpdatePanel />
         </div>

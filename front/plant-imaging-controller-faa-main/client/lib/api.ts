@@ -17,6 +17,8 @@ import type {
   SavedExperimentConfig,
   StartResponse,
   SystemInfo,
+  TelegramLinkCode,
+  TelegramStatus,
   UpdateApplyResult,
   UpdateCheckResult,
   UserSummary,
@@ -134,6 +136,12 @@ export const api = {
     jsonFetch<RemoteSyncStatus>("/api/settings/remote-sync/sync-all", {
       method: "POST",
       body: JSON.stringify({ researcher }),
+    }),
+  telegramStatus: (username: string) =>
+    jsonFetch<TelegramStatus>(`/api/telegram/status?username=${encodeURIComponent(username)}`),
+  requestTelegramLinkCode: (username: string) =>
+    jsonFetch<TelegramLinkCode>(`/api/telegram/link-code?username=${encodeURIComponent(username)}`, {
+      method: "POST",
     }),
   health: () => jsonFetch<{ ok: boolean; version: string }>("/api/health"),
   system: () => jsonFetch<SystemInfo>("/api/system"),

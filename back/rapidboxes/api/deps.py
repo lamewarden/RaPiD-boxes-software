@@ -12,6 +12,7 @@ from ..hardware.manager import HardwareManager, build_hardware
 from ..models import DeviceSettings
 from ..remote_sync import RemoteSyncService
 from ..storage import Storage
+from ..telegram_link import TelegramLinkService
 
 
 @dataclass
@@ -24,8 +25,10 @@ class AppState:
     # Remote CIFS sync. Holds the session-only password in memory; see
     # rapidboxes/remote_sync.py for why it lives here and nowhere else.
     sync: RemoteSyncService
-    # Local QA chat assistant (Ollama). See rapidboxes/assistant/service.py.
+    # QA chat assistant, against a remote gateway. See rapidboxes/assistant/service.py.
     assistant: AssistantService
+    # Opt-in issue-alert delivery (Telegram DM). See rapidboxes/telegram_link.py.
+    telegram: TelegramLinkService
 
     async def rebuild_hardware(self, settings: DeviceSettings) -> None:
         """Swap in fresh hardware after a settings change (idle only).
