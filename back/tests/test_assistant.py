@@ -413,6 +413,36 @@ async def test_system_status_reports_a_recovered_interruption(app_config: AppCon
 
 
 @pytest.mark.asyncio
+async def test_system_status_reports_elapsed_remaining_and_expected_finish(app_config: AppConfig):
+    # Real wall-clock, offset just 2h in the future -- avoids needing a
+    # datetime.now() mock (no time-freezing dependency in this repo); the
+    # only flake risk is a test run landing within 2h of midnight, rare
+    # enough to accept for a local suite.
+    started_at = datetime.now() - timedelta(hours=2)
+    storage = Storage(app_config.storage_root)
+    hw = build_hardware(app_config, DeviceSettings())
+    runner = ExperimentRunner(hw, storage)
+    runner.status.state = ExperimentState.running
+    runner.status.phase = ExperimentPhase.dark
+    runner.status.experimentId = "2026-01-01_ivan_test"
+    runner.status.username = "ivan"
+    runner.status.imagesCaptured = 5
+    runner.status.imagesPlanned = 100
+    runner.status.startedAt = started_at
+    runner.status.elapsedSeconds = 2 * 3600
+    runner.status.totalSeconds = 4 * 3600  # 2h left, finishes ~now + 2h
+    service = AssistantService(app_config, storage, runner)
+
+    call = _tool_call("system_status")
+    _proposal, _image, _download, reply = await service._resolve_tool_call(call, requesting_username=None)
+
+    assert "2h 0m elapsed" in reply
+    assert "2h 0m remaining" in reply
+    expected_finish = (started_at + timedelta(hours=4)).strftime("%H:%M")
+    assert f"expected to finish today at {expected_finish}" in reply
+
+
+@pytest.mark.asyncio
 async def test_system_status_distinguishes_real_usage_from_the_preflight_estimate(app_config: AppConfig):
     """The user reported the assistant giving an "uncertain"/approximate
     answer about a running experiment's size -- root cause was that neither
@@ -1334,6 +1364,12 @@ async def test_start_experiment_from_launch_actually_starts(client: AsyncClient)
     assert response.status == "started"
     assert "Started" in message
     assert response.experimentId in message
+    # Available immediately, not just on a later /status query -- computed
+    # directly from the config via build_phases(), not read off
+    # ExperimentStatus.totalSeconds (which the background run task only
+    # populates a moment later, after this call has already returned).
+    assert "Expected to finish" in message
+    assert "1h 0m total" in message  # darkPhaseHours=1, lateralIlluminationHours=0
     assert app_state.runner.status.state == ExperimentState.running
     assert app_state.runner.status.experimentName == "wizard-run"
     assert app_state.runner.status.username == "ivan"
@@ -1625,7 +1661,43 @@ async def test_launch_wizard_end_to_end_through_telegram_actually_starts_a_run(c
     final_text = sent[-1][1]["text"]
     assert "🚀" in final_text
     assert "Started" in final_text
+    assert "Expected to finish" in final_text
     await app_state.runner.abort()
+
+
+# --- format_finish_time / _format_duration -----------------------------------
+
+
+def test_format_finish_time_today_tomorrow_and_further_out():
+    from rapidboxes.assistant.service import format_finish_time
+
+    now = datetime.now()
+    today_start = now.replace(hour=1, minute=0, second=0, microsecond=0)
+    assert format_finish_time(today_start, 3600).startswith("today at")
+
+    # Cross into tomorrow deterministically: start right at midnight-minus-
+    # a-bit isn't safe (could land "today" on a slow run), so start well
+    # into today and add enough hours to guarantee tomorrow's date.
+    tomorrow_result = format_finish_time(now, 36 * 3600)
+    finish = now + timedelta(hours=36)
+    if finish.date() == (now.date() + timedelta(days=1)):
+        assert tomorrow_result.startswith("tomorrow at")
+    else:
+        # now was already late enough that +36h lands two days out --
+        # still a real, correctly-labeled date, not "today"/"tomorrow".
+        assert tomorrow_result.startswith("on ")
+
+    far = format_finish_time(now, 30 * 86400)  # 30 days out
+    assert far.startswith("on ")
+    assert (now + timedelta(days=30)).strftime("%Y-%m-%d") in far
+
+
+def test_format_duration_matches_telegram_links_own_copy():
+    from rapidboxes.assistant.service import _format_duration as assistant_format_duration
+    from rapidboxes.telegram_link import _format_duration as telegram_format_duration
+
+    for seconds in (0, 59, 60, 3600, 3661, 86400, 86400 + 3600 * 2 + 60 * 5, 30 * 86400):
+        assert assistant_format_duration(seconds) == telegram_format_duration(seconds)
 
 
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------

@@ -35,7 +35,7 @@ import httpx
 
 from .. import config_xml, settings_store, user_defaults
 from ..config import AppConfig
-from ..engine.runner import ExperimentRunner
+from ..engine.runner import ExperimentRunner, build_phases
 from ..models import (
     AssistantChatResponse,
     AssistantDownloadRef,
@@ -87,6 +87,43 @@ def _load_knowledge() -> str:
 
 
 _SYSTEM_PROMPT = _load_knowledge()
+
+
+def _format_duration(seconds: float) -> str:
+    """"14h 20m" / "3d 2h 0m" -- elapsed/remaining spans for system_status
+    and /launch's start confirmation. Mirrors the web UI's own
+    formatDurationLong (client/lib/progress.ts) and telegram_link.py's
+    _format_duration exactly, so a duration quoted here, on the pinned
+    /monitor progress bar, and on the Progress screen for the same run
+    never disagree in shape."""
+    s = max(0, round(seconds))
+    days, rem = divmod(s, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if days > 0 or hours > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def format_finish_time(started_at: datetime, total_seconds: float) -> str:
+    """"today at 19:32" / "tomorrow at 06:10" / "on 2026-09-03 at 14:00" --
+    a real wall-clock estimate (startedAt + the planned total duration),
+    not just a relative "X left", since "when will this actually be done"
+    is what someone deciding whether to wait around actually wants to
+    know. Always the *original* plan -- pausing extends how long a run
+    actually takes to finish, so this is a estimate assuming no further
+    pauses, not a promise."""
+    finish = started_at + timedelta(seconds=total_seconds)
+    now = datetime.now()
+    if finish.date() == now.date():
+        return f"today at {finish.strftime('%H:%M')}"
+    if finish.date() == (now.date() + timedelta(days=1)):
+        return f"tomorrow at {finish.strftime('%H:%M')}"
+    return f"on {finish.strftime('%Y-%m-%d')} at {finish.strftime('%H:%M')}"
 
 
 def _format_bytes(n: int) -> str:
@@ -657,7 +694,21 @@ class AssistantService:
 
         response = await self._runner.start(config, self._app_state.settings.camera)
         if response.status == "started":
-            return response, f"Started {response.experimentId}."
+            # ExperimentStatus.totalSeconds isn't populated synchronously by
+            # start() -- the background run task fills it in moments later
+            # (see ExperimentRunner._run) -- so it's computed here directly
+            # from the same config via the same build_phases() the runner
+            # itself uses, rather than reading a not-yet-set 0.0 off
+            # self._runner.status right after this call returns.
+            total_seconds = sum(p.duration_s for p in build_phases(config))
+            started_at = self._runner.status.startedAt
+            finish_note = ""
+            if started_at is not None and total_seconds > 0:
+                finish_note = (
+                    f" Expected to finish {format_finish_time(started_at, total_seconds)} "
+                    f"({_format_duration(total_seconds)} total)."
+                )
+            return response, f"Started {response.experimentId}.{finish_note}"
         if response.status == "no_camera":
             return response, "No camera detected -- can't start right now."
         if response.status == "low_space":
@@ -999,6 +1050,18 @@ class AssistantService:
                 f"Experiment '{status.experimentId}' ({status.username}) is {status.state.value}, "
                 f"phase {phase}, {status.imagesCaptured}/{status.imagesPlanned} images captured."
             )
+            # Elapsed/remaining from the runner's own live clock, plus a
+            # real wall-clock estimate of when it'll actually be done --
+            # "how much longer" is the single most common thing anyone
+            # asks about a running experiment, and startedAt/totalSeconds
+            # were already tracked without ever being surfaced here.
+            if status.startedAt is not None and status.totalSeconds > 0:
+                remaining = max(0.0, status.totalSeconds - status.elapsedSeconds)
+                running += (
+                    f"\n{_format_duration(status.elapsedSeconds)} elapsed, "
+                    f"{_format_duration(remaining)} remaining -- expected to finish "
+                    f"{format_finish_time(status.startedAt, status.totalSeconds)}."
+                )
             # recoveryNotice is set once, right after a crash/power-loss/
             # reboot recovery, and stays on the live status until this
             # experiment finishes -- surface it here so "was it interrupted"

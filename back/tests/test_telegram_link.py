@@ -7,6 +7,7 @@ that would reach it (completing a link sends a confirmation DM, so even the
 "does linking work" tests need this, not just the send_message tests)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -1948,6 +1949,40 @@ def test_build_progress_text_percentage_bar_and_duration_format(chat_config: App
     assert "8h 40m left" in text
     assert "142/230 images" in text
     assert "no anomalies detected" in text
+
+
+def test_build_progress_text_includes_expected_finish_time_when_started_at_is_known(
+    chat_config: AppConfig,
+):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    exp = storage.create_experiment("ivan", "run1")
+    started_at = datetime.now() - timedelta(hours=2)
+    status = ExperimentStatus(
+        state=ExperimentState.running,
+        experimentId=exp.experiment_id,
+        username="ivan",
+        startedAt=started_at,
+        elapsedSeconds=2 * 3600,
+        totalSeconds=4 * 3600,
+    )
+    text = service._build_progress_text(status, exp)
+    assert "expected to finish" in text
+
+
+def test_build_progress_text_omits_finish_time_when_started_at_is_unknown(chat_config: AppConfig):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    exp = storage.create_experiment("ivan", "run1")
+    status = ExperimentStatus(
+        state=ExperimentState.running, experimentId=exp.experiment_id, username="ivan", totalSeconds=3600
+    )
+    text = service._build_progress_text(status, exp)
+    assert "expected to finish" not in text
 
 
 def test_build_progress_text_flags_a_detected_issue(chat_config: AppConfig):

@@ -78,7 +78,7 @@ import httpx
 
 from . import config_xml
 from .assistant import summary as assistant_summary
-from .assistant.service import AssistantUnavailable, format_config_knobs
+from .assistant.service import AssistantUnavailable, format_config_knobs, format_finish_time
 from .kiosk_screenshot import KioskScreenshotUnavailable, capture_kiosk_screenshot
 from .models import (
     EXPOSURE_PROFILES,
@@ -931,6 +931,8 @@ class TelegramLinkService:
             f"[{bar}] {pct:.0f}%",
             f"{_format_duration(status.elapsedSeconds)} elapsed · {_format_duration(remaining)} left",
         ]
+        if status.startedAt is not None and status.totalSeconds > 0:
+            lines.append(f"expected to finish {format_finish_time(status.startedAt, status.totalSeconds)}")
         captured = (
             f"{status.imagesCaptured}/{status.imagesPlanned} images"
             if status.imagesPlanned

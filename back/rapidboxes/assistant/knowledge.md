@@ -377,10 +377,15 @@ completion message goes out.
 (faster and cheaper than a normal chat turn), strictly scoped to the sender
 except where noted:
 
-- **/status** — is anything running right now (whose, since when), plus
-  storage and camera state. Deliberately **device-wide**, not scoped to the
-  asker -- the one exception to every other command here being personal --
-  matching what system_status already means for the general chat path.
+- **/status** — is anything running right now (whose, since when), how far
+  along it is (elapsed and remaining, plus a real wall-clock estimate of
+  when it'll actually finish -- "expected to finish today at 19:32" /
+  "tomorrow at 06:10" / "on 2026-09-03 at 14:00" for a longer Growth run),
+  plus storage and camera state. Deliberately **device-wide**, not scoped
+  to the asker -- the one exception to every other command here being
+  personal -- matching what system_status already means for the general
+  chat path. The same finish-time estimate also appears on /launch's
+  "Started" confirmation and on /monitor's pinned progress bar.
 - **/experiments** — the sender's own most recent experiments (same data as
   the list_experiments tool, no username arg accepted).
 - **/launch [what you want]** — a guided, one-question-at-a-time wizard that
