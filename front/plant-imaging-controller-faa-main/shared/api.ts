@@ -389,6 +389,22 @@ export interface SavedExperimentConfig {
 export interface AssistantMessage {
   role: "user" | "assistant";
   content: string;
+  /** Frontend-only: attached to a stored message so a shown image survives
+   *  chat history persistence (see lib/assistantHistory.ts) and a reload,
+   *  not just the live response that produced it. Harmless if echoed back
+   *  in `history` -- the backend only ever reads `.content`. */
+  image?: AssistantImageRef | null;
+}
+
+/** One real, already-captured image resolved by the show_image tool --
+ *  never invented, always a file that already exists (see
+ *  ExperimentProposal for the same never-invent principle). */
+export interface AssistantImageRef {
+  experimentId: string;
+  imageId: string;
+  url: string;
+  thumbUrl: string;
+  caption: string;
 }
 
 /** A concrete, ready-to-review config resolved from one specific past
@@ -406,6 +422,7 @@ export interface ExperimentProposal {
 export interface AssistantChatResponse {
   reply: string;
   proposal: ExperimentProposal | null;
+  image: AssistantImageRef | null;
 }
 
 /** AI-generated end-of-run summary (rapidboxes/assistant/summary.py),

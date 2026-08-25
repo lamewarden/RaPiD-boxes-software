@@ -196,7 +196,7 @@ async def test_prefill_resolves_real_past_experiment(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ivan", reference="yesterday")
-        proposal, _summary = await service._resolve_tool_call(call, requesting_username=None)
+        proposal, _image, _summary = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is not None
         assert proposal.experimentId == exp.experiment_id
         assert proposal.sourceUsername == "ivan"
@@ -214,7 +214,7 @@ async def test_prefill_no_match_returns_no_proposal(app_config: AppConfig):
     service = AssistantService(app_config, storage)
     try:
         call = _tool_call("prefill_experiment", username="ghost", reference="yesterday")
-        proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+        proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
         assert proposal is None
         assert "couldn't find" in reply
     finally:
@@ -226,7 +226,7 @@ async def test_unknown_tool_name_degrades_gracefully(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("delete_everything")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "went wrong" in reply
 
@@ -238,7 +238,7 @@ async def test_malformed_tool_arguments_degrade_gracefully(app_config: AppConfig
     runner = ExperimentRunner(hw, storage)
     service = AssistantService(app_config, storage, runner)
     call = {"function": {"name": "system_status", "arguments": "not valid json"}}
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply  # empty args -> still resolves
 
@@ -259,7 +259,7 @@ async def test_list_experiments_no_username_defaults_to_requester(app_config: Ap
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "for ivan" in reply
     assert " — ivan — " in reply
@@ -275,7 +275,7 @@ async def test_list_experiments_explicit_all_shows_everyone(app_config: AppConfi
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="all")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "all users" in reply
     assert reply.count(" — ivan — ") == 2
@@ -293,7 +293,7 @@ async def test_list_experiments_no_username_no_requester_shows_everyone(app_conf
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "all users" in reply
 
@@ -307,7 +307,7 @@ async def test_list_experiments_filters_by_named_user(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="sabol")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "for sabol" in reply
     assert " — sabol — " in reply
@@ -323,7 +323,7 @@ async def test_list_experiments_respects_limit(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", limit=2)
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "Last 2 experiment(s)" in reply
 
 
@@ -332,7 +332,7 @@ async def test_list_experiments_no_match(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("list_experiments", username="ghost")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiments found" in reply
 
@@ -348,7 +348,7 @@ async def test_system_status_reports_idle_storage_and_camera(app_config: AppConf
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "No experiment is currently running" in reply
     assert "Device storage:" in reply
@@ -378,7 +378,7 @@ async def test_system_status_reports_a_recovered_interruption(app_config: AppCon
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "30 min offline" in reply
     assert "3 images could not be captured" in reply
@@ -405,7 +405,7 @@ async def test_system_status_distinguishes_real_usage_from_the_preflight_estimat
     service = AssistantService(app_config, storage, runner)
 
     call = _tool_call("system_status")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert proposal is None
     assert "so far: 639 MB" in reply
     assert "pre-flight estimate" in reply
@@ -418,7 +418,7 @@ async def test_system_status_without_runner_degrades_gracefully(app_config: AppC
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)  # no runner passed
     call = _tool_call("system_status")
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "isn't available" in reply
 
 
@@ -442,7 +442,7 @@ async def test_my_settings_reports_persisted_settings_and_mine_baseline(app_conf
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "RGBW" in reply  # current persisted setting
     assert "Your saved 'Mine' baseline (ivan)" in reply
@@ -455,7 +455,7 @@ async def test_my_settings_no_mine_baseline_says_so(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "No personal 'Mine' baseline saved yet" in reply
 
@@ -465,7 +465,7 @@ async def test_my_settings_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_settings")
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -477,7 +477,7 @@ async def test_my_settings_ignores_username_argument_from_model(app_config: AppC
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = {"function": {"name": "my_settings", "arguments": json.dumps({"username": "someone-else"})}}
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert "ivan" in reply.lower() or "No personal 'Mine' baseline saved yet for ivan" in reply
 
 
@@ -490,7 +490,7 @@ async def test_my_storage_reports_own_usage_only(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "ivan has 1 experiment(s)" in reply
     assert "sabol" not in reply
@@ -502,7 +502,7 @@ async def test_my_storage_no_experiments_yet(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no stored experiments yet" in reply
 
@@ -512,7 +512,7 @@ async def test_my_storage_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("my_storage")
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -529,7 +529,7 @@ async def test_read_experiment_log_returns_own_events(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert exp.experiment_id in reply
     assert "started protocol=tropism username=ivan" in reply
@@ -549,7 +549,7 @@ async def test_read_experiment_log_reports_exact_measured_size(app_config: AppCo
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "2 MB" in reply
     assert "exact, measured" in reply
@@ -566,7 +566,7 @@ async def test_read_experiment_log_never_reads_another_users_run(app_config: App
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "couldn't find" in reply
 
@@ -580,7 +580,7 @@ async def test_read_experiment_log_no_events_says_so(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "No logged events" in reply
 
@@ -590,7 +590,7 @@ async def test_read_experiment_log_requires_a_known_username(app_config: AppConf
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("read_experiment_log")
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -611,7 +611,7 @@ async def test_check_my_images_requires_a_known_username(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    _proposal, reply = await service._resolve_tool_call(call, requesting_username=None)
+    _proposal, _image, reply = await service._resolve_tool_call(call, requesting_username=None)
     assert "don't know who's chatting" in reply
 
 
@@ -620,7 +620,7 @@ async def test_check_my_images_no_experiment_found(app_config: AppConfig):
     storage = Storage(app_config.storage_root)
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "couldn't find" in reply
 
@@ -634,7 +634,7 @@ async def test_check_my_images_no_images_yet(app_config: AppConfig):
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no images to check yet" in reply
 
@@ -653,7 +653,7 @@ async def test_check_my_images_below_threshold_not_confirmed(app_config: AppConf
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "no confirmed mold" in reply
 
@@ -676,7 +676,7 @@ async def test_check_my_images_at_threshold_confirmed(app_config: AppConfig, mon
 
     service = AssistantService(app_config, storage)
     call = _tool_call("check_my_images")
-    proposal, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    proposal, _image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
     assert proposal is None
     assert "Mold appears present in 3" in reply
     assert "Visible mold growth" in reply
@@ -686,6 +686,124 @@ def _write_fake_png(path: Path) -> None:
     from PIL import Image
 
     Image.new("RGB", (32, 32), color="white").save(path, "PNG")
+
+
+# --- show_image: resolves a real capture, strictly scoped ------------------
+
+
+@pytest.mark.asyncio
+async def test_show_image_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert image is None
+    assert "don't know who's chatting" in reply
+
+
+@pytest.mark.asyncio
+async def test_show_image_no_experiment_found(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't find" in reply
+
+
+@pytest.mark.asyncio
+async def test_show_image_no_images_yet(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "no captured images yet" in reply
+
+
+@pytest.mark.asyncio
+async def test_show_image_defaults_to_the_last_capture(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    for i in range(3):
+        _write_fake_png(exp.path / f"dark_{i:05d}.png")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is not None
+    assert image.imageId == "dark_00002"
+    assert image.experimentId == exp.experiment_id
+    assert "dark_00002" in reply
+
+
+@pytest.mark.asyncio
+async def test_show_image_first_and_last(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    for i in range(3):
+        _write_fake_png(exp.path / f"dark_{i:05d}.png")
+
+    service = AssistantService(app_config, storage)
+
+    call = _tool_call("show_image", which="first")
+    _proposal, image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image.imageId == "dark_00000"
+
+    call = _tool_call("show_image", which="last")
+    _proposal, image, _reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image.imageId == "dark_00002"
+
+
+@pytest.mark.asyncio
+async def test_show_image_by_exact_name(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    for i in range(3):
+        _write_fake_png(exp.path / f"dark_{i:05d}.png")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image", which="dark_00001")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is not None
+    assert image.imageId == "dark_00001"
+    assert image.url == f"/api/images/{exp.experiment_id}/dark_00001"
+
+
+@pytest.mark.asyncio
+async def test_show_image_unknown_name_reported_clearly(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image", which="bending_09999")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't find an image" in reply
+
+
+@pytest.mark.asyncio
+async def test_show_image_never_shows_another_users_experiment(app_config: AppConfig):
+    """show_image's schema takes no username -- even if sabol has images and
+    ivan asks, only ivan's own experiments are ever candidates."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("sabol", "sabol-run")
+    exp.write_metadata({"username": "sabol", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("show_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't find" in reply
 
 
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------

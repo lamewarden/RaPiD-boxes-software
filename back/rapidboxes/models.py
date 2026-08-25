@@ -439,9 +439,26 @@ class ExperimentProposal(BaseModel):
     config: SavedExperimentConfig
 
 
+class AssistantImageRef(BaseModel):
+    """One specific, real capture resolved by the show_image tool -- never
+    invented by the model, always a real file that already exists (same
+    never-invent-just-point-at-real-data principle as ExperimentProposal).
+    The frontend opens this directly via `url`/`thumbUrl`, the same routes
+    Gallery already uses."""
+
+    experimentId: str
+    imageId: str
+    url: str
+    thumbUrl: str
+    caption: str
+
+
 class AssistantChatResponse(BaseModel):
     reply: str
     proposal: Optional[ExperimentProposal] = None
+    # Mutually exclusive with proposal in practice -- one tool call resolves
+    # to at most one of the two extra payloads, never both.
+    image: Optional[AssistantImageRef] = None
 
 
 # ---------------------------------------------------------------------------

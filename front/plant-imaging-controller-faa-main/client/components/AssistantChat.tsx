@@ -8,6 +8,26 @@ import { clearChatHistory, loadChatHistory, saveChatHistory } from "@/lib/assist
 import { renderMarkdownLite } from "@/lib/markdownLite";
 import type { AssistantMessage, ExperimentProposal } from "@shared/api";
 
+/** Full-screen lightbox for a shown image -- tapping the inline thumbnail
+ *  in a chat bubble opens this with the full-resolution capture. */
+function ImageLightbox({ url, caption, onClose }: { url: string; caption: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-2 bg-black/90 p-4"
+      onClick={onClose}
+    >
+      <img src={url} alt={caption} className="max-h-[85%] max-w-full rounded-lg object-contain" />
+      <span className="text-[11px] text-white/70">{caption}</span>
+      <button
+        onClick={onClose}
+        className="absolute right-3 top-3 rounded-md bg-black/50 p-1.5 text-white hover:bg-black/70"
+      >
+        <X className="h-[20px] w-[20px]" strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * Full-screen chat overlay (same "takeover" pattern as ImportConfigMenu, not
  * a centered card -- a chat transcript needs the room). The on-screen
@@ -26,6 +46,11 @@ import type { AssistantMessage, ExperimentProposal } from "@shared/api";
  * starts fresh (each has its own key, and the picker isn't reachable while
  * this overlay is open anyway). The header's reset icon clears it explicitly.
  *
+ * A returned `image` (show_image tool -- a real, already-captured file,
+ * never invented) renders as a tappable thumbnail inline in that reply's
+ * bubble, opening a full-screen ImageLightbox on tap. It's part of the
+ * persisted message, so it survives closing/reopening the chat too.
+ *
  * Safety property this UI must never violate: a returned `proposal` is only
  * ever offered as something to review on the real setup screen (the same
  * `loadedConfig` router-state mechanism TopNav's Import already uses) --
@@ -38,6 +63,7 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
   const [proposal, setProposal] = useState<ExperimentProposal | null>(null);
   const [composing, setComposing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [lightbox, setLightbox] = useState<{ url: string; caption: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,7 +94,7 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
     setSending(true);
     try {
       const res = await api.assistantChat(trimmed, history, getUsername());
-      setMessages((m) => [...m, { role: "assistant", content: res.reply }]);
+      setMessages((m) => [...m, { role: "assistant", content: res.reply, image: res.image }]);
       if (res.proposal) setProposal(res.proposal);
     } catch (e) {
       const msg = (e as Error).message;
@@ -147,6 +173,14 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
             }`}
           >
             {renderMarkdownLite(m.content)}
+            {m.image && (
+              <button
+                onClick={() => setLightbox({ url: m.image!.url, caption: m.image!.caption })}
+                className="mt-1.5 block overflow-hidden rounded-lg border border-app-border-primary"
+              >
+                <img src={m.image.thumbUrl} alt={m.image.caption} className="max-h-[120px] w-auto" />
+              </button>
+            )}
           </div>
         ))}
 
@@ -195,6 +229,10 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
           </span>
         </button>
       </div>
+
+      {lightbox && (
+        <ImageLightbox url={lightbox.url} caption={lightbox.caption} onClose={() => setLightbox(null)} />
+      )}
     </div>
   );
 }

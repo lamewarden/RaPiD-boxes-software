@@ -30,6 +30,7 @@ from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..models import (
     AssistantChatResponse,
+    AssistantImageRef,
     AssistantMessage,
     ExperimentProposal,
     SavedExperimentConfig,
@@ -73,6 +74,32 @@ def _format_bytes(n: int) -> str:
     if n >= 1_048_576:
         return f"{n / 1_048_576:.0f} MB"
     return f"{round(n / 1024)} KB"
+
+
+_FIRST_WORDS = {"first", "earliest", "oldest", "start", "beginning"}
+_LAST_WORDS = {"last", "latest", "most recent", "newest", "final", "end"}
+
+
+def _pick_image(images: List[dict], which: str) -> Optional[dict]:
+    """`images` is ExperimentDir.list_capture_images()'s output, already
+    sorted oldest-first. `which` is free text from the model: "first"/
+    "last" (and common synonyms), an exact image id (e.g. "dark_00042"), or
+    empty (defaults to the most recent, matching what someone means by
+    just "show me the image" with no further qualifier)."""
+    if not images:
+        return None
+    if not which or which in _LAST_WORDS:
+        return images[-1]
+    if which in _FIRST_WORDS:
+        return images[0]
+    for img in images:
+        if img["id"].lower() == which:
+            return img
+    for img in images:
+        if which in img["id"].lower():
+            return img
+    return None
+
 
 # Real OpenAI-style tool definitions. Real testing across several candidate
 # models on this gateway showed native tool_calls output is clean and
@@ -240,6 +267,34 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_image",
+            "description": (
+                "Open one specific, real image from one of the CURRENT "
+                "user's own experiments so they can actually see it -- use "
+                "this whenever they ask to \"show\"/\"see\"/\"open\" an "
+                "image, e.g. \"show me the first image from yesterday's "
+                "run\" or \"show me dark_00042 from my last tropism "
+                "experiment\". Always scoped to whoever is chatting -- can "
+                "only show their own images, never another user's."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                    "which": {
+                        "type": "string",
+                        "description": "which image: 'first', 'last', an exact image name like 'dark_00042', or omit for the most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -357,14 +412,14 @@ class AssistantService:
 
                 tool_calls = result.get("tool_calls") or []
                 if tool_calls:
-                    proposal, reply = await self._resolve_tool_call(tool_calls[0], username)
+                    proposal, image, reply = await self._resolve_tool_call(tool_calls[0], username)
                 else:
-                    proposal, reply = None, (result.get("content") or "").strip()
+                    proposal, image, reply = None, None, (result.get("content") or "").strip()
             finally:
                 self._task = None
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
-            return AssistantChatResponse(reply=reply, proposal=proposal)
+            return AssistantChatResponse(reply=reply, proposal=proposal, image=image)
 
     async def _call_llm(self, messages: list) -> dict:
         res = await self._client.post(
@@ -382,12 +437,12 @@ class AssistantService:
 
     async def _resolve_tool_call(
         self, tool_call: dict, requesting_username: Optional[str]
-    ) -> tuple[Optional[ExperimentProposal], str]:
+    ) -> tuple[Optional[ExperimentProposal], Optional[AssistantImageRef], str]:
         """Dispatches one native tool_calls entry to its resolver. Only
-        prefill_experiment ever carries a proposal -- every other tool is a
-        read-only lookup, answered directly, never a setup-screen prefill.
-        my_settings/my_storage deliberately ignore any username the model
-        might put in args (their schema takes none) and always use
+        prefill_experiment ever carries a proposal, and only show_image ever
+        carries an image -- every other tool is a read-only lookup, answered
+        directly. my_settings/my_storage deliberately ignore any username
+        the model might put in args (their schema takes none) and always use
         requesting_username -- unlike list_experiments/prefill_experiment,
         which may look up a named other user, these two never do."""
         name = tool_call.get("function", {}).get("name")
@@ -399,21 +454,25 @@ class AssistantService:
             args = {}
 
         if name == "prefill_experiment":
-            return self._resolve_prefill_experiment(args, requesting_username)
+            proposal, reply = self._resolve_prefill_experiment(args, requesting_username)
+            return proposal, None, reply
         if name == "list_experiments":
-            return None, self._resolve_list_experiments(args, requesting_username)
+            return None, None, self._resolve_list_experiments(args, requesting_username)
         if name == "system_status":
-            return None, self._resolve_system_status()
+            return None, None, self._resolve_system_status()
         if name == "my_settings":
-            return None, self._resolve_my_settings(requesting_username)
+            return None, None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
-            return None, self._resolve_my_storage(requesting_username)
+            return None, None, self._resolve_my_storage(requesting_username)
         if name == "read_experiment_log":
-            return None, self._resolve_read_experiment_log(args, requesting_username)
+            return None, None, self._resolve_read_experiment_log(args, requesting_username)
         if name == "check_my_images":
-            return None, await self._resolve_check_my_images(args, requesting_username)
+            return None, None, await self._resolve_check_my_images(args, requesting_username)
+        if name == "show_image":
+            image, reply = self._resolve_show_image(args, requesting_username)
+            return None, image, reply
         log.warning("model called unknown tool %r", name)
-        return None, "Sorry, something went wrong handling that request."
+        return None, None, "Sorry, something went wrong handling that request."
 
     def _resolve_prefill_experiment(
         self, args: dict, requesting_username: Optional[str]
@@ -713,6 +772,49 @@ class AssistantService:
             else f"Checked {result.frames_checked} frames from {exp.experiment_id}: no confirmed mold."
         )
         return f"{headline} {result.summary}"
+
+    def _resolve_show_image(
+        self, args: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[AssistantImageRef], str]:
+        """Points at one real, already-captured image from one of the
+        requester's own experiments -- never invented, always a file that
+        actually exists (same principle as prefill_experiment). Strictly
+        scoped like read_experiment_log/check_my_images: never another
+        user's images, even if a username is asked for."""
+        if not requesting_username:
+            return None, "I don't know who's chatting -- pick your username on the home screen first."
+
+        target_user = requesting_username.strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return None, (
+                f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
+                "Try being more specific about which run."
+            )
+
+        images = exp.list_capture_images()
+        if not images:
+            return None, f"{exp.experiment_id} has no captured images yet."
+
+        which = (args.get("which") or "").strip().lower()
+        image = _pick_image(images, which)
+        if image is None:
+            return None, (
+                f"I couldn't find an image called \"{which}\" in {exp.experiment_id}. "
+                f'Try "first", "last", or an exact name like "{images[-1]["id"]}".'
+            )
+
+        return (
+            AssistantImageRef(
+                experimentId=exp.experiment_id,
+                imageId=image["id"],
+                url=image["url"],
+                thumbUrl=image["thumbUrl"],
+                caption=f"{image['id']} — {exp.experiment_id}",
+            ),
+            f"Here's {image['id']} from {exp.experiment_id}.",
+        )
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:
