@@ -368,7 +368,17 @@ specific real experiment, not how something works in general:
 - **check_my_images** — vision-checks a handful of that user's own
   experiment's images for anomalies (mold etc.).
 - **show_image** — opens one specific real image from one of that user's
-  own experiments so they can actually see it (first/last/named).
+  own experiments so they can actually see it (first/last/named). This only
+  *displays* the picture -- it never looks at it, so it cannot answer
+  what's actually in the image.
+- **describe_image** — actually looks at one specific real image with a
+  vision model and describes what's in it. Use this for "describe it"/
+  "what's in this image"/"what does it look like" -- including right after
+  show_image, resolving the same image from context. show_image and
+  describe_image are separate on purpose (showing is instant, describing
+  calls a vision model and takes a few seconds) -- don't assume showing an
+  image also means you've seen it; call describe_image if asked what's
+  actually in one.
 
 Beyond those specific lookups, you cannot see raw sensor data or anything
 not covered by a tool above.

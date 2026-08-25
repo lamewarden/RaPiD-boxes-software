@@ -295,6 +295,37 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_image",
+            "description": (
+                "Actually look at one specific, real image from one of the "
+                "CURRENT user's own experiments and describe what's in it. "
+                "Use this whenever asked to \"describe\"/\"what's in\"/\"what "
+                "does it look like\" for an image -- including a follow-up "
+                "like \"describe it\" right after show_image was used, "
+                "resolving the same image from context. show_image only "
+                "opens a picture, it never looks at it -- this is the tool "
+                "that actually does. Calls a vision model and can take "
+                "several seconds. Always scoped to whoever is chatting -- "
+                "can only describe their own images, never another user's."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                    "which": {
+                        "type": "string",
+                        "description": "which image: 'first', 'last', an exact image name like 'dark_00042', or omit for the most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -470,6 +501,9 @@ class AssistantService:
             return None, None, await self._resolve_check_my_images(args, requesting_username)
         if name == "show_image":
             image, reply = self._resolve_show_image(args, requesting_username)
+            return None, image, reply
+        if name == "describe_image":
+            image, reply = await self._resolve_describe_image(args, requesting_username)
             return None, image, reply
         log.warning("model called unknown tool %r", name)
         return None, None, "Sorry, something went wrong handling that request."
@@ -773,37 +807,48 @@ class AssistantService:
         )
         return f"{headline} {result.summary}"
 
-    def _resolve_show_image(
+    def _resolve_one_image(
         self, args: dict, requesting_username: Optional[str]
-    ) -> tuple[Optional[AssistantImageRef], str]:
-        """Points at one real, already-captured image from one of the
-        requester's own experiments -- never invented, always a file that
-        actually exists (same principle as prefill_experiment). Strictly
-        scoped like read_experiment_log/check_my_images: never another
-        user's images, even if a username is asked for."""
+    ) -> tuple[Optional[ExperimentDir], Optional[dict], Optional[str]]:
+        """Shared resolution for show_image/describe_image: finds the
+        requester's own experiment, then one specific capture within it.
+        Returns (exp, image, None) on success, or (None, None, error_reply)
+        on failure -- strictly scoped like read_experiment_log/
+        check_my_images, never another user's images."""
         if not requesting_username:
-            return None, "I don't know who's chatting -- pick your username on the home screen first."
+            return None, None, "I don't know who's chatting -- pick your username on the home screen first."
 
         target_user = requesting_username.strip().lower()
         reference = (args.get("reference") or "").strip().lower()
         exp = self._find_experiment_dir(target_user, reference)
         if exp is None:
-            return None, (
+            return None, None, (
                 f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
                 "Try being more specific about which run."
             )
 
         images = exp.list_capture_images()
         if not images:
-            return None, f"{exp.experiment_id} has no captured images yet."
+            return None, None, f"{exp.experiment_id} has no captured images yet."
 
         which = (args.get("which") or "").strip().lower()
         image = _pick_image(images, which)
         if image is None:
-            return None, (
+            return None, None, (
                 f"I couldn't find an image called \"{which}\" in {exp.experiment_id}. "
                 f'Try "first", "last", or an exact name like "{images[-1]["id"]}".'
             )
+        return exp, image, None
+
+    def _resolve_show_image(
+        self, args: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[AssistantImageRef], str]:
+        """Points at one real, already-captured image from one of the
+        requester's own experiments -- never invented, always a file that
+        actually exists (same principle as prefill_experiment)."""
+        exp, image, error = self._resolve_one_image(args, requesting_username)
+        if error:
+            return None, error
 
         return (
             AssistantImageRef(
@@ -815,6 +860,47 @@ class AssistantService:
             ),
             f"Here's {image['id']} from {exp.experiment_id}.",
         )
+
+    async def _resolve_describe_image(
+        self, args: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[AssistantImageRef], str]:
+        """Actually looks at one specific image with the vision model and
+        describes what's in it -- show_image only ever points at a file, it
+        never sends pixels anywhere, so a follow-up "describe it" had
+        nothing to work from before this existed. Same resolution as
+        show_image (same reference/which args, same strict scoping), and
+        also returns the image ref so a description on its own still
+        displays the picture, not just text."""
+        exp, image, error = self._resolve_one_image(args, requesting_username)
+        if error:
+            return None, error
+
+        thumb = exp.thumb_file(image["id"])
+        if thumb is None:
+            return None, f"I couldn't read {image['id']} to describe it."
+
+        prompt = (
+            "Describe what's visible in this single photo from a plant-imaging "
+            "chamber, in 2-3 plain-language sentences: the plant/plate, lighting "
+            "conditions, and anything notable. Don't guess at things you can't "
+            "actually see in the image."
+        )
+        try:
+            description = await vision.call_llm(
+                self._config, self._config.assistant_vision_model, prompt, [thumb]
+            )
+        except httpx.HTTPError as exc:
+            log.warning("describe_image vision call failed: %s", exc)
+            return None, "I couldn't run the image description right now -- try again shortly."
+
+        ref = AssistantImageRef(
+            experimentId=exp.experiment_id,
+            imageId=image["id"],
+            url=image["url"],
+            thumbUrl=image["thumbUrl"],
+            caption=f"{image['id']} — {exp.experiment_id}",
+        )
+        return ref, description.strip() or f"I couldn't get a description for {image['id']}."
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

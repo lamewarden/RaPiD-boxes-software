@@ -806,6 +806,99 @@ async def test_show_image_never_shows_another_users_experiment(app_config: AppCo
     assert "couldn't find" in reply
 
 
+# --- describe_image: actually looks at a real capture, strictly scoped -----
+
+
+@pytest.mark.asyncio
+async def test_describe_image_requires_a_known_username(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username=None)
+    assert image is None
+    assert "don't know who's chatting" in reply
+
+
+@pytest.mark.asyncio
+async def test_describe_image_no_experiment_found(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't find" in reply
+
+
+@pytest.mark.asyncio
+async def test_describe_image_no_images_yet(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "no captured images yet" in reply
+
+
+@pytest.mark.asyncio
+async def test_describe_image_calls_vision_and_returns_the_image(app_config: AppConfig, monkeypatch):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    _mock_vision(monkeypatch, raw="A green seedling on a dark plate, evenly lit, nothing unusual.")
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image", which="dark_00000")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert reply == "A green seedling on a dark plate, evenly lit, nothing unusual."
+    assert image is not None
+    assert image.imageId == "dark_00000"
+    assert image.experimentId == exp.experiment_id
+
+
+@pytest.mark.asyncio
+async def test_describe_image_reports_vision_failure_gracefully(app_config: AppConfig, monkeypatch):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    _mock_vision(monkeypatch, unreachable=True)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't run the image description" in reply
+
+
+@pytest.mark.asyncio
+async def test_describe_image_never_describes_another_users_image(app_config: AppConfig, monkeypatch):
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("sabol", "sabol-run")
+    exp.write_metadata({"username": "sabol", "startedAt": datetime.now().isoformat()})
+    _write_fake_png(exp.path / "dark_00000.png")
+
+    called = {"n": 0}
+
+    async def fake_call_llm(*a, **kw):
+        called["n"] += 1
+        return "should never run"
+
+    monkeypatch.setattr(vision, "call_llm", fake_call_llm)
+
+    service = AssistantService(app_config, storage)
+    call = _tool_call("describe_image")
+    _proposal, image, reply = await service._resolve_tool_call(call, requesting_username="ivan")
+    assert image is None
+    assert "couldn't find" in reply
+    assert called["n"] == 0
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 
