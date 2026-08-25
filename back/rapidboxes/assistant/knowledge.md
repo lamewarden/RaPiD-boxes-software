@@ -53,9 +53,13 @@ inside each phase that has `capture: true`.
   their download/delete controls. This is the *manual, pull* way to get
   images off the device — see "Getting your images off the device" below
   for the other (automatic, push) way, Remote Sync.
-- **Live** — a live camera preview for framing/focus. It uses a *fixed dim
-  white backlight* for visibility, not the actual illumination an experiment
-  would use — so Live's exposure/brightness will not match a real capture.
+- **Live** — a live camera preview for framing/focus. A **"White backlight"
+  toggle button** turns on a fill light for visibility -- it's **off by
+  default**, not fixed/always-on, so an untouched Live view can look dark
+  before anyone presses it. Even with it on, this is a fill light for
+  seeing the frame, not the actual illumination an experiment would use —
+  so Live's exposure/brightness will still not match a real capture. It
+  turns off automatically when Live is closed.
 - **Settings** — three separate tabs, each its own section of this menu:
   **Camera**, **Illumination**, and **General** (device info/storage, SSH
   Access, Remote Sync, and OTA Update) — all described below. Treat these as
@@ -232,10 +236,18 @@ taken. The actual steps, in order:
    captured locally by this user, not just future captures from here on.
 
 **Non-obvious point**: the destination folder ("researcher") is *not* a
-field you fill in separately — it's always whichever username is currently
-selected on the home screen. If that active user changes while sync is on,
-sync automatically switches itself off (so images never get mis-filed under
-the wrong person).
+field you fill in separately — it's set to whichever username is currently
+selected on the home screen, and gets **overwritten to match every time**
+you toggle sync or press Check Connection (not just captured once the first
+time it's turned on).
+
+Sync only auto-disables at one specific moment: **starting a new
+experiment** under a different username while sync is still armed for
+someone else. It does *not* react to simply tapping a different name in the
+user picker, and it does not disable itself mid-way through an
+already-running experiment — the check only happens when a new experiment
+actually starts (`POST /api/experiments`), comparing that experiment's
+username against whoever sync is currently armed for.
 
 **After every restart**, an orange "credentials needed" banner appears —
 this is not a lost setting. Server, username, and on/off all persisted
@@ -342,11 +354,12 @@ scroll through a wall of text on this box.
 | Asked "how do I download my images" (or similar) and pushed back that there's "something else" beyond the answer given | There are genuinely two separate ways to get images off the device -- manual Gallery zip download AND automatic Remote Sync -- and only one may have been mentioned | No — a real second option, not a misunderstanding | See "Getting your images off the device" above; always mention both Gallery download and Remote Sync, not just one. |
 | "I opened Gallery but only see one experiment / can't find my other runs" | Gallery's default view shows only the current/most-recent experiment's images, not a folder list -- the folder browser is a separate Folders tab that hasn't been opened yet | No — intentional navigation, not missing data | Tap **Folders** (top bar) or the experiment-id label to browse past experiment folders; see "Gallery, in detail" above. |
 | "Recovered" banner appears after a reboot, saying images were skipped or not | Automatic resume-after-outage feature reporting exactly what happened | No — intentional, informational | Explain what the banner already says; if imagesSkipped > 0, that many capture slots were missed while it was offline and cannot be recreated. |
-| Live view looks dim/flat compared to real captures | Live always uses a fixed dim white backlight for framing, never the experiment's real illumination or exposure | No — intentional | Live is for framing only; real capture brightness/color will differ. |
+| Live view looks dark right when opened | The "White backlight" fill light is off by default -- it's a toggle button, not automatic | No — intentional, just needs to be turned on | Tap "White backlight" in Live. |
+| Live view still looks dim/flat compared to real captures, even with backlight on | The backlight is a framing fill light, never the experiment's real illumination or exposure | No — intentional | Live is for framing only; real capture brightness/color will differ regardless of the backlight toggle. |
 | Settings → "Mine" doesn't change the system default for other users | "Mine" is strictly personal and never touches the shared system default | No — intentional | Each user's "Mine" is private to their own username; there's no UI to change the shared default. |
 | Images look blacked-out or blown-out right after switching IR ↔ RGBW | Exposure has an out-of-range value snapping back to that source's default (0.2–10s for IR, 10–500ms for RGBW) mid-adjustment | No — intentional guard | Explain the two exposure ranges above; if they want a specific value, it must be inside the new source's range. |
 | Remote Sync password field is empty even though sync was working yesterday | Password is deliberately never returned or pre-filled by the API, only ever entered fresh | No — intentional, by design (security) | Re-type the password; this is expected every time you open the panel, not just after a restart. |
-| Remote Sync turned itself off mid-run with no one touching Settings | The active/selected username on the home screen changed while sync was on, which auto-disables it | No — intentional (prevents mis-filing images under the wrong researcher) | Switch back to the correct username and re-enable sync from Settings → General → Remote Sync. |
+| Remote Sync was on, then found switched off, with no one touching Settings | A new experiment was started under a different username while sync was still armed for someone else -- the check only happens at experiment start, never mid-run and never from just picking a different name on the home screen | No — intentional (prevents mis-filing images under the wrong researcher) | Switch to the correct username and re-enable sync from Settings → General → Remote Sync before starting the next experiment. |
 | "Check Connection" fails with a specific error (wrong password / host unreachable / bad path) | Real probe result from actually trying to write to the destination share | Depends — the message is accurate | Read the specific error back to them; it names the real cause, not a generic failure. |
 | Zoom looks "soft"/lower detail at higher zoom values | Digital zoom center-crops then upscales — it is not optical, so higher zoom trades resolution for framing | No — intentional (no optical zoom hardware) | Explain it's a digital crop; for real detail at high zoom, physically move the box/camera closer instead. |
 | Focus distance number is confusing (e.g. "why does a bigger number mean closer focus") | focusDistance is in diopters (1/metres), not centimetres or an arbitrary scale | No — intentional unit choice | 10.0 = 1/10 m = 10 cm; explain the diopter relationship, don't treat it as a linear "bigger = farther" slider. |
