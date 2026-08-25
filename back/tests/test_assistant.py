@@ -303,6 +303,37 @@ async def test_prefill_without_start_now_never_sets_chat_action(app_config: AppC
 
 
 @pytest.mark.asyncio
+async def test_prefill_exact_repeat_sets_the_stronger_chat_action_only_with_a_real_match(
+    app_config: AppConfig,
+):
+    """"Same as my last one" (exactRepeat) is stronger than plain startNow
+    -- it needs a real past run to repeat, so with no match it must
+    degrade to the ordinary start_launch wizard, never silently invent a
+    "same as defaults" run."""
+    storage = Storage(app_config.storage_root)
+    exp = storage.create_experiment("ivan", "prior-run")
+    exp.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    exp.write_config_xml(config_xml.serialize(SavedExperimentConfig()), "prior-run")
+    service = AssistantService(app_config, storage)
+    try:
+        call = _tool_call("prefill_experiment", reference="my run", startNow=True, exactRepeat=True)
+        proposal, _image, _download, _live_image, chat_action, _reply = await service._resolve_tool_call(
+            call, requesting_username="ivan"
+        )
+        assert proposal is not None
+        assert chat_action == "start_launch_exact"
+
+        call = _tool_call("prefill_experiment", reference="nonexistent-run", startNow=True, exactRepeat=True)
+        proposal, _image, _download, _live_image, chat_action, _reply = await service._resolve_tool_call(
+            call, requesting_username="nobody"
+        )
+        assert proposal is None
+        assert chat_action == "start_launch"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_stop_experiment_tool_sets_chat_action_and_a_safe_fallback_reply(app_config: AppConfig):
     """Tool-level check only -- telegram_link.py is what actually acts on
     chatAction=="stop"; here we just confirm the fallback reply (shown
@@ -1869,6 +1900,74 @@ async def test_launch_wizard_skip_shortcut_end_to_end_actually_starts_a_run(
     assert app_state.runner.status.experimentName.startswith("telegram-launch-")
     final_text = sent[-1][1]["text"]
     assert "Started" in final_text
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_launch_wizard_exact_repeat_skips_every_question_and_uses_the_real_past_values(
+    client: AsyncClient, monkeypatch
+):
+    """Reported problem: "same as my last one" should never re-ask
+    parameters one at a time -- it should show the past run's real
+    settings and, on confirmation, start it. Proves no field questions are
+    sent at all (a single message goes straight to the full summary) and
+    that the values shown -- and the experiment actually started -- are
+    the past run's own real, non-default settings, not
+    SavedExperimentConfig's bare defaults."""
+    app_state = client._app.state.app  # type: ignore[attr-defined]
+    telegram = app_state.telegram
+    storage = app_state.storage
+    telegram._links["ivan"] = 42
+
+    # A distinctive prior run -- darkPhaseHours=12.5 is nowhere near
+    # SavedExperimentConfig's own default (90.0), so seeing it in the
+    # summary proves this came from the real past run, not defaults.
+    prior = storage.create_experiment("ivan", "prior-tropism-run")
+    prior.write_metadata({"username": "ivan", "startedAt": datetime.now().isoformat()})
+    prior_config = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseEnabled=True,
+        darkPhaseHours=12.5,
+        lateralIlluminationHours=2.0,
+        spectra=["red"],
+        intervalMinutes=5.0,
+        intensity=33,
+        photoIlluminationSource="ir",
+    )
+    prior.write_config_xml(config_xml.serialize(prior_config), "prior-tropism-run")
+
+    sent = []
+
+    async def fake_post(url, json=None, **kw):
+        sent.append((url, json))
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                pass
+
+        return _Resp()
+
+    monkeypatch.setattr(telegram._client, "post", fake_post)
+
+    await telegram._handle_launch_command(42, "same as my last one", exact_repeat=True)
+
+    # Exactly one message -- straight to the summary, no overview, no
+    # field-by-field prompts at all.
+    assert len(sent) == 1
+    summary_text = sent[0][1]["text"]
+    assert "Ready to review" in summary_text
+    assert 'Reply "yes"' in summary_text
+    assert "12.5 h" in summary_text
+    assert "red" in summary_text
+
+    await telegram._maybe_continue_launch_wizard(42, "yes")
+
+    assert app_state.runner.status.state == ExperimentState.running
+    assert app_state.runner.status.username == "ivan"
+    started_config = app_state.runner.status.config
+    assert started_config.darkPhaseHours == 12.5
+    assert started_config.spectra == ["red"]
+    assert started_config.intensity == 33
     await app_state.runner.abort()
 
 

@@ -479,7 +479,14 @@ class AssistantChatResponse(BaseModel):
     # only one that acts on it, handing off to the same real step-by-step
     # confirmation flow /launch or /stop already use, never starting or
     # stopping anything by itself just because the model asked.
-    chatAction: Optional[Literal["start_launch", "stop"]] = None
+    # start_launch_exact is the stronger form -- "same as my last one",
+    # not just "start it" -- and skips straight to a full summary of that
+    # past run's own real values with nothing re-asked, still ending on
+    # the same required "yes". Only set when a real past run was actually
+    # matched; with no match it degrades to the ordinary start_launch
+    # field-by-field wizard instead (see prefill_experiment's own
+    # description for why there's nothing to "repeat exactly" otherwise).
+    chatAction: Optional[Literal["start_launch", "start_launch_exact", "stop"]] = None
 
 
 # ---------------------------------------------------------------------------

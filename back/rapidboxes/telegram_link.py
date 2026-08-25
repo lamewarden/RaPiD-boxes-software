@@ -1199,7 +1199,7 @@ class TelegramLinkService:
             "from Settings → General → Telegram Alerts.",
         )
 
-    async def _handle_launch_command(self, chat_id: int, arg: str) -> None:
+    async def _handle_launch_command(self, chat_id: int, arg: str, exact_repeat: bool = False) -> None:
         """Starts (or restarts) a guided, one-field-at-a-time wizard for a
         new experiment's config. Seeds "currently set" defaults from a past
         experiment the same way resolve_prefill_experiment already resolves
@@ -1208,7 +1208,17 @@ class TelegramLinkService:
         experiment (AssistantService.start_experiment_from_launch) -- the
         one real exception to every other tool here never touching
         hardware, gated on every field having been answered, range-checked,
-        and shown back for explicit human confirmation first."""
+        and shown back for explicit human confirmation first.
+
+        exact_repeat (only ever True via chatAction=="start_launch_exact",
+        an explicit "same as my last one"/"run it exactly like yesterday"
+        request) skips the field-by-field walk entirely: every field is
+        auto-filled straight from the matched past run's own real values
+        (not defaults -- see _handle_chat_message's docstring on why a
+        match is required for this path) and it goes directly to the final
+        summary. The safety gate is never skipped, only the repetitive
+        re-asking of values that are already known -- one real "yes" is
+        still required before anything starts."""
         username = self._username_for_chat(chat_id)
         if username is None:
             await self._send_raw(
@@ -1230,6 +1240,11 @@ class TelegramLinkService:
             username=username, base=base, fields=[_LAUNCH_PROTOCOL_FIELD, _LAUNCH_NAME_FIELD]
         )
         self._launch_wizards[chat_id] = state
+
+        if exact_repeat and proposal is not None:
+            self._auto_fill_remaining_launch_fields(state)
+            await self._finish_launch_wizard(chat_id, state)
+            return
 
         await self._send_raw(chat_id, self._build_launch_overview(base, resolved=proposal is not None))
         await self._ask_current_launch_field(chat_id, state)
@@ -1583,17 +1598,20 @@ class TelegramLinkService:
             await self._send_raw(chat_id, "Something went wrong handling that -- try again.")
             return
 
-        # A plain-English "start it"/"stop it" hands off to the same real,
-        # deterministic flow the /launch and /stop slash commands use --
-        # never a shortcut around them. response.reply is deliberately not
-        # sent in this branch: _handle_launch_command/_handle_stop_command
-        # send their own first message (the wizard's overview + first
-        # question, or the stop confirmation prompt) instead.
-        if response.chatAction == "start_launch":
+        # A plain-English "start it"/"same as last one"/"stop it" hands off
+        # to the same real, deterministic flow the /launch and /stop slash
+        # commands use -- never a shortcut around them. response.reply is
+        # deliberately not sent in this branch: _handle_launch_command/
+        # _handle_stop_command send their own first message (the wizard's
+        # overview + first question, the full summary for an exact repeat,
+        # or the stop confirmation prompt) instead.
+        if response.chatAction in ("start_launch", "start_launch_exact"):
             history.append(AssistantMessage(role="user", content=text))
             history.append(AssistantMessage(role="assistant", content="(started the /launch wizard)"))
             del history[:-MAX_CHAT_HISTORY]
-            await self._handle_launch_command(chat_id, text)
+            await self._handle_launch_command(
+                chat_id, text, exact_repeat=response.chatAction == "start_launch_exact"
+            )
             return
         if response.chatAction == "stop":
             history.append(AssistantMessage(role="user", content=text))

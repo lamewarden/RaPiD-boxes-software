@@ -194,7 +194,22 @@ _TOOLS = [
                 "final \"yes\" required before anything actually happens) -- "
                 "the same one /launch enters, just reached by talking instead "
                 "of typing a slash command. Elsewhere (no such wizard exists) "
-                "startNow is safely ignored and this always just proposes."
+                "startNow is safely ignored and this always just proposes. "
+                "Additionally set exactRepeat=true when they clearly want an "
+                "EXACT repeat of one specific past run with nothing "
+                "reconsidered -- e.g. \"same as my last one\", \"run it "
+                "exactly like yesterday\", \"repeat my previous experiment\" "
+                "-- as opposed to merely wanting *a* new run started, where "
+                "they might still want to look over or change something. "
+                "exactRepeat implies startNow, and skips straight to a full "
+                "summary of that exact past run's own real settings with "
+                "nothing re-asked one field at a time -- it still always "
+                "ends on the same required explicit \"yes\" before anything "
+                "starts, it just never re-asks values that are already "
+                "known. Leave exactRepeat false/omitted for anything less "
+                "than a clear \"no changes, exactly the same\" -- when in "
+                "doubt, prefer startNow alone so they still get the normal "
+                "walk-through instead of possibly rushing past something."
             ),
             "parameters": {
                 "type": "object",
@@ -210,6 +225,10 @@ _TOOLS = [
                     "startNow": {
                         "type": "boolean",
                         "description": "true only if they clearly want it to begin immediately, not just be reviewed",
+                    },
+                    "exactRepeat": {
+                        "type": "boolean",
+                        "description": "true only for a clear 'no changes, exactly the same as before' request",
                     },
                 },
             },
@@ -967,11 +986,21 @@ class AssistantService:
 
         if name == "prefill_experiment":
             proposal, reply = self.resolve_prefill_experiment(args, requesting_username)
-            # No proposal-found requirement here -- /launch itself already
-            # falls back to bare defaults when nothing matches (see
-            # _handle_launch_command's own docstring), so "start now" with
-            # no match still hands off to the wizard the same way.
-            chat_action = "start_launch" if args.get("startNow") is True else None
+            # No proposal-found requirement for plain startNow -- /launch
+            # itself already falls back to bare defaults when nothing
+            # matches (see _handle_launch_command's own docstring), so
+            # "start now" with no match still hands off to the wizard the
+            # same way. exactRepeat is different: "same as my last one"
+            # only makes sense with a real match to repeat, so it degrades
+            # to the ordinary start_launch (not a silent "same as defaults")
+            # when nothing was found -- telegram_link.py's
+            # _handle_launch_command mirrors this same fallback itself.
+            if args.get("exactRepeat") is True and proposal is not None:
+                chat_action = "start_launch_exact"
+            elif args.get("startNow") is True or args.get("exactRepeat") is True:
+                chat_action = "start_launch"
+            else:
+                chat_action = None
             return proposal, None, None, None, chat_action, reply
         if name == "list_experiments":
             return None, None, None, None, None, self.resolve_list_experiments(args, requesting_username)
