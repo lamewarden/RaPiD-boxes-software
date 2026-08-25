@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { Bookmark, Camera, Check, Lightbulb, RotateCcw, Settings, X } from "lucide-react";
+import { Bookmark, Camera, Check, Info, Lightbulb, RotateCcw, Settings, X } from "lucide-react";
 import { toast } from "sonner";
 import CameraSettingsMenu from "@/components/CameraSettingsMenu";
 import GeneralSettingsMenu from "@/components/GeneralSettingsMenu";
 import IlluminationSettingsMenu from "@/components/IlluminationSettingsMenu";
+import InfoSettingsMenu from "@/components/InfoSettingsMenu";
 import { api } from "@/lib/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 import { getUsername } from "@/lib/session";
 import { DEFAULT_DEVICE_SETTINGS } from "@/lib/deviceDefaults";
 import type { CameraSettings, DeviceSettings, LedSettings, PhotoIlluminationSource } from "@shared/api";
 
-type SettingsSection = "camera" | "illumination" | "general";
+type SettingsSection = "camera" | "illumination" | "general" | "info";
 
 export default function SettingsMenu({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>("camera");
@@ -86,8 +87,9 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
     }`;
 
   // Default/Mine/Save Mine/Save act on camera + illumination together (one
-  // DeviceSettings bundle); General is a separate concern (update/remote
-  // sync/SSH), so it gets neither the shared row nor the read-only banner.
+  // DeviceSettings bundle); General and Info are separate concerns (update/
+  // remote sync/SSH, and static credits, respectively), so neither gets the
+  // shared row or the read-only banner.
   const showSharedActions = section === "camera" || section === "illumination";
 
   return (
@@ -117,6 +119,10 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
         <button onClick={() => setSection("general")} className={tabClass(section === "general")}>
           <Settings className="h-[14px] w-[14px]" strokeWidth={1.75} />
           <span>General</span>
+        </button>
+        <button onClick={() => setSection("info")} className={tabClass(section === "info")}>
+          <Info className="h-[14px] w-[14px]" strokeWidth={1.75} />
+          <span>Info</span>
         </button>
       </div>
 
@@ -153,6 +159,7 @@ export default function SettingsMenu({ onClose }: { onClose: () => void }) {
               />
             )}
             {section === "general" && <GeneralSettingsMenu />}
+            {section === "info" && <InfoSettingsMenu />}
           </>
         )}
       </div>

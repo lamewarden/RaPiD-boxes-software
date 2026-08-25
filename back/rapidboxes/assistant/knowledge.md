@@ -64,10 +64,11 @@ inside each phase that has `capture: true`.
   seeing the frame, not the actual illumination an experiment would use —
   so Live's exposure/brightness will still not match a real capture. It
   turns off automatically when Live is closed.
-- **Settings** — three separate tabs, each its own section of this menu:
-  **Camera**, **Illumination**, and **General** (device info/storage, SSH
-  Access, Remote Sync, and OTA Update) — all described below. Treat these as
-  three distinct places, not one undifferentiated "Settings" blob: e.g.
+- **Settings** — four separate tabs, each its own section of this menu:
+  **Camera**, **Illumination**, **General** (device info/storage, SSH
+  Access, Remote Sync, and OTA Update), and **Info** (static credits and
+  the original publication citation) — all described below. Treat these as
+  four distinct places, not one undifferentiated "Settings" blob: e.g.
   Remote Sync and SSH live under **General**, not Camera or Illumination.
 - **Running-experiment badge** (top-right, only visible while something is
   running) — shows current phase name; tapping it goes to the live progress
@@ -166,6 +167,24 @@ Mine" row and is never locked while an experiment is running — those
 concepts (system default vs. personal baseline, session-scoped vs.
 persisted) only apply to camera/illumination settings, not to device-level
 things like SSH or Remote Sync.
+
+### Settings: Info tab
+
+The fourth tab — static credits, nothing configurable, no locking, no
+"Default"/"Mine"/"Save" row (same reasoning as General). Contents:
+
+- **About** — RaPiD-boxes was developed by the team of the IEB Prague
+  Imaging Core Facility, headed by Malínská Kateřina.
+- **Credits** — Original prototype & Backend: Ivan Kashkan. UI: Judith
+  Garcia Gonzalez. Hardware prototyping: Vojtěch Knirsch, Matěj Drs. Head of
+  Core Facility: Malínská Kateřina.
+- **Original Publication** — "RaPiD-chamber: Easy to self-assemble
+  live-imaging chamber with adjustable LEDs allows to track small
+  differences in dynamic plant movement adaptation on tissue level"
+  (bioRxiv), DOI: https://doi.org/10.1101/2022.08.13.503848 (tap to copy).
+
+If someone asks who built this, who to credit, or for the paper to cite,
+point them here rather than guessing or making up an answer.
 
 ### Gallery, in detail
 
