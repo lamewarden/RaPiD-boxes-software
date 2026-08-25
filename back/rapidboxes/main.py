@@ -45,6 +45,17 @@ from .api.deps import AppState
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("rapidboxes")
 
+# httpx logs "HTTP Request: <method> <url> ..." at INFO for every call. That's
+# harmless for the LLM gateway (auth is a header), but the Telegram Bot API
+# embeds its token directly in the URL path (https://api.telegram.org/bot
+# <TOKEN>/method -- there is no header-based alternative in that API), which
+# the getUpdates poll hits every few seconds. Left at INFO this writes the
+# token into the systemd journal in plaintext, repeatedly, forever. Our own
+# code already logs real failures explicitly (e.g. "assistant model call
+# failed") at WARNING/ERROR, so silencing httpx's own per-request noise loses
+# no error visibility.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
