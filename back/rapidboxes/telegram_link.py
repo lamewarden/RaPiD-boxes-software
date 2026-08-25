@@ -44,10 +44,14 @@ one place an actual model call happens. See _poll_once for the dispatch.
 (_LaunchWizardState, _handle_launch_answer/_handle_launch_confirmation),
 one field at a time, each answer parsed and range-checked before being
 accepted -- a bad answer re-asks the same question rather than guessing or
-silently skipping it. It never starts anything itself; confirming at the
-end only stages the resolved config for the matching setup screen to load
-(AssistantService.stage_pending_launch), same boundary as every other tool
-here.
+silently skipping it. Confirming the final summary actually starts the
+experiment (AssistantService.start_experiment_from_launch) -- the one real
+exception to every other tool here never touching hardware, gated on every
+field having been explicitly confirmed by a human first, never the model
+deciding to. If it can't actually start right now (busy/no_camera/
+low_space), the resolved config is staged for the matching setup screen to
+load instead (AssistantService.stage_pending_launch), so the trip to the
+device isn't wasted.
 
 /monitor additionally pins a live-updating progress-bar message to the
 chat (see _send_and_pin/_edit_message/_build_progress_text): edited in
@@ -204,6 +208,13 @@ def _parse_protocol(text: str) -> str:
     raise ValueError('please answer "tropism" or "growth"')
 
 
+def _parse_name(text: str) -> str:
+    t = text.strip()
+    if not (1 <= len(t) <= 80):
+        raise ValueError("please send a name, 1-80 characters")
+    return t
+
+
 @dataclass
 class _LaunchField:
     name: str
@@ -213,13 +224,15 @@ class _LaunchField:
     format: Callable[[object], str]
 
 
-# Deliberately no "name" field: SavedExperimentConfig has no experimentName
-# of its own -- naming is orthogonal to "config to replay", same as the
-# existing web-chat "load previous experiment" flow, which also never
-# touches whatever name is already on the setup screen. Left for the human
-# to set/confirm there, exactly as today.
 _LAUNCH_PROTOCOL_FIELD = _LaunchField(
     "protocol", "Measurement", 'Which measurement -- "tropism" or "growth"?', _parse_protocol, str
+)
+# Handled specially (see _handle_launch_answer): SavedExperimentConfig has
+# no experimentName of its own -- this is asked and stored separately on
+# _LaunchWizardState, needed because start_experiment_from_launch actually
+# starts a run now and TropismConfig/GrowthConfig require a real name.
+_LAUNCH_NAME_FIELD = _LaunchField(
+    "experimentName", "Name", "What should I call this experiment?", _parse_name, str
 )
 _LAUNCH_ISSUE_ALERT_FIELD = _LaunchField(
     "reportOnIssueEnabled",
@@ -336,6 +349,9 @@ class _LaunchWizardState:
     fields: List[_LaunchField] = dataclass_field(default_factory=list)
     index: int = 0
     values: Dict[str, object] = dataclass_field(default_factory=dict)
+    # Held separately from `values` -- SavedExperimentConfig has no
+    # experimentName field, so this never goes into state.base.model_copy().
+    experiment_name: Optional[str] = None
     awaiting_confirmation: bool = False
     final_config: Optional[SavedExperimentConfig] = None
     last_activity: float = dataclass_field(default_factory=time.monotonic)
@@ -1019,10 +1035,11 @@ class TelegramLinkService:
         new experiment's config. Seeds "currently set" defaults from a past
         experiment the same way resolve_prefill_experiment already resolves
         one (most recent, or matching `arg`'s free text) -- deterministic,
-        no model call. Confirming at the end only ever stages the config for
-        the matching setup screen to pick up (see
-        AssistantService.stage_pending_launch); this never starts anything
-        itself, same boundary as every other tool here."""
+        no model call. Confirming the final summary actually starts the
+        experiment (AssistantService.start_experiment_from_launch) -- the
+        one real exception to every other tool here never touching
+        hardware, gated on every field having been answered, range-checked,
+        and shown back for explicit human confirmation first."""
         username = self._username_for_chat(chat_id)
         if username is None:
             await self._send_raw(
@@ -1040,7 +1057,9 @@ class TelegramLinkService:
         proposal, _reply = self._assistant.resolve_prefill_experiment({"reference": arg}, username)
         base = proposal.config if proposal is not None else SavedExperimentConfig()
 
-        state = _LaunchWizardState(username=username, base=base, fields=[_LAUNCH_PROTOCOL_FIELD])
+        state = _LaunchWizardState(
+            username=username, base=base, fields=[_LAUNCH_PROTOCOL_FIELD, _LAUNCH_NAME_FIELD]
+        )
         self._launch_wizards[chat_id] = state
 
         await self._send_raw(chat_id, self._build_launch_overview(base, resolved=proposal is not None))
@@ -1080,7 +1099,10 @@ class TelegramLinkService:
             await self._send_raw(chat_id, f"⚠️ {exc}. {f.prompt} (currently: {current_text})")
             return  # re-ask the same field -- index does not advance
 
-        state.values[f.name] = value
+        if f.name == "experimentName":
+            state.experiment_name = value
+        else:
+            state.values[f.name] = value
 
         if f.name == "protocol":
             extra = _LAUNCH_TROPISM_FIELDS if value == "tropism" else _LAUNCH_GROWTH_FIELDS
@@ -1109,26 +1131,48 @@ class TelegramLinkService:
         summary = format_config_knobs(state.final_config)
         await self._send_raw(
             chat_id,
-            f'Ready to review:\n\n{summary}\n\nLook right? Reply "yes" to confirm, or "no" to cancel.',
+            f'Ready to review:\n\nName: {state.experiment_name}\n{summary}\n\n'
+            'Look right? Reply "yes" to start it, or "no" to cancel.',
         )
 
     async def _handle_launch_confirmation(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
         answer = text.strip().lower()
         if answer in ("yes", "y", "confirm", "confirmed", "start"):
             del self._launch_wizards[chat_id]
-            if self._assistant is not None and state.final_config is not None:
-                self._assistant.stage_pending_launch(state.username, state.final_config)
-            await self._send_raw(
-                chat_id,
-                "I've loaded these into the setup screen on the device -- press Start there whenever "
-                "you're ready. I don't start experiments myself.",
-            )
+            await self._confirm_and_start_launch(chat_id, state)
             return
         if answer in ("no", "n", "cancel"):
             del self._launch_wizards[chat_id]
             await self._send_raw(chat_id, "Cancelled -- nothing was changed. Send /launch to start over.")
             return
-        await self._send_raw(chat_id, 'Please reply "yes" to confirm or "no" to cancel.')
+        await self._send_raw(chat_id, 'Please reply "yes" to start it or "no" to cancel.')
+
+    async def _confirm_and_start_launch(self, chat_id: int, state: _LaunchWizardState) -> None:
+        """Only ever reached after every field was answered, range-checked,
+        and shown back for explicit human confirmation -- see
+        AssistantService.start_experiment_from_launch for what actually
+        touches hardware. If it can't actually start right now (something's
+        already running, no camera, not enough space, or the service isn't
+        available), the resolved config is staged instead so the trip to
+        the device at least starts from a filled-in setup screen rather
+        than nothing."""
+        if self._assistant is None or state.final_config is None or state.experiment_name is None:
+            await self._send_raw(chat_id, "Something went wrong -- send /launch to try again.")
+            return
+
+        response, message = await self._assistant.start_experiment_from_launch(
+            state.final_config, state.experiment_name, state.username
+        )
+        if response is not None and response.status == "started":
+            await self._send_raw(chat_id, f"🚀 {message}")
+            return
+
+        self._assistant.stage_pending_launch(state.username, state.final_config)
+        await self._send_raw(
+            chat_id,
+            f"{message} I've loaded the settings on the setup screen instead -- once that's sorted, "
+            "you can press Start there yourself.",
+        )
 
     async def _handle_monitor_command(self, chat_id: int) -> None:
         """/monitor subscribes the sender to their own currently-running

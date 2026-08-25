@@ -153,6 +153,11 @@ async def lifespan(app: FastAPI):
     assistant = AssistantService(config, storage, runner, sync, dsm_sharing)
     telegram.attach_assistant(assistant)
     app.state.app = AppState(config, hw.settings, storage, hw, runner, sync, assistant, telegram, dsm_sharing)
+    # Deferred wiring, same reason as the others above: AppState doesn't
+    # exist until the line just above, but start_experiment_from_launch (the
+    # /launch wizard's real-start path) needs it for live DeviceSettings and
+    # rebuild_hardware().
+    assistant.attach_app_state(app.state.app)
     log.info("RaPiD-boxes started (simulation=%s, storage=%s)", config.simulation, config.storage_root)
     try:
         yield

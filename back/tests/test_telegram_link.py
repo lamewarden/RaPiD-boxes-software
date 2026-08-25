@@ -1187,9 +1187,11 @@ async def test_launch_command_falls_back_to_defaults_when_nothing_found(chat_con
 
 @pytest.mark.asyncio
 async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_config: AppConfig, monkeypatch):
-    """End-to-end: every question answered validly, confirmed, and the
-    exact resolved config lands in AssistantService.take_pending_launch --
-    never anything invented, always what was actually typed."""
+    """End-to-end: every question answered validly, confirmed. No runner is
+    attached to this AssistantService, so start_experiment_from_launch
+    can't actually start anything -- confirming falls back to staging, and
+    the exact resolved config lands in take_pending_launch, never anything
+    invented, always what was actually typed."""
     service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
     assistant = AssistantService(chat_config, service._storage)
 
@@ -1202,6 +1204,7 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
 
     await service._dispatch_command(42, "/launch", "")  # overview + first question (measurement)
     await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's tropism run")  # name
     await service._maybe_continue_launch_wizard(42, "yes")  # dark phase enabled
     await service._maybe_continue_launch_wizard(42, "48")  # dark phase hours
     await service._maybe_continue_launch_wizard(42, "10")  # bending hours
@@ -1213,6 +1216,7 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
 
     confirmation_text = calls[-1][1]["text"]
     assert "Ready to review" in confirmation_text
+    assert "Ivan's tropism run" in confirmation_text
     assert "48 h" in confirmation_text  # format_config_knobs's own unit spacing
     assert "RGBW" in confirmation_text
     assert 42 in service._launch_wizards  # still open, awaiting yes/no
@@ -1221,8 +1225,8 @@ async def test_launch_wizard_full_tropism_flow_stages_a_pending_launch(chat_conf
 
     assert 42 not in service._launch_wizards
     final_text = calls[-1][1]["text"]
-    assert "loaded these into the setup screen" in final_text
-    assert "I don't start experiments myself" in final_text
+    assert "isn't available right now" in final_text  # no runner attached
+    assert "loaded the settings on the setup screen instead" in final_text
 
     staged = assistant.take_pending_launch("ivan")
     assert staged is not None
@@ -1250,6 +1254,7 @@ async def test_launch_wizard_full_growth_flow_stages_a_pending_launch(chat_confi
 
     await service._dispatch_command(42, "/launch", "")
     await service._maybe_continue_launch_wizard(42, "growth")
+    await service._maybe_continue_launch_wizard(42, "Ivan's growth run")  # name
     await service._maybe_continue_launch_wizard(42, "18")  # day length hours
     await service._maybe_continue_launch_wizard(42, "21")  # experiment length days
     await service._maybe_continue_launch_wizard(42, "white")  # spectra
@@ -1282,6 +1287,7 @@ async def test_launch_wizard_dark_phase_hours_skipped_when_disabled(chat_config:
 
     await service._dispatch_command(42, "/launch", "")
     await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")  # name
     await service._maybe_continue_launch_wizard(42, "no")  # dark phase disabled
 
     # Next question must be the bending phase, not dark phase length.
@@ -1310,9 +1316,9 @@ async def test_launch_wizard_invalid_answer_warns_and_repeats_the_same_question(
     assert "⚠️" in warning
     assert state.index == 0  # did not advance
 
-    await service._maybe_continue_launch_wizard(42, "500")  # dark phase hours out of range (0-350)
-    # First get past the protocol + darkPhaseEnabled questions validly.
+    # Get past the protocol + name + darkPhaseEnabled questions validly.
     await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")
     await service._maybe_continue_launch_wizard(42, "yes")
     before = state.index
     await service._maybe_continue_launch_wizard(42, "not a number")
@@ -1353,6 +1359,7 @@ async def test_launch_wizard_no_at_confirmation_cancels_without_staging(chat_con
 
     await service._dispatch_command(42, "/launch", "")
     await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")
     await service._maybe_continue_launch_wizard(42, "no")
     await service._maybe_continue_launch_wizard(42, "10")
     await service._maybe_continue_launch_wizard(42, "white")
@@ -1379,6 +1386,7 @@ async def test_launch_wizard_garbage_at_confirmation_reprompts(chat_config: AppC
 
     await service._dispatch_command(42, "/launch", "")
     await service._maybe_continue_launch_wizard(42, "tropism")
+    await service._maybe_continue_launch_wizard(42, "Ivan's run")
     await service._maybe_continue_launch_wizard(42, "no")
     await service._maybe_continue_launch_wizard(42, "10")
     await service._maybe_continue_launch_wizard(42, "white")
@@ -1390,7 +1398,7 @@ async def test_launch_wizard_garbage_at_confirmation_reprompts(chat_config: AppC
     await service._maybe_continue_launch_wizard(42, "maybe")
 
     assert 42 in service._launch_wizards
-    assert 'confirm' in calls[-1][1]["text"].lower()
+    assert 'start it' in calls[-1][1]["text"].lower()
     await assistant.aclose()
     await service.shutdown()
 
@@ -1410,7 +1418,7 @@ async def test_launch_wizard_restarts_cleanly_on_a_fresh_launch(chat_config: App
 
     fresh = service._launch_wizards[42]
     assert fresh.index == 0
-    assert fresh.fields == [telegram_link_module._LAUNCH_PROTOCOL_FIELD]
+    assert fresh.fields == [telegram_link_module._LAUNCH_PROTOCOL_FIELD, telegram_link_module._LAUNCH_NAME_FIELD]
     await assistant.aclose()
     await service.shutdown()
 

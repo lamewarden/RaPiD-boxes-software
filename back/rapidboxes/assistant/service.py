@@ -4,8 +4,15 @@ plus the one piece of "tool use" it's allowed that can touch a real
 experiment -- resolving a request like "start like Ivan's run from
 yesterday" into a concrete ExperimentProposal built from that run's own
 saved config. The model itself never invents parameter values and never
-calls the start API; it only ever gets to point at a real past experiment,
-which this service then reads verbatim from disk.
+calls the start API on its own initiative; it only ever gets to point at a
+real past experiment, which this service then reads verbatim from disk.
+
+start_experiment_from_launch is the one real exception to "never starts
+anything": it's called only by telegram_link.py's /launch wizard, only
+after a human has answered every field one at a time and confirmed a full
+summary of exactly what will run -- never by the model deciding to. It goes
+through the same ExperimentRunner.start() (and the same busy/no_camera/
+low_space outcomes) as the web UI's own Start button.
 
 Chat is reachable whether an experiment is running or not -- an earlier
 local-model version gated this to idle-only to avoid competing with a live
@@ -22,7 +29,7 @@ import shutil
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import httpx
 
@@ -35,12 +42,19 @@ from ..models import (
     AssistantImageRef,
     AssistantMessage,
     ExperimentProposal,
+    ExperimentState,
+    GrowthConfig,
     SavedExperimentConfig,
+    StartResponse,
+    TropismConfig,
 )
 from ..dsm_sharing import DsmSharingService
 from ..remote_sync import RemoteSyncService
 from ..storage import ExperimentDir, Storage, tally_by_user
 from . import vision
+
+if TYPE_CHECKING:
+    from ..api.deps import AppState
 
 log = logging.getLogger("rapidboxes.assistant")
 
@@ -495,6 +509,17 @@ class AssistantService:
         # never twice -- same one-time-code shape as Telegram's own linking
         # codes, just for a resolved config instead of a chat_id.
         self._pending_launches: Dict[str, Tuple[SavedExperimentConfig, float]] = {}
+        # Set via attach_app_state() once AppState exists -- constructed
+        # after this service, same deferred-wiring reason as `runner` was
+        # originally threaded through the constructor instead. Needed only
+        # by start_experiment_from_launch, for the live DeviceSettings
+        # (camera) ExperimentRunner.start() takes as a separate argument,
+        # and to actually apply a changed photoIlluminationSource via
+        # AppState.rebuild_hardware() before starting.
+        self._app_state: Optional["AppState"] = None
+
+    def attach_app_state(self, state: "AppState") -> None:
+        self._app_state = state
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -532,6 +557,87 @@ class AssistantService:
             return None
         del self._pending_launches[key]
         return config
+
+    async def start_experiment_from_launch(
+        self, saved: SavedExperimentConfig, experiment_name: str, requesting_username: str
+    ) -> Tuple[Optional[StartResponse], str]:
+        """The one place this whole assistant layer is allowed to actually
+        touch hardware -- called only by telegram_link.py's /launch wizard,
+        only after every field was answered one at a time and a human
+        confirmed a full summary of exactly what will run. Goes through the
+        exact same ExperimentRunner.start() (and the same busy/no_camera/
+        low_space outcomes) as the web UI's own Start button -- see
+        api/experiments.py's start_experiment for the HTTP-layer twin of
+        this method; kept in sync with it deliberately.
+
+        `saved` only ever carries fields the wizard actually asked about and
+        showed back for confirmation (protocol, phases, spectra, interval,
+        intensity, photoIlluminationSource, reportOnIssueEnabled) --
+        `saved.camera`/`.leds`/`.ir` are whatever the base experiment
+        happened to have and were never shown to or confirmed by the human
+        this turn, so they are deliberately NOT applied here; only
+        photoIlluminationSource (an actual wizard question) is pushed to
+        DeviceSettings, and only if it actually changed."""
+        if self._runner is None or self._app_state is None:
+            return None, "Starting an experiment isn't available right now -- try again shortly."
+
+        status = self._runner.status
+        if status.state in (ExperimentState.running, ExperimentState.paused, ExperimentState.finishing):
+            return (
+                StartResponse(status="busy", experimentId=status.experimentId),
+                f"{status.experimentId} is already running -- can't start another until it finishes.",
+            )
+
+        current_settings = self._app_state.settings
+        if saved.photoIlluminationSource != current_settings.photoIlluminationSource:
+            new_settings = current_settings.model_copy(
+                update={"photoIlluminationSource": saved.photoIlluminationSource}
+            )
+            settings_store.save_device_settings(self._config.settings_path, new_settings)
+            await self._app_state.rebuild_hardware(new_settings)
+
+        config: Union[TropismConfig, GrowthConfig]
+        if saved.protocol == "tropism":
+            config = TropismConfig(
+                experimentName=experiment_name,
+                username=requesting_username,
+                darkPhaseEnabled=saved.darkPhaseEnabled,
+                darkPhaseHours=saved.darkPhaseHours,
+                lateralIlluminationHours=saved.lateralIlluminationHours,
+                spectra=saved.spectra,
+                intervalMinutes=saved.intervalMinutes,
+                intensity=saved.intensity,
+                reportOnIssueEnabled=saved.reportOnIssueEnabled,
+            )
+        else:
+            config = GrowthConfig(
+                experimentName=experiment_name,
+                username=requesting_username,
+                dayLengthHours=saved.dayLengthHours,
+                experimentLengthDays=saved.experimentLengthDays,
+                spectra=saved.spectra,
+                dayIntensity=saved.dayIntensity,
+                intervalMinutes=saved.intervalMinutes,
+                reportOnIssueEnabled=saved.reportOnIssueEnabled,
+            )
+
+        # Same side effect the HTTP start endpoint has -- Remote Sync tracks
+        # whichever researcher most recently started a run, and switches
+        # itself off if that changes mid-stream (see note_active_researcher).
+        if self._remote_sync is not None:
+            self._remote_sync.note_active_researcher(requesting_username)
+
+        response = await self._runner.start(config, self._app_state.settings.camera)
+        if response.status == "started":
+            return response, f"Started {response.experimentId}."
+        if response.status == "no_camera":
+            return response, "No camera detected -- can't start right now."
+        if response.status == "low_space":
+            return response, (
+                f"Not enough storage: this would need about {_format_bytes(response.estimatedBytes or 0)}, "
+                f"only {_format_bytes(response.availableBytes or 0)} free."
+            )
+        return response, "Could not start the experiment."
 
     # --- chat --------------------------------------------------------------
     async def chat(

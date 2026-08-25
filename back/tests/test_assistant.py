@@ -1304,6 +1304,142 @@ def test_pending_launch_expires_unclaimed(app_config: AppConfig, monkeypatch):
     assert service.take_pending_launch("ivan") is None
 
 
+# --- start_experiment_from_launch: the one path that actually touches -----
+# --- hardware -- called only by telegram_link.py's /launch wizard, only ---
+# --- after a human confirms every field. Uses the real app lifespan (the --
+# --- `client` fixture) so attach_app_state's wiring is exercised too, not -
+# --- just the method in isolation. ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_actually_starts(client: AsyncClient):
+    app_state = client._app.state.app
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseEnabled=True,
+        darkPhaseHours=1,
+        lateralIlluminationHours=0,
+        spectra=["white"],
+        intervalMinutes=1,
+        intensity=25,
+        photoIlluminationSource="ir",
+        reportOnIssueEnabled=False,
+    )
+
+    response, message = await app_state.assistant.start_experiment_from_launch(saved, "wizard-run", "ivan")
+
+    assert response is not None
+    assert response.status == "started"
+    assert "Started" in message
+    assert response.experimentId in message
+    assert app_state.runner.status.state == ExperimentState.running
+    assert app_state.runner.status.experimentName == "wizard-run"
+    assert app_state.runner.status.username == "ivan"
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_growth_protocol(client: AsyncClient):
+    app_state = client._app.state.app
+    saved = SavedExperimentConfig(
+        protocol="growth",
+        dayLengthHours=16,
+        experimentLengthDays=1,  # kept short so the estimated footprint stays well under real free space
+        spectra=["white"],
+        dayIntensity=25,
+        intervalMinutes=30,
+        photoIlluminationSource="ir",
+    )
+
+    response, _message = await app_state.assistant.start_experiment_from_launch(saved, "growth-run", "ivan")
+
+    assert response is not None
+    assert response.status == "started"
+    assert app_state.runner.status.config.protocol == "growth"
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_returns_busy_when_already_running(client: AsyncClient):
+    app_state = client._app.state.app
+    saved = SavedExperimentConfig(protocol="tropism", darkPhaseHours=1, lateralIlluminationHours=0, intervalMinutes=1)
+
+    first, _ = await app_state.assistant.start_experiment_from_launch(saved, "run-1", "ivan")
+    assert first.status == "started"
+
+    second, message = await app_state.assistant.start_experiment_from_launch(saved, "run-2", "ivan")
+    assert second.status == "busy"
+    assert second.experimentId == first.experimentId
+    assert "already running" in message
+    # The first run must still be the one actually running -- a "busy"
+    # reply must never have touched hardware or started a second run.
+    assert app_state.runner.status.experimentId == first.experimentId
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_reports_no_camera(client: AsyncClient):
+    app_state = client._app.state.app
+    app_state.runner._hw.camera_available = False
+    saved = SavedExperimentConfig(protocol="tropism", darkPhaseHours=1, lateralIlluminationHours=0, intervalMinutes=1)
+
+    response, message = await app_state.assistant.start_experiment_from_launch(saved, "run", "ivan")
+
+    assert response is not None
+    assert response.status == "no_camera"
+    assert "No camera" in message
+    assert app_state.runner.status.state == ExperimentState.idle
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_applies_a_changed_photo_illumination_source(client: AsyncClient):
+    app_state = client._app.state.app
+    assert app_state.settings.photoIlluminationSource == "ir"
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseHours=1,
+        lateralIlluminationHours=0,
+        intervalMinutes=1,
+        photoIlluminationSource="rgbw",
+    )
+
+    response, _message = await app_state.assistant.start_experiment_from_launch(saved, "run", "ivan")
+
+    assert response.status == "started"
+    assert app_state.settings.photoIlluminationSource == "rgbw"  # actually applied, not just noted
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_leaves_matching_source_untouched(client: AsyncClient, monkeypatch):
+    app_state = client._app.state.app
+    assert app_state.settings.photoIlluminationSource == "ir"
+
+    async def fail_if_rebuilt(self, settings):
+        raise AssertionError("must not rebuild hardware when the source didn't change")
+
+    monkeypatch.setattr(type(app_state), "rebuild_hardware", fail_if_rebuilt)
+    saved = SavedExperimentConfig(
+        protocol="tropism", darkPhaseHours=1, lateralIlluminationHours=0, intervalMinutes=1, photoIlluminationSource="ir"
+    )
+
+    response, _message = await app_state.assistant.start_experiment_from_launch(saved, "run", "ivan")
+    assert response.status == "started"
+    await app_state.runner.abort()
+
+
+@pytest.mark.asyncio
+async def test_start_experiment_from_launch_without_runner_or_app_state_degrades(app_config: AppConfig):
+    storage = Storage(app_config.storage_root)
+    service = AssistantService(app_config, storage)  # no runner, no attach_app_state
+    saved = SavedExperimentConfig(protocol="tropism")
+
+    response, message = await service.start_experiment_from_launch(saved, "run", "ivan")
+
+    assert response is None
+    assert "isn't available right now" in message
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 
