@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, Download, MessageCirclePlus, RotateCcw, X } from "lucide-react";
+import { Download, MessageCirclePlus, RotateCcw, X } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
@@ -136,7 +136,7 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
           className="flex items-center gap-1.5 text-[15px] font-bold uppercase tracking-wide text-white"
           title="IEB Image Facility raPIDBOx assistanT"
         >
-          <Bot className="h-[18px] w-[18px] text-app-violet-light" strokeWidth={1.5} />
+          <img src="/pidibot-logo.png" alt="" className="h-[22px] w-[22px] object-contain" />
           PidiBot
         </span>
         <div className="flex items-center gap-1">
