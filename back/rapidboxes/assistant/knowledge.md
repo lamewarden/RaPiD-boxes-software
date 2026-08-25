@@ -46,12 +46,13 @@ inside each phase that has `capture: true`.
 - **[username]** — opens the user picker. Existing names are listed; typing a
   brand-new name offers "+ New User". No confirmation dialog for "this name
   already exists" — that's expected, it just means "use my existing folder".
-- **Gallery** — browse past experiment folders. Each folder can be
-  downloaded (zip) or deleted individually; there's also a bulk
-  "download all" / delete-all at the top, with a two-tap confirmation before
-  anything destructive happens. This is the *manual, pull* way to get images
-  off the device — see "Getting your images off the device" below for the
-  other (automatic, push) way, Remote Sync.
+- **Gallery** — has its own internal navigation, not one flat screen (see
+  "Gallery, in detail" below for the full structure): opening it lands you
+  on the current/most-recent experiment's own image grid, and a separate
+  **Folders** tab is where you actually browse past experiment folders and
+  their download/delete controls. This is the *manual, pull* way to get
+  images off the device — see "Getting your images off the device" below
+  for the other (automatic, push) way, Remote Sync.
 - **Live** — a live camera preview for framing/focus. It uses a *fixed dim
   white backlight* for visibility, not the actual illumination an experiment
   would use — so Live's exposure/brightness will not match a real capture.
@@ -140,16 +141,45 @@ concepts (system default vs. personal baseline, session-scoped vs.
 persisted) only apply to camera/illumination settings, not to device-level
 things like SSH or Remote Sync.
 
+### Gallery, in detail
+
+Gallery is **not** a flat "browse past folders" screen — it has its own
+internal navigation people miss:
+
+- **Default landing view**: opening Gallery shows an image grid for the
+  current/most-recently-active experiment only — not a list of past
+  folders. If nothing fits that description yet, this can look like "no
+  images" even though other experiments exist.
+- **Folders tab** — a separate button in Gallery's top bar (also reachable
+  by tapping the experiment-id label, e.g. "2026-01-01_ivan_test · 42
+  images"). This opens a full-screen overlay listing *that user's* past
+  experiment folders — this is where the actual folder browsing, and the
+  download/delete controls (per-folder Download/Delete, plus bulk "download
+  all"/"delete all" with a two-tap confirm) all live. **Not** on the default
+  grid — you must open Folders first.
+- Picking a folder in that overlay closes it and switches the main grid to
+  show that folder's images, back on the default view.
+- Two other toolbar buttons, **"Show growth"** and **"Plant shape"**, open
+  separate analysis-result overlays (motion-over-time and a plant-mask
+  overlay respectively) — not navigational tabs, and only enabled once an
+  experiment has at least 2 captures.
+
+When someone says "I opened Gallery and don't see my other experiments," the
+likely answer is "you're on the default current-experiment view — tap
+Folders (or the experiment name/count label) to browse past runs," not that
+anything is broken.
+
 ### Getting your images off the device
 
 There are **two different ways** — always mention both when someone asks
 how to get their images/data off the box, even if they only asked about
 one, since people often don't know the second one exists:
 
-1. **Manual download (Gallery)** — pull-based, on demand. Open **Gallery**,
-   download one experiment's folder as a zip, or use "download all" at the
-   top for everything at once. No setup required; you do it whenever you
-   want, after the fact.
+1. **Manual download (Gallery)** — pull-based, on demand. Open **Gallery →
+   Folders** (the folder list is not the default Gallery view — see
+   "Gallery, in detail" above), then download one experiment's folder as a
+   zip, or use "download all" at the top for everything at once. No setup
+   required; you do it whenever you want, after the fact.
 2. **Remote Sync (Settings → General → Remote Sync)** — automatic, push-based.
    Once configured and switched on, every new image is copied to a network
    share as it's captured, with no manual step needed per experiment. Can
@@ -283,10 +313,11 @@ scroll through a wall of text on this box.
 | Camera zoom/focus/exposure "reset itself" after a reboot or power cut (no experiment running at the time) | Camera settings are session-scoped and always reset to system default on process start | No — intentional | Reload your personal "Mine" preset from Settings (Camera or Illumination tab), or re-enter the values. |
 | A handful of images right after a reboot look zoomed differently or lost color, mid-experiment | A now-fixed bug where a resumed experiment briefly used fresh session defaults instead of its own saved camera config | It *was* a real, now-fixed bug; old affected frames stay wrong | Tell them plainly this was a real, fixed bug; the specific old frames from around that reboot cannot be recovered. Current runs are not affected. |
 | Remote Sync shows "off"/"needs password" right after a restart, even though it was configured before | Password is deliberately not persisted across restarts, for security | No — intentional, every restart | Re-enter the password in Settings → General → Remote Sync; server/username/on-off are unaffected. |
-| Old experiments disappeared from Gallery | Automatic 90-day retention cleanup | No — intentional | Back up important experiments (Gallery → download) well before 90 days old. |
-| "Low space" when starting a new experiment | Estimated storage needed exceeds free space | No — a real, working guard | Use the offered "free space" option to remove that user's own old experiments, or delete/download some via Gallery first. |
+| Old experiments disappeared from Gallery | Automatic 90-day retention cleanup | No — intentional | Back up important experiments (Gallery → Folders → download) well before 90 days old. |
+| "Low space" when starting a new experiment | Estimated storage needed exceeds free space | No — a real, working guard | Use the offered "free space" option to remove that user's own old experiments, or delete/download some via Gallery → Folders first. |
 | Typed an existing username and got no warning it "already exists" | Intentional — usernames are case-insensitive and reusing one just resumes that person's folder | No — intentional | Nothing to fix; that is the expected behavior. |
 | Asked "how do I download my images" (or similar) and pushed back that there's "something else" beyond the answer given | There are genuinely two separate ways to get images off the device -- manual Gallery zip download AND automatic Remote Sync -- and only one may have been mentioned | No — a real second option, not a misunderstanding | See "Getting your images off the device" above; always mention both Gallery download and Remote Sync, not just one. |
+| "I opened Gallery but only see one experiment / can't find my other runs" | Gallery's default view shows only the current/most-recent experiment's images, not a folder list -- the folder browser is a separate Folders tab that hasn't been opened yet | No — intentional navigation, not missing data | Tap **Folders** (top bar) or the experiment-id label to browse past experiment folders; see "Gallery, in detail" above. |
 | "Recovered" banner appears after a reboot, saying images were skipped or not | Automatic resume-after-outage feature reporting exactly what happened | No — intentional, informational | Explain what the banner already says; if imagesSkipped > 0, that many capture slots were missed while it was offline and cannot be recreated. |
 | Live view looks dim/flat compared to real captures | Live always uses a fixed dim white backlight for framing, never the experiment's real illumination or exposure | No — intentional | Live is for framing only; real capture brightness/color will differ. |
 | Settings → "Mine" doesn't change the system default for other users | "Mine" is strictly personal and never touches the shared system default | No — intentional | Each user's "Mine" is private to their own username; there's no UI to change the shared default. |
