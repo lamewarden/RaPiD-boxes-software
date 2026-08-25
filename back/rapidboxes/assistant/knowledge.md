@@ -1,7 +1,8 @@
 # RaPiD-boxes — what this box is
 
 RaPiD-boxes is a self-contained plant-imaging controller built into a small
-box ("Rapidbox") used by researchers at IEB. Inside: a Raspberry Pi 5, a
+box ("Rapidbox") used by researchers at the Institute of Experimental
+Botany (IEB), Prague. Inside: a Raspberry Pi 5, a
 camera pointed down at a plate/pot of seedlings, an IR illuminator, and RGBW
 LED strips split into a "top" segment (overhead) and a "lateral" segment
 (side, for tropism/bending experiments). Researchers set up an imaging
@@ -173,11 +174,11 @@ things like SSH or Remote Sync.
 The fourth tab — static credits, nothing configurable, no locking, no
 "Default"/"Mine"/"Save" row (same reasoning as General). Contents:
 
-- **About** — RaPiD-boxes was developed by the team of the IEB Prague
-  Imaging Core Facility.
+- **About** — RaPiD-boxes was developed by the team of the Institute of
+  Experimental Botany (IEB) Prague Imaging Facility.
 - **Credits** — Original prototype & Backend: Ivan Kashkan. UI: Judith
   Garcia Gonzalez. Hardware prototyping: Vojtěch Knirsch, Matěj Drs. Head of
-  Core Facility: Malínská Kateřina.
+  Facility: Malínská Kateřina.
 - **Original Publication** — "RaPiD-chamber: Easy to self-assemble
   live-imaging chamber with adjustable LEDs allows to track small
   differences in dynamic plant movement adaptation on tissue level"

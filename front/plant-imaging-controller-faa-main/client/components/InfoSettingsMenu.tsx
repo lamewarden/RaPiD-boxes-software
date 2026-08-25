@@ -27,7 +27,8 @@ export default function InfoSettingsMenu() {
               About
             </div>
             <p className="mt-1.5 text-[11px] leading-[16px] text-white">
-              RaPiD-boxes was developed by the team of the IEB Prague Imaging Core Facility.
+              RaPiD-boxes was developed by the team of the Institute of Experimental Botany
+              (IEB) Prague Imaging Facility.
             </p>
           </div>
 
@@ -42,7 +43,7 @@ export default function InfoSettingsMenu() {
               <dd className="font-semibold text-white">Judith Garcia Gonzalez</dd>
               <dt className="text-app-text-muted">Hardware prototyping</dt>
               <dd className="font-semibold text-white">Vojtěch Knirsch, Matěj Drs</dd>
-              <dt className="text-app-text-muted">Head of Core Facility</dt>
+              <dt className="text-app-text-muted">Head of Facility</dt>
               <dd className="font-semibold text-white">Malínská Kateřina</dd>
             </dl>
           </div>
