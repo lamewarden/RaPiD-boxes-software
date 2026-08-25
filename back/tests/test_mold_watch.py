@@ -47,6 +47,7 @@ def app_config(tmp_path: Path) -> AppConfig:
         assistant_api_base_url="http://127.0.0.1:1",
         assistant_api_key="test-key",
         telegram_links_path=tmp_path / "telegram_links.json",
+        telegram_monitors_path=tmp_path / "telegram_monitors.json",
         spa_dir=None,
     )
 
@@ -56,14 +57,15 @@ async def telegram(app_config: AppConfig, monkeypatch):
     """Not `configured` (no token) so no real background polling runs --
     send_message is replaced with a recording stub so mold_watch's own
     behavior (does it call send, with what) can be asserted."""
-    service = TelegramLinkService(None, None, app_config.telegram_links_path, Storage(app_config.storage_root))
+    service = TelegramLinkService(
+        None, None, app_config.telegram_links_path, Storage(app_config.storage_root), app_config.telegram_monitors_path
+    )
     sent = []
 
-    async def fake_send(username, text):
+    async def fake_notify_issue(experiment_id, username, text):
         sent.append((username, text))
-        return True
 
-    monkeypatch.setattr(service, "send_message", fake_send)
+    monkeypatch.setattr(service, "notify_issue", fake_notify_issue)
     service.sent = sent
     yield service
     await service.shutdown()

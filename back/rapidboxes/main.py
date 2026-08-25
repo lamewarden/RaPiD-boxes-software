@@ -84,12 +84,17 @@ async def lifespan(app: FastAPI):
 
     async def on_experiment_finished(exp, status):
         await assistant_summary.generate_and_store(config, exp, status)
+        await telegram.notify_completion(exp, status)
 
     # Opt-in issue-alert delivery + Telegram chat access to PidiBot (see
     # telegram_link.py). Degrades to a no-op if no admin has set a bot
     # token/username yet -- see its own `configured` property.
     telegram = TelegramLinkService(
-        config.telegram_bot_token, config.telegram_bot_username, config.telegram_links_path, storage
+        config.telegram_bot_token,
+        config.telegram_bot_username,
+        config.telegram_links_path,
+        storage,
+        config.telegram_monitors_path,
     )
     telegram.start()
 
@@ -115,7 +120,15 @@ async def lifespan(app: FastAPI):
         on_experiment_finished=on_experiment_finished,
     )
     mold_watch.attach_runner(runner)
+    telegram.attach_runner(runner)
     await runner.recover()
+    # A /monitor subscription persists across restarts specifically to catch
+    # this: if recover() just found a real outage for an experiment someone
+    # is monitoring, that's the one blackout event this feature can ever
+    # actually report (see TelegramLinkService.notify_blackout's docstring
+    # for why the timing only works right here, right after recover()).
+    if runner.status.recoveryNotice is not None and runner.status.experimentId is not None:
+        await telegram.notify_blackout(runner.status.experimentId, runner.status.recoveryNotice.message)
     # recover() may have overridden the camera/source half of hw's settings to
     # match a resumed experiment's own saved config (see
     # HardwareManager.restore_experiment_settings) -- read it back from hw

@@ -4,15 +4,19 @@ fed from the same on_image_captured hook already wired into
 ExperimentRunner -- see main.py's dispatch_image_captured, which fans a
 capture out to both services.
 
-Only ever active for a user who ticked "report on issue" at experiment
-setup (TropismConfig.reportOnIssueEnabled) AND already has a linked
-Telegram chat (see ../telegram_link.py) -- there is no per-request contact
-field at all; the destination is resolved from the link store by username
-at send time. Every K captures for that run, it re-checks the most recent
-frames with the same >= MOLD_CONFIRM_THRESHOLD-frame rule as the end-of-run
-summary (see vision.py) -- never trusting one convincing frame. Once
-confirmed, it flags the run exactly once (ExperimentRunner.mark_issue_detected
--- live over the WS, and durable via events.log) and DMs the researcher.
+Active for a run if either applies: the researcher ticked "report on issue"
+at setup (TropismConfig.reportOnIssueEnabled) AND already has a linked
+Telegram chat (see ../telegram_link.py), OR anyone has sent /monitor for
+this specific experiment (a live, on-demand opt-in that needs no setup-time
+checkbox -- see TelegramLinkService._handle_monitor_command). There is no
+per-request contact field either way; delivery (TelegramLinkService.
+notify_issue) resolves both the config-linked researcher and any /monitor
+subscribers, deduplicated. Every K captures for an active run, it re-checks
+the most recent frames with the same >= MOLD_CONFIRM_THRESHOLD-frame rule as
+the end-of-run summary (see vision.py) -- never trusting one convincing
+frame. Once confirmed, it flags the run exactly once
+(ExperimentRunner.mark_issue_detected -- live over the WS, and durable via
+events.log) and notifies whoever's listening.
 """
 from __future__ import annotations
 
@@ -96,9 +100,13 @@ class MoldWatchService:
         try:
             if experiment_id in self._flagged:
                 return
-            if not report_enabled:
-                # Not opted in for this run -- drop any stale counters so a
-                # later differently-configured run with the same id (can't
+            # Runs even without reportOnIssueEnabled if someone has sent
+            # /monitor for this specific experiment (see
+            # TelegramLinkService._handle_monitor_command) -- monitoring is
+            # a live, on-demand opt-in, not tied to what was ticked at setup.
+            if not report_enabled and not self._telegram.is_monitored(experiment_id):
+                # Neither opted in -- drop any stale counters so a later
+                # differently-configured run with the same id (can't
                 # normally happen, folder names are unique, but cheap to be
                 # safe) starts clean.
                 self._counts.pop(experiment_id, None)
@@ -151,6 +159,8 @@ class MoldWatchService:
         )
         exp.append_event(f"issue detected: {detail}")
         await self._runner.mark_issue_detected(job.experiment_id, detail)
-        await self._telegram.send_message(
-            job.username, f"⚠️ RaPiD-boxes: possible issue detected in {job.experiment_id}.\n{detail}"
+        await self._telegram.notify_issue(
+            job.experiment_id,
+            job.username,
+            f"⚠️ RaPiD-boxes: possible issue detected in {job.experiment_id}.\n{detail}",
         )

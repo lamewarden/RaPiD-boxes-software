@@ -12,9 +12,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from rapidboxes import config_xml
 from rapidboxes import telegram_link as telegram_link_module
+from rapidboxes.assistant import summary as assistant_summary
 from rapidboxes.assistant.service import AssistantService
 from rapidboxes.config import AppConfig
+from rapidboxes.models import CameraSettings, ExperimentState, ExperimentStatus, SavedExperimentConfig
 from rapidboxes.storage import Storage
 from rapidboxes.telegram_link import LINK_CODE_TTL_S, MAX_CHAT_HISTORY, TelegramLinkService, _strip_markdown_lite
 
@@ -42,22 +45,22 @@ def _mock_post(monkeypatch, service: TelegramLinkService) -> list:
 
 @pytest.mark.asyncio
 async def test_configured_requires_both_token_and_username(tmp_path: Path):
-    unset = TelegramLinkService(None, None, tmp_path / "links.json", Storage(tmp_path / "storage"))
+    unset = TelegramLinkService(None, None, tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert unset.configured is False
     await unset.shutdown()
 
-    token_only = TelegramLinkService("abc", None, tmp_path / "links.json", Storage(tmp_path / "storage"))
+    token_only = TelegramLinkService("abc", None, tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert token_only.configured is False
     await token_only.shutdown()
 
-    both = TelegramLinkService("abc", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    both = TelegramLinkService("abc", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert both.configured is True
     await both.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_request_link_code_is_six_digits_and_not_yet_linked(tmp_path: Path):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("ivan")
     assert code.isdigit()
     assert len(code) == 6
@@ -68,7 +71,7 @@ async def test_request_link_code_is_six_digits_and_not_yet_linked(tmp_path: Path
 @pytest.mark.asyncio
 async def test_completing_a_link_persists_and_is_case_insensitive(tmp_path: Path, monkeypatch):
     links_path = tmp_path / "links.json"
-    service = TelegramLinkService("token", "MyBot", links_path, Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", links_path, Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("Ivan")
     _mock_post(monkeypatch, service)
     await service._try_complete_link(code, chat_id=555)
@@ -78,14 +81,14 @@ async def test_completing_a_link_persists_and_is_case_insensitive(tmp_path: Path
     await service.shutdown()
 
     # A fresh instance pointed at the same file picks up the persisted link.
-    reloaded = TelegramLinkService("token", "MyBot", links_path, Storage(tmp_path / "storage"))
+    reloaded = TelegramLinkService("token", "MyBot", links_path, Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert reloaded.is_linked("ivan") is True
     await reloaded.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_re_requesting_a_code_invalidates_the_previous_one(tmp_path: Path, monkeypatch):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     old_code = service.request_link_code("ivan")
     new_code = service.request_link_code("ivan")
     assert old_code != new_code
@@ -101,7 +104,7 @@ async def test_re_requesting_a_code_invalidates_the_previous_one(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_expired_code_does_not_link(tmp_path: Path, monkeypatch):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("ivan")
 
     future = telegram_link_module.time.monotonic() + LINK_CODE_TTL_S + 1
@@ -114,7 +117,7 @@ async def test_expired_code_does_not_link(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_code_is_ignored(tmp_path: Path):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     # No pending code matches -- returns before ever reaching the network.
     await service._try_complete_link("999999", chat_id=1)
     assert service._links == {}
@@ -123,21 +126,21 @@ async def test_unknown_code_is_ignored(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_send_message_when_not_configured_returns_false(tmp_path: Path):
-    service = TelegramLinkService(None, None, tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService(None, None, tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert await service.send_message("ivan", "hi") is False
     await service.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_send_message_when_not_linked_returns_false(tmp_path: Path):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     assert await service.send_message("ivan", "hi") is False
     await service.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_send_message_posts_to_the_linked_chat(tmp_path: Path, monkeypatch):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("ivan")
     link_calls = _mock_post(monkeypatch, service)
     await service._try_complete_link(code, 42)
@@ -154,7 +157,7 @@ async def test_send_message_posts_to_the_linked_chat(tmp_path: Path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_send_message_swallows_http_errors(tmp_path: Path, monkeypatch):
-    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"))
+    service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("ivan")
     _mock_post(monkeypatch, service)
     await service._try_complete_link(code, 42)
@@ -215,7 +218,7 @@ def chat_config(tmp_path: Path) -> AppConfig:
 
 async def _linked_service(chat_config: AppConfig, monkeypatch, username: str, chat_id: int) -> TelegramLinkService:
     storage = Storage(chat_config.storage_root)
-    service = TelegramLinkService("token", "MyBot", chat_config.telegram_links_path, storage)
+    service = TelegramLinkService("token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json")
     code = service.request_link_code(username)
     _mock_post(monkeypatch, service)
     await service._try_complete_link(code, chat_id)
@@ -225,7 +228,7 @@ async def _linked_service(chat_config: AppConfig, monkeypatch, username: str, ch
 @pytest.mark.asyncio
 async def test_chat_message_from_unlinked_chat_is_rejected(chat_config: AppConfig, monkeypatch):
     storage = Storage(chat_config.storage_root)
-    service = TelegramLinkService("token", "MyBot", chat_config.telegram_links_path, storage)
+    service = TelegramLinkService("token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json")
     calls = _mock_post(monkeypatch, service)
 
     await service._handle_chat_message(999, "hello")
@@ -453,4 +456,314 @@ async def test_download_too_large_for_telegram_suggests_the_device_instead(
     assert len(calls) == 1
     assert "too large" in calls[0][1]["text"]
     assert "Gallery" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+# --- /monitor: on-demand subscription to the sender's own running run ------
+
+
+class _FakeRunner:
+    def __init__(self, status: ExperimentStatus):
+        self.status = status
+
+
+@pytest.mark.asyncio
+async def test_monitor_from_unlinked_chat_is_rejected(chat_config: AppConfig, monkeypatch):
+    storage = Storage(chat_config.storage_root)
+    service = TelegramLinkService(
+        "token", "MyBot", chat_config.telegram_links_path, storage, chat_config.telegram_links_path.parent / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(999)
+
+    assert len(calls) == 1
+    assert "don't recognize this Telegram account" in calls[0][1]["text"]
+    assert service._monitors == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_without_runner_attached_reports_unavailable(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert len(calls) == 1
+    assert "isn't available right now" in calls[0][1]["text"]
+    assert service._monitors == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_with_no_running_experiment_declines(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(_FakeRunner(ExperimentStatus(state=ExperimentState.idle)))
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert len(calls) == 1
+    assert "don't have an experiment running" in calls[0][1]["text"]
+    assert service._monitors == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_declines_another_users_running_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(
+            ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="someone-else")
+        )
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert len(calls) == 1
+    assert "don't have an experiment running" in calls[0][1]["text"]
+    assert service._monitors == {}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_subscribes_to_own_running_experiment_and_persists(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="Ivan"))
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert len(calls) == 1
+    assert "Now monitoring exp1" in calls[0][1]["text"]
+    assert service._monitors == {"exp1": {42}}
+    assert service.is_monitored("exp1") is True
+
+    # Persisted -- a fresh instance pointed at the same file picks it up,
+    # which is what makes notify_blackout able to report a restart at all.
+    reloaded = TelegramLinkService(
+        "token", "MyBot", service._links_path, service._storage, service._monitors_path
+    )
+    assert reloaded._monitors == {"exp1": {42}}
+    await reloaded.shutdown()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_monitor_also_accepts_a_paused_experiment(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service.attach_runner(
+        _FakeRunner(ExperimentStatus(state=ExperimentState.paused, experimentId="exp1", username="ivan"))
+    )
+    calls = _mock_post(monkeypatch, service)
+
+    await service._handle_monitor_command(42)
+
+    assert "Now monitoring exp1" in calls[0][1]["text"]
+    await service.shutdown()
+
+
+# --- notify_issue: dual delivery to config-linked + /monitor subscribers ---
+
+
+@pytest.mark.asyncio
+async def test_notify_issue_reaches_both_the_linked_researcher_and_monitor_chat(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service._monitors["exp1"] = {99}
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_issue("exp1", "ivan", "possible issue")
+
+    recipients = {body["chat_id"] for _, body in calls}
+    assert recipients == {42, 99}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_issue_does_not_double_send_when_linked_chat_is_also_monitoring(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service._monitors["exp1"] = {42}
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_issue("exp1", "ivan", "possible issue")
+
+    assert len(calls) == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_issue_with_no_subscribers_sends_nothing(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service._links.clear()  # not opted in via Settings, either
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_issue("exp1", "ivan", "possible issue")
+
+    assert calls == []
+    await service.shutdown()
+
+
+# --- notify_blackout: only ever reaches /monitor subscribers ---------------
+
+
+@pytest.mark.asyncio
+async def test_notify_blackout_reaches_monitor_subscribers_only(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    service._links.clear()
+    service._monitors["exp1"] = {99}
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_blackout("exp1", "power was out for 4 minutes")
+
+    assert len(calls) == 1
+    assert calls[0][1]["chat_id"] == 99
+    assert calls[0][1]["text"] == "⚡ power was out for 4 minutes"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_blackout_with_no_subscribers_sends_nothing(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_blackout("exp1", "power was out")
+
+    assert calls == []
+    await service.shutdown()
+
+
+# --- notify_completion: first/last image, AI summary, settings recap, -----
+# --- download nudge, one-shot subscription cleanup -------------------------
+
+
+@pytest.mark.asyncio
+async def test_notify_completion_with_no_subscribers_is_a_noop(chat_config: AppConfig, monkeypatch):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_completion(exp, ExperimentStatus(state=ExperimentState.done, message="done"))
+
+    assert calls == []
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_completion_sends_summary_images_and_settings_then_clears_subscription(
+    chat_config: AppConfig, monkeypatch
+):
+    from PIL import Image
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    Image.new("RGB", (32, 32), color="white").save(exp.path / "dark_00000.png", "PNG")
+    Image.new("RGB", (32, 32), color="black").save(exp.path / "dark_00001.png", "PNG")
+
+    saved = SavedExperimentConfig(
+        protocol="tropism",
+        darkPhaseHours=12.5,
+        lateralIlluminationHours=3.0,
+        intervalMinutes=15.0,
+        photoIlluminationSource="rgbw",
+        camera=CameraSettings(grayscale=False, zoom=2.0),
+    )
+    exp.write_config_xml(config_xml.serialize(saved), "run1")
+    (exp.path / "ai_summary.json").write_text(
+        '{"textSummary": "Ran smoothly, no issues.", "moldDetected": true, '
+        '"moldFrameCount": 3, "framesChecked": 5}'
+    )
+
+    service._monitors[exp.experiment_id] = {99}
+    text_calls = []
+    photo_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendPhoto"):
+            photo_calls.append((url, data, files))
+        else:
+            text_calls.append((url, json))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service.notify_completion(exp, ExperimentStatus(state=ExperimentState.done, message="Completed on schedule."))
+
+    assert len(text_calls) == 1
+    text = text_calls[0][1]["text"]
+    assert text_calls[0][1]["chat_id"] == 99
+    assert exp.experiment_id in text
+    assert "Completed on schedule." in text
+    assert "Ran smoothly, no issues." in text
+    assert "Possible mold detected (3/5 frames)" in text
+    assert "download this experiment" in text
+    assert "*" not in text  # markdown-lite stripped, same as chat replies
+
+    assert len(photo_calls) == 2  # first + last
+    assert photo_calls[0][1]["chat_id"] == "99"
+
+    # One-shot: the subscription is consumed, and persisted as gone.
+    assert service.is_monitored(exp.experiment_id) is False
+    reloaded_monitors = telegram_link_module._load_monitors(service._monitors_path)
+    assert exp.experiment_id not in reloaded_monitors
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_completion_with_a_single_image_sends_only_one_photo(
+    chat_config: AppConfig, monkeypatch
+):
+    from PIL import Image
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    Image.new("RGB", (32, 32), color="white").save(exp.path / "dark_00000.png", "PNG")
+    service._monitors[exp.experiment_id] = {99}
+
+    photo_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendPhoto"):
+            photo_calls.append((url, data, files))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service.notify_completion(exp, ExperimentStatus(state=ExperimentState.done, message="done"))
+
+    assert len(photo_calls) == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_completion_without_a_stored_ai_summary_still_sends_a_recap(
+    chat_config: AppConfig, monkeypatch
+):
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    service._monitors[exp.experiment_id] = {99}
+    assert assistant_summary.read_stored(exp) is None
+
+    calls = _mock_post(monkeypatch, service)
+
+    await service.notify_completion(exp, ExperimentStatus(state=ExperimentState.error, message="capture failed"))
+
+    assert len(calls) == 1
+    text = calls[0][1]["text"]
+    assert "capture failed" in text
+    assert "download this experiment" in text
     await service.shutdown()

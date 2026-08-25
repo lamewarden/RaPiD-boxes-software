@@ -322,6 +322,28 @@ bug — check Settings → General → Telegram Alerts for their own link status
 If someone messages the bot and gets "I don't recognize this Telegram
 account yet", same fix: they haven't completed step 1.
 
+**/monitor — on-demand watch, no setup-screen checkbox needed.** Sending
+`/monitor` to the bot (once linked) subscribes that chat to whichever
+experiment is currently running under that same person's own username --
+strictly their own, resolved from the link, never a name they could type or
+someone else's run. From then on that chat gets pushed, unprompted:
+anomalies (same mold/issue detection as the "Telegram Me If An Issue Is
+Detected" checkbox, but fires regardless of whether that checkbox was ever
+ticked -- /monitor is its own independent opt-in), a blackout notice if the
+device loses power or reboots mid-run (only /monitor can ever report this,
+since it's detected once at the next boot, before a fresh /monitor could be
+sent), and, once the run finishes, a completion message: the AI summary,
+first and last captured image as real photos, a plain-text settings recap,
+and a nudge to ask for the zip (never sent automatically -- say "download
+this experiment" to actually get it). The subscription is one-shot: it's
+consumed the moment that completion message goes out, so monitoring a next
+run needs a fresh `/monitor`. If someone has both the setup-screen checkbox
+ticked and sends `/monitor` for the same run, an anomaly alert still only
+reaches their chat once. If `/monitor` gets "you don't have an experiment
+running right now", that's accurate -- it only ever attaches to a run that's
+actually `running` or `paused` for that person at the moment the command
+arrives, never a future or already-finished one.
+
 ### Progress screen (while an experiment is running)
 
 Shows: elapsed / remaining time (rounded to minutes, no seconds — seconds

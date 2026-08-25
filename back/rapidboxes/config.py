@@ -117,6 +117,11 @@ class AppConfig(BaseSettings):
     # Per-user chat_id links, keyed by lowercased RapiDBoxes username. Same
     # directory convention as settings_path/user_defaults_path.
     telegram_links_path: Path = Path.home() / "rapidboxes" / "telegram_links.json"
+    # Active /monitor subscriptions, keyed by experiment_id -- persisted (not
+    # just in-memory) specifically so a subscription survives the exact kind
+    # of restart it exists to report on: see TelegramLinkService's blackout
+    # notification, sent right after ExperimentRunner.recover().
+    telegram_monitors_path: Path = Path.home() / "rapidboxes" / "telegram_monitors.json"
 
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
