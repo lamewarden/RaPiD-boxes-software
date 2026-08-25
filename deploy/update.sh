@@ -28,4 +28,18 @@ sed "s|@IDLE_SH@|$REPO_DIR/deploy/idle.sh|g" \
     > "$HOME/.config/autostart/rapidboxes-idle.desktop"
 
 sudo systemctl restart rapidboxes.service
+
+# The kiosk's Chromium tab is a long-lived SPA session -- it does NOT
+# reload itself just because the backend restarted, so without this a
+# deploy silently ships zero UI changes to the physical screen: found in
+# production after the kiosk ran the exact same page for 22+ hours across
+# many deploys. kiosk.sh's own watchdog loop (already running under the
+# desktop session) relaunches Chromium fresh within seconds whenever it's
+# not already running, so killing it here is enough -- no direct
+# Chromium/CDP control needed. Same bluntness as restarting the backend
+# service above: this does interrupt whatever's currently on the shared
+# touchscreen, same as every deploy already does to the backend WS
+# connection.
+pkill -f "chromium.*--app=http://localhost:${RAPIDBOXES_PORT:-8000}" 2>/dev/null || true
+
 echo "Updated and restarted. Logs: journalctl -u rapidboxes -f"

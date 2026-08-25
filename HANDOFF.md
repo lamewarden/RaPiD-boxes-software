@@ -97,6 +97,15 @@ runs remotely.
 - `rapidboxes/kiosk_screenshot.py` — grabs a real screenshot of the kiosk's
   own Wayland display (`grim`, needs `XDG_RUNTIME_DIR`/`WAYLAND_DISPLAY`
   set explicitly since the systemd service doesn't inherit them).
+- `deploy/kiosk.sh` — launches/watchdogs the kiosk's Chromium tab
+  (`--app=$URL`, kiosk mode). **Important**: this tab is a long-lived SPA
+  session that does NOT reload itself on a backend deploy — found in
+  production after it ran the exact same page for 22+ hours across many
+  deploys, meaning zero UI changes actually reached the physical screen
+  that whole time. `deploy/update.sh` now kills the Chromium process at
+  the end of every deploy specifically so kiosk.sh's own watchdog loop
+  relaunches it fresh. If you ever need to force a kiosk refresh manually:
+  `ssh rpi2_asuch "pkill -f 'chromium.*--app=http://localhost:8000'"`.
 
 ## PidiBot capability status (as of this session)
 
