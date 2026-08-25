@@ -425,12 +425,29 @@ class AssistantImageRef(BaseModel):
     caption: str
 
 
+class AssistantDownloadRef(BaseModel):
+    """One specific, real experiment folder resolved by the
+    download_experiment tool, packaged as a zip -- never invented, always
+    real data (same principle as AssistantImageRef/ExperimentProposal).
+    `url` is the existing GET /api/experiments/{id}/download endpoint (same
+    one Gallery -> Folders' own download button uses); the web UI just
+    links to it, while Telegram delivery builds and uploads the zip
+    directly (see telegram_link.py) since Telegram can't fetch a URL back
+    from this not-internet-reachable device."""
+
+    experimentId: str
+    url: str
+    filename: str
+    sizeBytes: int
+
+
 class AssistantChatResponse(BaseModel):
     reply: str
     proposal: Optional[ExperimentProposal] = None
-    # Mutually exclusive with proposal in practice -- one tool call resolves
-    # to at most one of the two extra payloads, never both.
+    # Mutually exclusive in practice -- one tool call resolves to at most
+    # one of these three extra payloads, never more than one.
     image: Optional[AssistantImageRef] = None
+    download: Optional[AssistantDownloadRef] = None
 
 
 # ---------------------------------------------------------------------------

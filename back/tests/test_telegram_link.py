@@ -373,3 +373,84 @@ async def test_chat_message_with_shown_image_sends_a_real_photo(chat_config: App
     assert "photo" in files
     await assistant.aclose()
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_chat_message_requesting_download_sends_a_real_zip_document(
+    chat_config: AppConfig, monkeypatch
+):
+    from PIL import Image
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+    Image.new("RGB", (32, 32), color="white").save(exp.path / "dark_00000.png", "PNG")
+
+    assistant = AssistantService(chat_config, storage)
+
+    async def fake_call(self, messages):
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "download_experiment", "arguments": "{}"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fake_call)
+    service.attach_assistant(assistant)
+
+    text_calls = []
+    document_calls = []
+
+    async def fake_post(url, json=None, data=None, files=None, **kw):
+        if url.endswith("/sendDocument"):
+            document_calls.append((url, data, files))
+        else:
+            text_calls.append((url, json))
+        return _FakeResponse()
+
+    monkeypatch.setattr(service._client, "post", fake_post)
+
+    await service._handle_chat_message(42, "zip up my experiment")
+
+    assert len(document_calls) == 1
+    _, data, files = document_calls[0]
+    assert data["chat_id"] == "42"
+    filename, content, _ctype = files["document"]
+    assert filename == f"{exp.experiment_id}.zip"
+    assert content  # real bytes, not empty
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_download_too_large_for_telegram_suggests_the_device_instead(
+    chat_config: AppConfig, monkeypatch
+):
+    from rapidboxes.telegram_link import TELEGRAM_MAX_UPLOAD_BYTES
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    storage = service._storage
+    exp = storage.create_experiment("ivan", "run1")
+    exp.write_metadata({"username": "ivan", "startedAt": "2026-01-01T00:00:00"})
+
+    from rapidboxes.models import AssistantDownloadRef
+
+    calls = _mock_post(monkeypatch, service)
+    huge = AssistantDownloadRef(
+        experimentId=exp.experiment_id,
+        url=f"/api/experiments/{exp.experiment_id}/download",
+        filename=f"{exp.experiment_id}.zip",
+        sizeBytes=TELEGRAM_MAX_UPLOAD_BYTES + 1,
+    )
+    await service._send_download(42, huge)
+
+    assert len(calls) == 1
+    assert "too large" in calls[0][1]["text"]
+    assert "Gallery" in calls[0][1]["text"]
+    await service.shutdown()

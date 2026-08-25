@@ -30,6 +30,7 @@ from ..config import AppConfig
 from ..engine.runner import ExperimentRunner
 from ..models import (
     AssistantChatResponse,
+    AssistantDownloadRef,
     AssistantImageRef,
     AssistantMessage,
     ExperimentProposal,
@@ -326,6 +327,29 @@ _TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_experiment",
+            "description": (
+                "Package one of the CURRENT user's own experiments (every "
+                "image plus its config) as a zip for them to download. Use "
+                "when asked to \"zip up\"/\"package\"/\"send me\"/\"download\" "
+                "a whole experiment -- for a single image use show_image "
+                "instead. Always scoped to whoever is chatting -- can only "
+                "package their own experiments, never another user's."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "their own words for which run, e.g. 'yesterday', 'last tropism run', omit for their most recent",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -443,14 +467,16 @@ class AssistantService:
 
                 tool_calls = result.get("tool_calls") or []
                 if tool_calls:
-                    proposal, image, reply = await self._resolve_tool_call(tool_calls[0], username)
+                    proposal, image, download, reply = await self._resolve_tool_call(
+                        tool_calls[0], username
+                    )
                 else:
-                    proposal, image, reply = None, None, (result.get("content") or "").strip()
+                    proposal, image, download, reply = None, None, None, (result.get("content") or "").strip()
             finally:
                 self._task = None
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
-            return AssistantChatResponse(reply=reply, proposal=proposal, image=image)
+            return AssistantChatResponse(reply=reply, proposal=proposal, image=image, download=download)
 
     async def _call_llm(self, messages: list) -> dict:
         res = await self._client.post(
@@ -468,10 +494,13 @@ class AssistantService:
 
     async def _resolve_tool_call(
         self, tool_call: dict, requesting_username: Optional[str]
-    ) -> tuple[Optional[ExperimentProposal], Optional[AssistantImageRef], str]:
+    ) -> tuple[
+        Optional[ExperimentProposal], Optional[AssistantImageRef], Optional[AssistantDownloadRef], str
+    ]:
         """Dispatches one native tool_calls entry to its resolver. Only
-        prefill_experiment ever carries a proposal, and only show_image ever
-        carries an image -- every other tool is a read-only lookup, answered
+        prefill_experiment ever carries a proposal, only show_image/
+        describe_image carry an image, and only download_experiment carries
+        a download -- every other tool is a read-only lookup, answered
         directly. my_settings/my_storage deliberately ignore any username
         the model might put in args (their schema takes none) and always use
         requesting_username -- unlike list_experiments/prefill_experiment,
@@ -486,27 +515,30 @@ class AssistantService:
 
         if name == "prefill_experiment":
             proposal, reply = self._resolve_prefill_experiment(args, requesting_username)
-            return proposal, None, reply
+            return proposal, None, None, reply
         if name == "list_experiments":
-            return None, None, self._resolve_list_experiments(args, requesting_username)
+            return None, None, None, self._resolve_list_experiments(args, requesting_username)
         if name == "system_status":
-            return None, None, self._resolve_system_status()
+            return None, None, None, self._resolve_system_status()
         if name == "my_settings":
-            return None, None, self._resolve_my_settings(requesting_username)
+            return None, None, None, self._resolve_my_settings(requesting_username)
         if name == "my_storage":
-            return None, None, self._resolve_my_storage(requesting_username)
+            return None, None, None, self._resolve_my_storage(requesting_username)
         if name == "read_experiment_log":
-            return None, None, self._resolve_read_experiment_log(args, requesting_username)
+            return None, None, None, self._resolve_read_experiment_log(args, requesting_username)
         if name == "check_my_images":
-            return None, None, await self._resolve_check_my_images(args, requesting_username)
+            return None, None, None, await self._resolve_check_my_images(args, requesting_username)
         if name == "show_image":
             image, reply = self._resolve_show_image(args, requesting_username)
-            return None, image, reply
+            return None, image, None, reply
         if name == "describe_image":
             image, reply = await self._resolve_describe_image(args, requesting_username)
-            return None, image, reply
+            return None, image, None, reply
+        if name == "download_experiment":
+            download, reply = self._resolve_download_experiment(args, requesting_username)
+            return None, None, download, reply
         log.warning("model called unknown tool %r", name)
-        return None, None, "Sorry, something went wrong handling that request."
+        return None, None, None, "Sorry, something went wrong handling that request."
 
     def _resolve_prefill_experiment(
         self, args: dict, requesting_username: Optional[str]
@@ -901,6 +933,41 @@ class AssistantService:
             caption=f"{image['id']} — {exp.experiment_id}",
         )
         return ref, description.strip() or f"I couldn't get a description for {image['id']}."
+
+    def _resolve_download_experiment(
+        self, args: dict, requesting_username: Optional[str]
+    ) -> tuple[Optional[AssistantDownloadRef], str]:
+        """Points at one of the requester's own experiments, packaged as a
+        zip -- never invented, always a real folder that exists (same
+        principle as show_image/prefill_experiment). Strictly scoped like
+        read_experiment_log/check_my_images: never another user's data.
+
+        Doesn't build the zip itself -- that's real disk I/O better done
+        only where it's actually needed: the web UI just links to the
+        existing download endpoint (a browser click builds it on demand),
+        while Telegram delivery (telegram_link.py) builds and uploads it
+        directly, since Telegram can't fetch a URL back from this
+        not-internet-reachable device."""
+        if not requesting_username:
+            return None, "I don't know who's chatting -- pick your username on the home screen first."
+
+        target_user = requesting_username.strip().lower()
+        reference = (args.get("reference") or "").strip().lower()
+        exp = self._find_experiment_dir(target_user, reference)
+        if exp is None:
+            return None, (
+                f"I couldn't find one of your experiments matching \"{reference or 'that'}\". "
+                "Try being more specific about which run."
+            )
+
+        size = exp.size_bytes()
+        ref = AssistantDownloadRef(
+            experimentId=exp.experiment_id,
+            url=f"/api/experiments/{exp.experiment_id}/download",
+            filename=f"{exp.experiment_id}.zip",
+            sizeBytes=size,
+        )
+        return ref, f"Packaging {exp.experiment_id} ({_format_bytes(size)}) as a zip."
 
     # --- interrupt / archive -------------------------------------------------
     async def interrupt_and_archive(self, reason: str) -> None:

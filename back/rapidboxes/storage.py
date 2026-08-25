@@ -13,6 +13,8 @@ import json
 import os
 import re
 import shutil
+import tempfile
+import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -117,6 +119,31 @@ class ExperimentDir:
 
     def size_bytes(self) -> int:
         return sum(f.stat().st_size for f in self.path.rglob("*") if f.is_file())
+
+    def zip_to_temp_file(self) -> Path:
+        """Zips this experiment's whole folder (images + metadata.json +
+        saved config XML) to a new temp file and returns its path -- caller
+        owns cleanup (os.remove). Shared by the HTTP download endpoint and
+        the assistant's download_experiment tool (see api/experiments.py,
+        assistant/service.py).
+
+        Streams to disk rather than an in-memory buffer: an experiment can
+        accumulate hundreds of JPEGs, and this runs on a Pi with as little
+        as 2GB of RAM -- holding the whole archive in memory at once risks
+        real pressure on a box that may be mid-protocol on another
+        experiment. Disk is comparatively plentiful under storage_root.
+        """
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=f"{self.experiment_id}-")
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in sorted(self.path.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, arcname=f.relative_to(self.path))
+        except Exception:
+            os.remove(tmp_path)
+            raise
+        return Path(tmp_path)
 
     # --- reading for the gallery ----------------------------------------
     def list_capture_images(self) -> List[dict]:

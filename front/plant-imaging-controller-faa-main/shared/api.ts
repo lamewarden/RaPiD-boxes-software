@@ -403,11 +403,12 @@ export interface SavedExperimentConfig {
 export interface AssistantMessage {
   role: "user" | "assistant";
   content: string;
-  /** Frontend-only: attached to a stored message so a shown image survives
-   *  chat history persistence (see lib/assistantHistory.ts) and a reload,
-   *  not just the live response that produced it. Harmless if echoed back
-   *  in `history` -- the backend only ever reads `.content`. */
+  /** Frontend-only: attached to a stored message so a shown image/download
+   *  link survives chat history persistence (see lib/assistantHistory.ts)
+   *  and a reload, not just the live response that produced it. Harmless if
+   *  echoed back in `history` -- the backend only ever reads `.content`. */
   image?: AssistantImageRef | null;
+  download?: AssistantDownloadRef | null;
 }
 
 /** One real, already-captured image resolved by the show_image tool --
@@ -419,6 +420,17 @@ export interface AssistantImageRef {
   url: string;
   thumbUrl: string;
   caption: string;
+}
+
+/** One real experiment folder resolved by the download_experiment tool,
+ *  packaged as a zip -- never invented (see AssistantImageRef). `url` is
+ *  the same GET /api/experiments/{id}/download endpoint Gallery's own
+ *  download button uses. */
+export interface AssistantDownloadRef {
+  experimentId: string;
+  url: string;
+  filename: string;
+  sizeBytes: number;
 }
 
 /** A concrete, ready-to-review config resolved from one specific past
@@ -437,6 +449,7 @@ export interface AssistantChatResponse {
   reply: string;
   proposal: ExperimentProposal | null;
   image: AssistantImageRef | null;
+  download: AssistantDownloadRef | null;
 }
 
 /** AI-generated end-of-run summary (rapidboxes/assistant/summary.py),

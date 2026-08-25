@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 import httpx
 
 from .assistant.service import AssistantUnavailable
-from .models import AssistantImageRef, AssistantMessage
+from .models import AssistantDownloadRef, AssistantImageRef, AssistantMessage
 from .storage import Storage
 
 if TYPE_CHECKING:
@@ -59,6 +59,11 @@ POLL_INTERVAL_S = 3.0
 # this grow forever" reasoning as the web UI's own localStorage history,
 # just server-side since there's no client to hold it for this channel.
 MAX_CHAT_HISTORY = 20
+
+# The Bot API's own cap on a file uploaded directly (not fetched from a
+# URL) is 50MB; stay comfortably under it rather than find out mid-upload
+# that zip overhead pushed a borderline experiment over the edge.
+TELEGRAM_MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 
 # Same ambiguity the web UI's markdownLite.ts fixes (a bullet's leading
 # "* " misread as the start of an *italic* span), ported to Python since
@@ -194,6 +199,38 @@ class TelegramLinkService:
         except (httpx.HTTPError, OSError) as exc:
             log.warning("telegram sendPhoto failed for chat %s: %s", chat_id, exc)
 
+    async def _send_download(self, chat_id: int, download: AssistantDownloadRef) -> None:
+        """Builds the zip (real disk I/O, only done here, on demand -- see
+        AssistantService._resolve_download_experiment's docstring) and
+        uploads it directly, for the same reason _send_photo does: this
+        device can't hand Telegram a URL to fetch back out. Over the Bot
+        API's upload limit, tells the researcher instead of trying and
+        failing partway through."""
+        if download.sizeBytes > TELEGRAM_MAX_UPLOAD_BYTES:
+            await self._send_raw(
+                chat_id,
+                f"{download.experimentId} is too large to send here via Telegram "
+                f"({download.sizeBytes / (1024 * 1024):.0f} MB, limit ~45 MB). "
+                "Download it from the device itself: Gallery → Folders.",
+            )
+            return
+        exp = self._storage.get_experiment(download.experimentId)
+        if exp is None:
+            return
+        tmp_path = exp.zip_to_temp_file()
+        try:
+            data = tmp_path.read_bytes()
+            res = await self._client.post(
+                f"/bot{self._token}/sendDocument",
+                data={"chat_id": str(chat_id)},
+                files={"document": (download.filename, data, "application/zip")},
+            )
+            res.raise_for_status()
+        except (httpx.HTTPError, OSError) as exc:
+            log.warning("telegram sendDocument failed for chat %s: %s", chat_id, exc)
+        finally:
+            os.remove(tmp_path)
+
     # --- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         if not self.configured:
@@ -303,3 +340,5 @@ class TelegramLinkService:
         await self._send_raw(chat_id, _strip_markdown_lite(response.reply))
         if response.image is not None:
             await self._send_photo(chat_id, response.image)
+        if response.download is not None:
+            await self._send_download(chat_id, response.download)

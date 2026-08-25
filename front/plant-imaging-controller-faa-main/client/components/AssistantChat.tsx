@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, MessageCirclePlus, RotateCcw, X } from "lucide-react";
+import { Bot, Download, MessageCirclePlus, RotateCcw, X } from "lucide-react";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
 import { api } from "@/lib/api";
 import { getUsername } from "@/lib/session";
 import { clearChatHistory, loadChatHistory, saveChatHistory } from "@/lib/assistantHistory";
 import { renderMarkdownLite } from "@/lib/markdownLite";
+import { formatBytes } from "@/lib/format";
 import type { AssistantMessage, ExperimentProposal } from "@shared/api";
 
 /** Full-screen lightbox for a shown image -- tapping the inline thumbnail
@@ -94,7 +95,10 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
     setSending(true);
     try {
       const res = await api.assistantChat(trimmed, history, getUsername());
-      setMessages((m) => [...m, { role: "assistant", content: res.reply, image: res.image }]);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: res.reply, image: res.image, download: res.download },
+      ]);
       if (res.proposal) setProposal(res.proposal);
     } catch (e) {
       const msg = (e as Error).message;
@@ -180,6 +184,18 @@ export default function AssistantChat({ onClose }: { onClose: () => void }) {
               >
                 <img src={m.image.thumbUrl} alt={m.image.caption} className="max-h-[120px] w-auto" />
               </button>
+            )}
+            {m.download && (
+              <a
+                href={m.download.url}
+                download
+                className="mt-1.5 flex items-center gap-1.5 rounded-md border border-app-border-primary bg-app-bg-tertiary px-2 py-1.5 text-[11px] text-white transition-colors hover:bg-app-border-primary"
+              >
+                <Download className="h-[13px] w-[13px] flex-shrink-0" strokeWidth={1.5} />
+                <span className="truncate">
+                  {m.download.filename} ({formatBytes(m.download.sizeBytes)})
+                </span>
+              </a>
             )}
           </div>
         ))}

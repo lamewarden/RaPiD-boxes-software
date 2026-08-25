@@ -182,17 +182,7 @@ async def download_experiment(
     if exp is None:
         raise HTTPException(404, "experiment not found")
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=f"{exp.experiment_id}-")
-    os.close(fd)
-    try:
-        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in sorted(exp.path.rglob("*")):
-                if f.is_file():
-                    zf.write(f, arcname=f.relative_to(exp.path))
-    except Exception:
-        os.remove(tmp_path)
-        raise
-
+    tmp_path = exp.zip_to_temp_file()
     background_tasks.add_task(os.remove, tmp_path)
     return FileResponse(
         tmp_path,
