@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import type { ExperimentPhase, ExperimentStatus } from "@shared/api";
 import { useExperimentStatus } from "@/hooks/useExperimentStatus";
 
-function inferProtocol(status: ExperimentStatus): "growth" | "tropism" | null {
+/** Exported so Index.tsx's idle-redirect-to-progress logic can resolve the
+ *  same target route this button navigates to, without re-deriving it. */
+export function inferProtocol(status: ExperimentStatus): "growth" | "tropism" | null {
   const protocol = status.config?.protocol;
   if (protocol === "growth" || protocol === "tropism") {
     return protocol;

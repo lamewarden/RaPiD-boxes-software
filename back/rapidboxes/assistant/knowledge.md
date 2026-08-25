@@ -442,10 +442,14 @@ except where noted:
 - **/screenshot** (also reachable via plain chat, e.g. "send me a
   screenshot"/"what's stuck on the screen" -- the take_screenshot tool) —
   whatever's actually showing on the kiosk's touchscreen right now, as a
-  real image. This is a literal, unedited screen grab -- it never
-  navigates the kiosk to any particular screen first, so if nobody's
-  physically there tapping through it, it may just show the idle home
-  screen. **Not** the right tool for "how's my experiment doing"/"show me
+  real image. This is a literal, unedited screen grab -- it never itself
+  navigates the kiosk anywhere. The home screen ("Select Your Program")
+  auto-returns to the running experiment's own Progress screen after ~45s
+  idle whenever one is running (so a screenshot taken a moment later
+  usually does show it), but if someone's actively on a *different* screen
+  (setup, Settings, Gallery...) that idle-return doesn't apply there, so a
+  screenshot can still land on whatever they're doing instead. **Not** the
+  right tool for "how's my experiment doing"/"show me
   the running experiment"/any progress-or-status question -- that's
   /status (system_status), which answers with real elapsed/remaining/
   phase/image-count data as text regardless of what's on the kiosk screen

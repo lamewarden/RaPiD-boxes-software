@@ -1,11 +1,56 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Sprout, Sun } from "lucide-react";
 import TopNav from "@/components/TopNav";
 import AssistantChat from "@/components/AssistantChat";
+import { inferProtocol } from "@/components/RunningExperimentButton";
+import { useExperimentStatus } from "@/hooks/useExperimentStatus";
+
+// How long the home screen can sit untouched, with an experiment running,
+// before it auto-returns to that experiment's Progress screen. Without
+// this, a kiosk left on "Select Your Program" (its natural resting state
+// after Close/reload) stays there indefinitely even mid-run -- so anyone
+// glancing at the physical screen, or asking PidiBot for a remote
+// screenshot, sees the home screen instead of anything useful. Long
+// enough that a moment spent reading it doesn't yank it away; short
+// enough that a screenshot taken a minute or two later shows something
+// real.
+const IDLE_REDIRECT_S = 45;
 
 export default function Index() {
+  const navigate = useNavigate();
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const { status } = useExperimentStatus();
+  const idleTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // Derived from just state/phase/protocol, not the whole status object --
+  // that object gets a new reference on every websocket tick (elapsed
+  // seconds, images captured, ...), and using it directly as an effect
+  // dependency below would re-arm the idle timer on every tick, so it
+  // would never actually fire while a run is live -- the exact opposite
+  // of the point.
+  const redirectTarget = useMemo(() => {
+    if (!status || (status.state !== "running" && status.state !== "paused")) return null;
+    const protocol = inferProtocol(status);
+    return protocol ? (protocol === "growth" ? "/progress-growth" : "/progress-tropism") : null;
+  }, [status?.state, status?.phase, status?.config?.protocol]);
+
+  useEffect(() => {
+    if (assistantOpen || !redirectTarget) return; // chat open = active use; nothing running = nothing to return to
+
+    const reset = () => {
+      clearTimeout(idleTimer.current);
+      idleTimer.current = setTimeout(() => navigate(redirectTarget), IDLE_REDIRECT_S * 1000);
+    };
+    reset();
+    window.addEventListener("pointerdown", reset);
+    window.addEventListener("keydown", reset);
+    return () => {
+      clearTimeout(idleTimer.current);
+      window.removeEventListener("pointerdown", reset);
+      window.removeEventListener("keydown", reset);
+    };
+  }, [assistantOpen, redirectTarget, navigate]);
 
   return (
     <div className="relative flex w-[800px] h-[452px] flex-col justify-start items-start mx-auto">
