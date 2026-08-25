@@ -891,6 +891,33 @@ def test_parse_command_returns_none_for_ordinary_text():
     assert _parse_command("") is None
 
 
+# --- _parse_spectra: multi-select for the /launch wizard's colour question -
+
+
+def test_parse_spectra_accepts_multiple_colours_comma_or_space_separated():
+    from rapidboxes.telegram_link import _parse_spectra
+
+    assert _parse_spectra("Red, Blue") == ["red", "blue"]
+    assert _parse_spectra("red blue green") == ["red", "blue", "green"]
+    assert _parse_spectra("white") == ["white"]
+
+
+def test_parse_spectra_all_shortcut_selects_every_colour():
+    from rapidboxes.telegram_link import _parse_spectra
+
+    assert _parse_spectra("all") == list(telegram_link_module.VALID_SPECTRA)
+    assert _parse_spectra("ALL") == list(telegram_link_module.VALID_SPECTRA)
+    assert _parse_spectra("everything") == list(telegram_link_module.VALID_SPECTRA)
+
+
+def test_parse_spectra_deduplicates_and_rejects_unknown_colours():
+    from rapidboxes.telegram_link import _parse_spectra
+
+    assert _parse_spectra("red, red, blue") == ["red", "blue"]
+    with pytest.raises(ValueError, match="unknown colour"):
+        _parse_spectra("red, purple")
+
+
 # --- /help -------------------------------------------------------------------
 
 

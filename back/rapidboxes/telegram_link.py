@@ -171,6 +171,8 @@ def _bounded_int(lo: int, hi: int, unit: str) -> Callable[[str], int]:
 
 
 def _parse_spectra(text: str) -> List[str]:
+    if text.strip().lower() in ("all", "all of them", "everything"):
+        return list(VALID_SPECTRA)
     parts = [p.strip().lower() for p in text.replace(",", " ").split() if p.strip()]
     if not parts:
         raise ValueError(f"please list at least one of: {', '.join(VALID_SPECTRA)}")
@@ -252,7 +254,8 @@ _LAUNCH_TROPISM_FIELDS = [
     _LaunchField(
         "spectra",
         "Spectra",
-        f"Which light colour(s) for the bending phase -- {', '.join(VALID_SPECTRA)}?",
+        f"Which light colour(s) for the bending phase -- {', '.join(VALID_SPECTRA)}? "
+        "You can pick more than one, e.g. \"red, blue\", or send \"all\" for every colour.",
         _parse_spectra,
         lambda v: ", ".join(v) if v else "(none)",
     ),
@@ -297,7 +300,8 @@ _LAUNCH_GROWTH_FIELDS = [
     _LaunchField(
         "spectra",
         "Spectra",
-        f"Which light colour(s) -- {', '.join(VALID_SPECTRA)}?",
+        f"Which light colour(s) -- {', '.join(VALID_SPECTRA)}? "
+        "You can pick more than one, e.g. \"red, blue\", or send \"all\" for every colour.",
         _parse_spectra,
         lambda v: ", ".join(v) if v else "(none)",
     ),
