@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Flower2, Sparkles, Sprout, Sun } from "lucide-react";
+import { Sparkles, Sprout, Sun } from "lucide-react";
 import TopNav from "@/components/TopNav";
 import AssistantChat from "@/components/AssistantChat";
 
@@ -16,11 +16,11 @@ export default function Index() {
           <button
             onClick={() => setAssistantOpen(true)}
             title="IEB Image Facility raPIDBOx assistanT"
-            className="mb-4 inline-flex items-center gap-3 rounded-full border border-app-violet/50 bg-app-violet/15 px-7 py-3 text-white shadow-lg transition-colors hover:bg-app-violet/25"
+            className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/15 px-7 py-3 text-white shadow-lg transition-colors hover:bg-white/25"
           >
-            <Flower2 className="h-[24px] w-[24px] text-app-violet-light" strokeWidth={1.5} />
+            <img src="/pidibot-logo.png" alt="" className="h-[28px] w-[28px] object-contain" />
             <span className="text-[18px] font-bold">PidiBot</span>
-            <Sparkles className="h-[19px] w-[19px] text-app-violet-light" strokeWidth={1.5} />
+            <Sparkles className="h-[19px] w-[19px] text-white" strokeWidth={1.5} />
           </button>
           <h2 className="text-xl font-bold text-white mb-2">Select Your Program</h2>
           <p className="text-app-text-secondary text-sm mb-4">
