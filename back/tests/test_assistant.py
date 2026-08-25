@@ -1440,6 +1440,51 @@ async def test_start_experiment_from_launch_without_runner_or_app_state_degrades
     assert "isn't available right now" in message
 
 
+@pytest.mark.asyncio
+async def test_launch_wizard_end_to_end_through_telegram_actually_starts_a_run(client: AsyncClient, monkeypatch):
+    """The gap the two layers of unit tests above don't close: proves the
+    real wire-up, not just the pieces in isolation -- a person answering
+    /launch's questions over the real app's own TelegramLinkService, ending
+    with a running experiment on the real (simulated) hardware, not just a
+    staged config."""
+    app_state = client._app.state.app  # type: ignore[attr-defined]
+    telegram = app_state.telegram
+    telegram._links["ivan"] = 42  # fake an existing link -- no need to replay the code exchange here
+
+    sent = []
+
+    async def fake_post(url, json=None, **kw):
+        sent.append((url, json))
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                pass
+
+        return _Resp()
+
+    monkeypatch.setattr(telegram._client, "post", fake_post)
+
+    await telegram._dispatch_command(42, "/launch", "")
+    await telegram._maybe_continue_launch_wizard(42, "tropism")
+    await telegram._maybe_continue_launch_wizard(42, "telegram-launched-run")  # name
+    await telegram._maybe_continue_launch_wizard(42, "no")  # dark phase disabled
+    await telegram._maybe_continue_launch_wizard(42, "1")  # bending hours
+    await telegram._maybe_continue_launch_wizard(42, "white")  # spectra
+    await telegram._maybe_continue_launch_wizard(42, "1")  # interval
+    await telegram._maybe_continue_launch_wizard(42, "25")  # intensity
+    await telegram._maybe_continue_launch_wizard(42, "ir")  # light source
+    await telegram._maybe_continue_launch_wizard(42, "no")  # issue alerts
+    await telegram._maybe_continue_launch_wizard(42, "yes")  # confirm -> real start
+
+    assert app_state.runner.status.state == ExperimentState.running
+    assert app_state.runner.status.experimentName == "telegram-launched-run"
+    assert app_state.runner.status.username == "ivan"
+    final_text = sent[-1][1]["text"]
+    assert "🚀" in final_text
+    assert "Started" in final_text
+    await app_state.runner.abort()
+
+
 # --- CLI: SavedExperimentConfig -> start-experiment payload mapping -------
 
 
