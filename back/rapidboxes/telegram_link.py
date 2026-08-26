@@ -496,6 +496,21 @@ def _format_duration(seconds: float) -> str:
     return " ".join(parts)
 
 
+# The Bot API embeds the token in the URL path (there is no header-based
+# alternative), and httpx's HTTPStatusError stringifies to include the full
+# request URL -- so logging one verbatim writes the token into the journal in
+# plaintext. Measured on the real device before this existed: 71 occurrences
+# over 30 days, almost all from routine getUpdates 502s, which recur forever.
+# main.py already silences httpx's own per-request INFO logging for exactly
+# this reason; without this helper the error paths put it straight back.
+_TOKEN_IN_URL_RE = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
+
+
+def _redact(exc: object) -> str:
+    """`str(exc)` with any Telegram bot token in a URL replaced."""
+    return _TOKEN_IN_URL_RE.sub("/bot<redacted>", str(exc))
+
+
 def _key(username: str) -> str:
     return username.strip().lower()
 
@@ -650,7 +665,7 @@ class TelegramLinkService:
             res.raise_for_status()
             return True
         except httpx.HTTPError as exc:
-            log.warning("telegram sendMessage failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram sendMessage failed for chat %s: %s", chat_id, _redact(exc))
             return False
 
     async def _send_and_pin(self, chat_id: int, text: str) -> Optional[int]:
@@ -666,7 +681,7 @@ class TelegramLinkService:
             res.raise_for_status()
             message_id = (res.json().get("result") or {}).get("message_id")
         except httpx.HTTPError as exc:
-            log.warning("telegram sendMessage (progress bar) failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram sendMessage (progress bar) failed for chat %s: %s", chat_id, _redact(exc))
             return None
         if message_id is None:
             return None
@@ -677,7 +692,7 @@ class TelegramLinkService:
             )
             pin_res.raise_for_status()
         except httpx.HTTPError as exc:
-            log.warning("telegram pinChatMessage failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram pinChatMessage failed for chat %s: %s", chat_id, _redact(exc))
         return message_id
 
     async def _edit_message(self, chat_id: int, message_id: int, text: str) -> bool:
@@ -695,10 +710,10 @@ class TelegramLinkService:
             # PROGRESS_UPDATE_INTERVAL_S.
             if exc.response.status_code == 400 and "not modified" in exc.response.text.lower():
                 return True
-            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, _redact(exc))
             return False
         except httpx.HTTPError as exc:
-            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram editMessageText failed for chat %s: %s", chat_id, _redact(exc))
             return False
 
     async def _unpin_message(self, chat_id: int, message_id: int) -> None:
@@ -746,7 +761,7 @@ class TelegramLinkService:
             )
             res.raise_for_status()
         except httpx.HTTPError as exc:
-            log.warning("telegram sendPhoto failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram sendPhoto failed for chat %s: %s", chat_id, _redact(exc))
 
     async def _send_download(self, chat_id: int, download: AssistantDownloadRef) -> None:
         """Builds the zip (real disk I/O, only done here, on demand -- see
@@ -776,7 +791,7 @@ class TelegramLinkService:
             )
             res.raise_for_status()
         except (httpx.HTTPError, OSError) as exc:
-            log.warning("telegram sendDocument failed for chat %s: %s", chat_id, exc)
+            log.warning("telegram sendDocument failed for chat %s: %s", chat_id, _redact(exc))
         finally:
             os.remove(tmp_path)
 
@@ -899,6 +914,10 @@ class TelegramLinkService:
                 await self._poll_once()
             except asyncio.CancelledError:
                 raise
+            except httpx.HTTPError as exc:
+                # Not log.exception: the traceback text carries the tokenised
+                # request URL too (see _redact).
+                log.error("telegram poll failed: %s", _redact(exc))
             except Exception:
                 log.exception("telegram poll failed")
             await asyncio.sleep(POLL_INTERVAL_S)
@@ -909,6 +928,10 @@ class TelegramLinkService:
                 await self._progress_tick()
             except asyncio.CancelledError:
                 raise
+            except httpx.HTTPError as exc:
+                # Not log.exception: the traceback text carries the tokenised
+                # request URL too (see _redact).
+                log.error("telegram progress-bar tick failed: %s", _redact(exc))
             except Exception:
                 log.exception("telegram progress-bar tick failed")
             await asyncio.sleep(PROGRESS_TICK_S)
@@ -1589,7 +1612,7 @@ class TelegramLinkService:
 
         history = self._chat_history.setdefault(chat_id, [])
         try:
-            response = await self._assistant.chat(text, history, username)
+            response = await self._assistant.chat(text, history, username, channel="telegram")
         except AssistantUnavailable as exc:
             await self._send_raw(chat_id, f"The assistant isn't reachable right now: {exc}")
             return

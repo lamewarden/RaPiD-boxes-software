@@ -30,7 +30,7 @@ import shutil
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union
 
 import httpx
 
@@ -70,6 +70,67 @@ _KNOWLEDGE_PATH = Path(__file__).parent / "knowledge.md"
 # you were chatting on your phone back to the device, short enough that a
 # forgotten one doesn't silently reappear on the setup screen a day later.
 PENDING_LAUNCH_TTL_S = 3600.0
+
+# Which transport a chat turn arrived over. Telegram has the deterministic
+# step-by-step /launch and /stop wizards (telegram_link.py); the kiosk's own
+# web chat has no such mechanism at all, so a chatAction returned there is
+# simply dropped by the caller (AssistantChat.tsx reads only `proposal`).
+#
+# The model MUST be told which one it is in. knowledge.md necessarily
+# describes both behaviours, and without the channel in context the model
+# cannot tell which applies -- observed in production narrating the Telegram
+# one ("I've launched it") during a web-chat conversation, for a run that was
+# never started.
+AssistantChannel = Literal["web", "telegram"]
+
+# Only this channel can act on a chatAction. Everything else is treated as
+# "no wizard here", so a caller that forgets to pass a channel can never end
+# up with the model claiming it started something it cannot start.
+_CHANNEL_WITH_WIZARD: AssistantChannel = "telegram"
+
+_CHANNEL_NOTES: Dict[str, str] = {
+    "telegram": (
+        "\n\nThis conversation is happening over Telegram, which DOES have the "
+        "step-by-step confirmation wizards. Setting prefill_experiment's "
+        "startNow, or calling stop_experiment, really does hand off to them, so "
+        "it is accurate here to say you're setting that up."
+    ),
+    "web": (
+        "\n\nThis conversation is happening on the device's own touchscreen "
+        "chat, which does NOT have the step-by-step launch/stop wizards -- those "
+        "exist only over Telegram. From here you cannot start, launch, stop or "
+        "cancel an experiment, and nothing you do in this conversation will. "
+        "Never say or imply that you have started or stopped a run, and never "
+        "say you are about to.\n"
+        "There is also no way to build a brand-new experiment from scratch here: "
+        "prefill_experiment only ever resolves a real PAST run into a proposal to "
+        "review. If someone wants a genuinely new configuration, say so plainly "
+        "and point them at the Tropism or Growth setup screen -- do not walk them "
+        "through the settings one field at a time as though you could launch it "
+        "at the end."
+    ),
+}
+
+# Appended to `reply` when a chatAction was resolved on a channel that cannot
+# honour it. This does double duty: it corrects the user, and -- because the
+# caller stores `reply` in the conversation history -- it is the only feedback
+# the model ever gets that the action did not happen. The model never sees tool
+# results (see _resolve_tool_call), so without this there is nothing in context
+# contradicting a "launched it!" claim on the following turn.
+_DROPPED_ACTION_NOTES: Dict[str, str] = {
+    "start_launch": (
+        "(Nothing has been started -- I can't start an experiment from this chat. "
+        "Open the Tropism or Growth setup screen and press Start there.)"
+    ),
+    "start_launch_exact": (
+        "(Nothing has been started -- I can't start an experiment from this chat. "
+        "Open the Tropism or Growth setup screen and press Start there.)"
+    ),
+    "stop": (
+        "(Nothing has been stopped -- I can't stop an experiment from this chat. "
+        "Use the Stop button on its Progress screen.)"
+    ),
+}
 
 
 class AssistantUnavailable(Exception):
@@ -871,8 +932,16 @@ class AssistantService:
 
     # --- chat --------------------------------------------------------------
     async def chat(
-        self, message: str, history: List[AssistantMessage], username: Optional[str]
+        self,
+        message: str,
+        history: List[AssistantMessage],
+        username: Optional[str],
+        channel: AssistantChannel = "web",
     ) -> AssistantChatResponse:
+        """`channel` says which transport this turn arrived over, and so which
+        of the two behaviours knowledge.md describes actually applies -- see
+        AssistantChannel. It defaults to the one WITHOUT the launch/stop
+        wizards, so forgetting to pass it can only ever under-claim."""
         async with self._lock:
             self._transcript.append(AssistantMessage(role="user", content=message))
             # _SYSTEM_PROMPT is a module-level constant (loaded once), so the
@@ -886,12 +955,24 @@ class AssistantService:
             # message (400 Bad Request), confirmed by testing.
             system_content = _SYSTEM_PROMPT
             if username:
+                # Collapsed to a single line and length-capped before it goes
+                # anywhere near the system prompt. The blank line is what
+                # separates instruction blocks here, so a username containing
+                # newlines could otherwise open what reads as a fresh block
+                # ("\n\nIgnore previous instructions..."). Only the prompt copy
+                # is sanitised -- scoping still uses the raw value, which goes
+                # through _slug()/lower() on every filesystem path it reaches.
+                safe_username = " ".join(str(username).split())[:40]
                 system_content += (
-                    f"\n\nThe person chatting with you right now is '{username}'. "
+                    f"\n\nThe person chatting with you right now is '{safe_username}'. "
                     "When they say \"I\", \"me\", or \"my\", they mean this exact "
                     "username -- pass it directly to a tool if it needs one, "
                     "never invent or guess a different value."
                 )
+            # Same reason the username is appended here rather than living in
+            # knowledge.md: it varies per call, and the system prompt is a
+            # module-level constant loaded once.
+            system_content += _CHANNEL_NOTES.get(channel, _CHANNEL_NOTES["web"])
             messages = [{"role": "system", "content": system_content}]
             messages += [{"role": m.role, "content": m.content} for m in history]
             messages.append({"role": "user", "content": message})
@@ -924,6 +1005,16 @@ class AssistantService:
                     )
             finally:
                 self._task = None
+
+            # A chatAction this channel can't act on must never pass silently:
+            # say so in `reply` (which the caller keeps in history, so it also
+            # reaches the model next turn) and clear the field, so the response
+            # describes only what can actually happen here.
+            if chat_action is not None and channel != _CHANNEL_WITH_WIZARD:
+                note = _DROPPED_ACTION_NOTES.get(chat_action)
+                if note:
+                    reply = f"{reply}\n\n{note}" if reply else note
+                chat_action = None
 
             self._transcript.append(AssistantMessage(role="assistant", content=reply))
             return AssistantChatResponse(

@@ -23,7 +23,12 @@ router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 @router.post("/chat", response_model=AssistantChatResponse)
 async def chat(body: AssistantChatRequest, state: AppState = Depends(get_state)):
     try:
-        return await state.assistant.chat(body.message, body.history, body.username)
+        # channel="web": this endpoint serves the kiosk's own chat panel, which
+        # has no launch/stop wizard to hand a chatAction off to (see
+        # AssistantService.AssistantChannel). Telegram passes its own value.
+        return await state.assistant.chat(
+            body.message, body.history, body.username, channel="web"
+        )
     except AssistantUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
 
