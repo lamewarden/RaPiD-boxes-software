@@ -176,13 +176,25 @@ def create_app(config: Optional[AppConfig] = None) -> FastAPI:
     app = FastAPI(title="RaPiD-boxes", version="0.1.0", lifespan=lifespan)
     app.state._config = config
 
-    # Dev convenience: the Vite dev server (other origin) can call the API directly.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Dev only, and even then a fallback: the Vite dev server proxies /api to
+    # this app (see front/.../vite.config.ts), so the browser normally makes
+    # same-origin requests. In production the SPA is served from this very
+    # origin and needs no CORS at all.
+    #
+    # This used to be allow_origins=["*"]. Combined with the fact that nothing
+    # in this API is authenticated, that let any web page open in any browser
+    # on the lab network invoke it: POST /api/experiments/current/abort takes
+    # no request body, so it is a CORS "simple request" -- no preflight, no
+    # cooperation needed -- and it stops a running experiment and deletes its
+    # images. Same reach for /api/system/restart-service (SIGKILL mid-run) and
+    # PUT /api/settings.
+    if config.simulation:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     for module in (
         assistant_api,
@@ -216,14 +228,28 @@ def _mount_spa(app: FastAPI, config: AppConfig) -> None:
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
     index = spa / "index.html"
+    spa_root = spa.resolve()
 
     @app.get("/{full_path:path}")
     async def spa_catch_all(full_path: str):
         if full_path.startswith("api"):
             raise HTTPException(404, "API endpoint not found")
-        candidate = spa / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
+        # `full_path` is attacker-controlled and percent-decoding leaves ".."
+        # intact, so joining it onto spa_dir and trusting is_file() served any
+        # file the service account could read. Verified on the real device
+        # before this guard existed: GET /../../../../../../../../etc/hostname
+        # returned the file, as did ~/.ssh/rapidboxes_deploy (the GitHub deploy
+        # key) and ~/rapidboxes/telegram_links.json. Note the depth -- spa_dir
+        # sits seven levels down, so a short ../../.. probe lands inside the
+        # repo and looks safe.
+        #
+        # Resolve first, then require the result to still sit under the SPA
+        # root. StaticFiles (mounted at /assets above) already does this;
+        # this hand-rolled handler did not.
+        if full_path:
+            candidate = (spa_root / full_path).resolve()
+            if candidate.is_relative_to(spa_root) and candidate.is_file():
+                return FileResponse(candidate)
         # index.html picks which hashed JS/CSS bundle loads; never let the
         # browser cache it, or a kiosk relaunch can silently keep showing a
         # stale build even right after a fresh deploy.

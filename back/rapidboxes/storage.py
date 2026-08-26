@@ -31,6 +31,28 @@ def _slug(text: str) -> str:
     return _SAFE.sub("-", text.strip()) or "x"
 
 
+def _safe_component(name: str) -> Optional[str]:
+    """`_slug(name)` if it is a single, contained path component, else None.
+
+    `_slug` maps "/" to "-" but deliberately leaves dots alone, since they are
+    legitimate inside an experiment name ("exp.v2"). That means
+    `_slug("..") == ".."` -- one level of traversal survives intact, which is
+    enough to escape storage_root into ~/rapidboxes/, the directory holding
+    settings.json, user_defaults.json, remote_sync.json, dsm_sharing.json,
+    telegram_links.json and the assistant archive.
+
+    Before this guard, GET /api/experiments/../download zipped that whole
+    directory, and /api/images/.. listed it. delete_experiment already had an
+    equivalent containment check ("refusing to delete path outside storage
+    root") -- the destructive path was reasoned about, the read and archive
+    paths were not.
+    """
+    slug = _slug(name)
+    if slug in (".", "..") or "/" in slug or "\\" in slug:
+        return None
+    return slug
+
+
 class ExperimentDir:
     def __init__(self, path: Path):
         self.path = path
@@ -231,14 +253,17 @@ class ExperimentDir:
         return thumb
 
     def image_file(self, image_id: str) -> Optional[Path]:
-        p = self.path / f"{_slug(image_id)}.png"
+        component = _safe_component(image_id)
+        if component is None:
+            return None
+        p = self.path / f"{component}.png"
         return p if p.exists() else None
 
     def thumb_file(self, image_id: str) -> Optional[Path]:
         src = self.image_file(image_id)
         if src is None:
             return None
-        thumb = self.path / "thumbs" / f"{_slug(image_id)}.jpg"
+        thumb = self.path / "thumbs" / f"{_safe_component(image_id)}.jpg"
         if not thumb.exists() or thumb.stat().st_mtime < src.stat().st_mtime:
             try:
                 img = Image.open(src)
@@ -275,7 +300,10 @@ class Storage:
         return ExperimentDir(dirs[0]) if dirs else None
 
     def get_experiment(self, experiment_id: str) -> Optional[ExperimentDir]:
-        p = self.root / _slug(experiment_id)
+        component = _safe_component(experiment_id)
+        if component is None:
+            return None
+        p = self.root / component
         return ExperimentDir(p) if p.is_dir() else None
 
     def delete_experiment(self, experiment_id: str) -> bool:

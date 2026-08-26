@@ -42,11 +42,23 @@ runs remotely.
    ```
    cd back && RAPIDBOXES_SIMULATION=1 .venv/bin/python -m pytest tests/ -q
    ```
-   Currently 461 tests, all green except one **known, harmless flake**:
+   461 tests. One **known, harmless flake** on any machine:
    `test_system_status_reports_elapsed_remaining_and_expected_finish` fails
    if the suite happens to run within ~2h of local midnight (no
    time-freezing library in this repo — it uses a real `datetime.now()`
    offset). Not a real bug; re-run or ignore if it's the only failure.
+
+   **On the real Pi specifically, also set `TMPDIR` to somewhere on disk**,
+   e.g. `TMPDIR=/home/rp/pytest-tmp RAPIDBOXES_SIMULATION=1 …`. Verified
+   2026-08-26: `/tmp` there is a 2GB **tmpfs (RAM)**, and pytest's `tmp_path`
+   lands on it by default — one test's default experiment estimates ~2.36GB,
+   so it fails `low_space` purely from where the suite happened to write, not
+   from a real bug. See `DEBUG_HANDOUT.md`'s "Test suite" section for the
+   full account, including a second, genuine failure
+   (`test_capture_snapshot_while_own_experiment_running_sends_last_capture`,
+   §1.22 — a real capture-write race, not a test problem) that the "one
+   known flake" framing above was already failing to cover before this note
+   was added.
 4. **Run frontend typecheck/build/test whenever frontend files changed:**
    ```
    cd front/plant-imaging-controller-faa-main && npm run typecheck && npm run build && npm run test
@@ -64,7 +76,39 @@ runs remotely.
    ```
    ssh rpi2_asuch "systemctl is-active rapidboxes.service; git -C /home/rp/RapiDBoxes log -1 --oneline; curl -s http://localhost:8000/api/experiments/current"
    ```
-7. Only commit when explicitly asked or as the natural conclusion of a
+7. **All development happens in the local clone (`~/Code/RapiDBoxes` on the
+   Mac), never by editing files directly on the Pi.** Commit and push from
+   local (over your own GitHub account's SSH key); the Pi only ever
+   `git pull`s, via `deploy/update.sh` above. This is enforced, not just a
+   convention: the Pi's own deploy key
+   (`~/.ssh/rapidboxes_deploy`, host alias `github-rapidboxes`) is a
+   **read-only** GitHub deploy key — `git push` from the Pi fails with
+   "The key you are authenticating with has been marked as read only,"
+   confirmed by GitHub itself, not just local config.
+
+   This is a deliberate hardening, not the original setup. 2026-08-26: an
+   unauthenticated path-traversal bug in the SPA catch-all (`main.py`'s
+   `spa_catch_all`, since fixed — see `DEBUG_HANDOUT.md` §1.1) served
+   arbitrary files over plain HTTP, combined with a wildcard CORS policy
+   (§1.2, also fixed) that let any page on the lab network trigger it. The
+   Pi's deploy key was readable through it, and at the time had **push**
+   rights — `git pull --ff-only` is all `deploy/update.sh`/`updater.py` ever
+   do with it, so those write rights were pure unused attack surface. Both
+   the key and the Telegram bot token (also found in the journal 71x over 30
+   days — see §2.1) were rotated; the new deploy key is read-only precisely
+   so that leaking it again (this bug class, or a different one) can only
+   ever expose the source, never let an attacker push code onto the branch
+   this box auto-updates from. Don't widen it back to read-write "for
+   convenience" without re-litigating this.
+
+   Practical consequence: a Claude Code / VS Code Remote-SSH session
+   *directly on the Pi* (as opposed to one SSH'd in from elsewhere just to
+   deploy or inspect) is now off this project's normal workflow — not
+   because it's forbidden exactly, but because it structurally can't push
+   anymore, so any edit made there has to be copied back out by hand to ever
+   reach `origin`. Don't set up dev tooling on the Pi to work around this;
+   edit locally.
+8. Only commit when explicitly asked or as the natural conclusion of a
    complete, tested chunk of work — this session's pattern has been one
    commit + deploy per completed feature, not batching.
 

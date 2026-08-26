@@ -394,7 +394,17 @@ class AssistantChatRequest(BaseModel):
     # Echoed back by the client so a page refresh doesn't lose context; the
     # server also keeps its own copy for archiving, see AssistantService.
     history: List[AssistantMessage] = Field(default_factory=list)
-    username: Optional[str] = None
+    # Bounded like every other username field in this file (and every username
+    # Query in api/). This one had no constraint at all, and it is the one that
+    # reaches the assistant's system prompt (see AssistantService.chat), so an
+    # unbounded value here was an unbounded prompt-injection surface.
+    #
+    # Note what this does NOT fix: over HTTP this value is simply asserted by
+    # the caller, so the "always scoped to whoever is chatting" promise in the
+    # assistant tool docstrings is a UX affordance, not a security boundary.
+    # Nothing in this API is authenticated; closing that needs auth, not a
+    # length cap.
+    username: Optional[str] = Field(default=None, max_length=40)
 
 
 class ExperimentProposal(BaseModel):
