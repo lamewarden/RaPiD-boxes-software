@@ -104,7 +104,17 @@ class Picamera2Camera(CameraBackend):
         final = Path(path)
         tmp = final.with_name(final.name + ".tmp")
         if self._settings.zoom <= 1.0:
-            self._cam.capture_file(str(tmp))
+            # format="png" explicitly -- Picamera2.capture_file() infers the
+            # output format from the path's extension when format is left
+            # None (see request.py's _get_format_str), and "....png.tmp"
+            # isn't one it recognizes. This broke every real capture in
+            # production the moment this atomic-write fix was deployed
+            # (reported live: "experiment failed: unknown file extension:
+            # .tmp") -- the simulated backend never caught it because
+            # SimCamera uses PIL directly with an explicit format already.
+            # Confirmed against the real picamera2 source on-device that an
+            # explicit format string bypasses extension inference entirely.
+            self._cam.capture_file(str(tmp), format="png")
         else:
             arr = self._cam.capture_array("main")
             self._zoomed_frame(arr, self._settings).save(tmp, "PNG")
