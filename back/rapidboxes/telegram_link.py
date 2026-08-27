@@ -1801,7 +1801,20 @@ class TelegramLinkService:
         # or the stop confirmation prompt) instead.
         if response.chatAction in ("start_launch", "start_launch_exact"):
             history.append(AssistantMessage(role="user", content=text))
-            history.append(AssistantMessage(role="assistant", content="(started the /launch wizard)"))
+            # NOT "(started the /launch wizard)" -- that phrasing reads as an
+            # ongoing state, and a model with no way to check real wizard
+            # state (see knowledge.md's own note on this) was pattern-matching
+            # it into falsely claiming a wizard was "still in progress" turns
+            # later, even after it had genuinely completed -- reported live,
+            # blocking unrelated requests (e.g. a screenshot) for no reason.
+            # This phrasing is deliberately past-tense and closed-ended: nothing
+            # here implies anything is still open. See DEBUG_HANDOUT.md #2.25.
+            history.append(
+                AssistantMessage(
+                    role="assistant",
+                    content="(that request was handed off to the /launch wizard, which sent its own separate messages -- not something to bring up again)",
+                )
+            )
             del history[:-MAX_CHAT_HISTORY]
             await self._handle_launch_command(
                 chat_id, text, exact_repeat=response.chatAction == "start_launch_exact"
@@ -1809,7 +1822,13 @@ class TelegramLinkService:
             return
         if response.chatAction == "stop":
             history.append(AssistantMessage(role="user", content=text))
-            history.append(AssistantMessage(role="assistant", content="(asked to confirm stopping the experiment)"))
+            # Same fix, same reason as above.
+            history.append(
+                AssistantMessage(
+                    role="assistant",
+                    content="(that request was handed off to the real /stop confirmation, which sent its own separate message -- not something to bring up again)",
+                )
+            )
             del history[:-MAX_CHAT_HISTORY]
             await self._handle_stop_command(chat_id)
             return
