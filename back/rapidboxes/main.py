@@ -64,7 +64,19 @@ async def lifespan(app: FastAPI):
     config: AppConfig = app.state._config
     device_settings = load_device_settings_for_new_session(config.settings_path)
     storage = Storage(config.storage_root)
-    cleanup_expired_experiments(storage)
+    # Find whatever runner.recover() (below, once hardware/runner exist) is
+    # about to resume, and exclude it from the cleanup sweep -- unlike
+    # runner.start()'s own cleanup_expired_experiments() call, which already
+    # passes its own exclude_id, this one used to pass none at all. Only
+    # matters if a run's actual duration plus how long retention keeps it
+    # (RETENTION_DAYS) somehow overlaps a stale clock (#1.11) or a very long
+    # experiment -- but there's no reason not to close the gap now that
+    # Storage.active_experiment() (added for #1.7) makes it a cheap, correct
+    # answer instead of a guess. See DEBUG_HANDOUT.md #1.12.
+    about_to_recover = storage.active_experiment()
+    cleanup_expired_experiments(
+        storage, exclude_id=about_to_recover.experiment_id if about_to_recover else None
+    )
     hw = build_hardware(config, device_settings)
 
     # Remote CIFS sync. The persisted half (server/user/on-off) survives a

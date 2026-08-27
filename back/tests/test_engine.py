@@ -443,6 +443,48 @@ async def test_start_reports_low_space_without_creating_experiment(tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_start_sweeps_expired_experiments_before_checking_space(tmp_path, monkeypatch):
+    """Previously the low_space check ran BEFORE the retention sweep -- a
+    start could be refused (and the user pushed into the delete-my-own-
+    folders flow) while expired folders retention was about to remove
+    anyway were still occupying the disk. Verified via call order, not an
+    actual measured space difference: shutil.disk_usage reads the real host
+    filesystem, so a tiny test folder's few KB never moves it enough to
+    flip low_space/fits either way -- what's being verified is that the
+    sweep call itself now happens strictly before the disk_usage call, not
+    after. See DEBUG_HANDOUT.md #1.13."""
+    import rapidboxes.engine.runner as runner_mod
+
+    call_order = []
+    real_cleanup = runner_mod.cleanup_expired_experiments
+
+    def tracking_cleanup(storage, exclude_id=None):
+        call_order.append("cleanup")
+        return real_cleanup(storage, exclude_id=exclude_id)
+
+    real_disk_usage = runner_mod.shutil.disk_usage
+
+    def tracking_disk_usage(path):
+        call_order.append("disk_usage")
+        return real_disk_usage(path)
+
+    monkeypatch.setattr(runner_mod, "cleanup_expired_experiments", tracking_cleanup)
+    monkeypatch.setattr(runner_mod.shutil, "disk_usage", tracking_disk_usage)
+
+    ft = FakeTime()
+    runner = _runner(tmp_path, ft)
+    config = TropismConfig(
+        experimentName="t", username="u", darkPhaseHours=180 / 3600,
+        lateralIlluminationHours=0, spectra=["red"], intervalMinutes=1.0,
+    )
+
+    resp = await runner.start(config)
+
+    assert resp.status == "started"
+    assert call_order == ["cleanup", "disk_usage"]
+
+
+@pytest.mark.asyncio
 async def test_full_run_captures_planned_images_and_cleans_up(tmp_path):
     ft = FakeTime()
     runner = _runner(tmp_path, ft)

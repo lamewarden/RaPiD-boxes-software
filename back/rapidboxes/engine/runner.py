@@ -223,6 +223,14 @@ class ExperimentRunner:
         if not self._hw.camera_available:
             return StartResponse(status="no_camera")
 
+        # Sweep expired folders BEFORE measuring free space, not after --
+        # otherwise a start could be refused as low_space (and the user
+        # pushed into the delete-my-own-folders flow) while folders retention
+        # was about to remove anyway were still occupying the disk. No
+        # exclude_id needed here: nothing new exists yet to accidentally
+        # sweep. See DEBUG_HANDOUT.md #1.13.
+        cleanup_expired_experiments(self._storage)
+
         cam_settings = camera or CameraSettings()
         estimated = estimate_experiment_bytes(config, cam_settings)
         available = shutil.disk_usage(self._storage.root).free
@@ -238,7 +246,6 @@ class ExperimentRunner:
         exp = self._storage.create_experiment(config.username, config.experimentName)
         self._exp_dir = exp
 
-        cleanup_expired_experiments(self._storage, exclude_id=exp.experiment_id)
         storage_notice = self._build_storage_notice(config.username, exp.experiment_id)
         if isinstance(config, TropismConfig):
             saved = SavedExperimentConfig(
@@ -422,6 +429,37 @@ class ExperimentRunner:
         phases = build_phases(config)
         durations = [p.duration_s for p in phases]
         interval_s = config.intervalMinutes * 60.0
+
+        # A Pi without a battery-backed RTC that boots before NTP has settled
+        # has an arbitrary system clock -- datetime.now() here could read
+        # anywhere from 1970 to decades in the future. `max(0.0, ...)` above
+        # already handles a clock that reads BEHIND updated_at (clamps to no
+        # outage, which just resumes from where elapsedSeconds already was --
+        # not silently wrong, merely conservative). A clock reading far AHEAD
+        # is the more damaging direction: it inflates outage_s, which below
+        # can push elapsed_at_resume past the whole schedule and mark this
+        # run permanently "done" as if it finished offline, when it may have
+        # had real time left. There's no safe threshold to auto-correct at --
+        # a device genuinely neglected for months is a real, valid case this
+        # branch is also meant to handle correctly -- so this doesn't clamp
+        # or refuse anything; it makes the ambiguous case loud instead of
+        # silent, since total_s is an objective, always-correct comparison
+        # (exceeding a run's own full planned duration is notable either
+        # way). See DEBUG_HANDOUT.md #1.11.
+        total_s = sum(durations)
+        if outage_s > total_s > 0:
+            log.warning(
+                "experiment %s: computed outage of %.0fs (%.1fh) exceeds its own "
+                "total planned duration of %.0fs (%.1fh) -- if the device clock "
+                "hadn't settled yet (e.g. before NTP sync on boot), this number "
+                "may not be trustworthy; proceeding to mark it done as if the "
+                "whole schedule elapsed while offline",
+                latest.experiment_id,
+                outage_s,
+                outage_s / 3600,
+                total_s,
+                total_s / 3600,
+            )
         elapsed_at_resume = prev.elapsedSeconds + outage_s
         located = phase_at(durations, elapsed_at_resume)
 
@@ -642,7 +680,15 @@ class ExperimentRunner:
                 self._write_metadata(exp)
             if phase.capture and next_cap is not None:
                 target = min(next_cap, phase.duration_s)
-                self.status.nextCaptureInSeconds = max(0.0, next_cap - (self._clock.elapsed() - phase_start))
+                # Only report a countdown to a capture that will actually
+                # happen -- if the deadline falls past the phase boundary,
+                # the phase ends first and this slot never fires, so the UI
+                # was previously left counting down to a capture that
+                # silently never came. See DEBUG_HANDOUT.md #1.20.
+                if next_cap <= phase.duration_s + _EPS:
+                    self.status.nextCaptureInSeconds = max(0.0, next_cap - (self._clock.elapsed() - phase_start))
+                else:
+                    self.status.nextCaptureInSeconds = None
             else:
                 target = phase.duration_s
                 self.status.nextCaptureInSeconds = None

@@ -63,6 +63,11 @@ class HardwareManager:
         self._ir = ir
         self._settings = settings
         self._lock = asyncio.Lock()
+        # Set once a hardware call times out -- see _run's own comment for
+        # why. Once True, every hardware call fails fast instead of risking
+        # a genuine concurrent call into the same device; recovering requires
+        # a service restart. See DEBUG_HANDOUT.md #1.9.
+        self._wedged = False
         self.light_desc = "off"
         self.camera_available = camera_available
         self._live_backlight: Optional[Literal["white"]] = None
@@ -76,13 +81,39 @@ class HardwareManager:
             camera._probe = lambda: self.light_desc
 
     async def _run(self, fn, *args, timeout: float = DEFAULT_TIMEOUT):
+        # A wedged manager fails fast, before even trying the lock -- see
+        # the timeout branch below for why this exists.
+        if self._wedged:
+            raise HardwareTimeoutError(
+                "a previous hardware call timed out and this device is presumed "
+                "wedged -- restart the service"
+            )
         loop = asyncio.get_event_loop()
         async with self._lock:
             try:
                 return await asyncio.wait_for(loop.run_in_executor(None, fn, *args), timeout=timeout)
             except asyncio.TimeoutError:
                 name = getattr(fn, "__qualname__", repr(fn))
-                log.error("hardware call %s timed out after %.0fs; treating as failed", name, timeout)
+                # run_in_executor's underlying thread cannot be cancelled --
+                # giving up on awaiting it does not stop it, so it may well
+                # still be inside the blocking driver call indefinitely.
+                # `async with` is about to release the lock regardless; if we
+                # let the next caller acquire it and submit a NEW call here,
+                # that call runs genuinely concurrently with the stuck one --
+                # exactly the race this class's own docstring promises can
+                # never happen ("Every device call is run in a thread
+                # executor under one lock ... can never race"). Wedging the
+                # whole manager, not just retrying, is what actually keeps
+                # that promise once a timeout has already shown the hardware
+                # is misbehaving. See DEBUG_HANDOUT.md #1.9.
+                self._wedged = True
+                log.error(
+                    "hardware call %s timed out after %.0fs; treating this device as "
+                    "wedged -- every further hardware call will fail fast until the "
+                    "service restarts",
+                    name,
+                    timeout,
+                )
                 raise HardwareTimeoutError(f"{name} timed out after {timeout:.0f}s") from None
 
     def _live_preview_settings(self) -> CameraSettings:
@@ -233,9 +264,24 @@ class HardwareManager:
         await self._run(self._leds.off)
         self.light_desc = "off"
 
+    def _leds_and_ir_off(self) -> None:
+        """Both device calls in one function, so `all_off()` submits them as
+        a single `_run()`/lock acquisition -- see its own docstring."""
+        self._leds.off()
+        self._ir.off()
+
     async def all_off(self) -> None:
-        await self.leds_off()
-        await self.ir_off()
+        """Turns LEDs and IR off as one atomic hardware call.
+
+        Previously two separate `_run()` calls (via leds_off() then
+        ir_off()), each independently acquiring and releasing `self._lock` --
+        so another coroutine's call could interleave between them, and "all
+        off" was never actually a state a caller could rely on having
+        reached, despite `_capture` using it as step 1 of its imaging
+        sequence on that assumption. See DEBUG_HANDOUT.md #1.10.
+        """
+        await self._run(self._leds_and_ir_off)
+        self.light_desc = "off"
         self._live_backlight = None
 
     # --- settings snapshots (for status/history) --------------------------

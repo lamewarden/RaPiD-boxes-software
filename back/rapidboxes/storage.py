@@ -86,7 +86,6 @@ class ExperimentDir:
     def __init__(self, path: Path):
         self.path = path
         self.experiment_id = path.name
-        (self.path / "thumbs").mkdir(parents=True, exist_ok=True)
 
     # --- writing during a run -------------------------------------------
     def image_path(self, phase: str, index: int) -> Tuple[Path, str]:
@@ -287,6 +286,13 @@ class ExperimentDir:
         thumb = self.path / "thumbs" / f"{artifact_id}.jpg"
         if not thumb.exists() or thumb.stat().st_mtime < src.stat().st_mtime:
             try:
+                # Lazily, only when actually about to write one -- __init__
+                # used to create this directory unconditionally on every
+                # ExperimentDir construction, including read-only ones
+                # (history listings, retention scans, tallies), which is
+                # needless disk I/O on a device whose own code elsewhere
+                # worries about SD-card wear. See DEBUG_HANDOUT.md #1.14.
+                thumb.parent.mkdir(parents=True, exist_ok=True)
                 img = Image.open(src)
                 img.thumbnail((320, 240))
                 img.convert("RGB").save(thumb, "JPEG", quality=80)
@@ -313,6 +319,8 @@ class ExperimentDir:
         thumb = self.path / "thumbs" / f"{_safe_component(image_id)}.jpg"
         if not thumb.exists() or thumb.stat().st_mtime < src.stat().st_mtime:
             try:
+                # See artifact_thumb's identical comment above.
+                thumb.parent.mkdir(parents=True, exist_ok=True)
                 img = Image.open(src)
                 img.thumbnail((320, 240))
                 img.convert("RGB").save(thumb, "JPEG", quality=80)
