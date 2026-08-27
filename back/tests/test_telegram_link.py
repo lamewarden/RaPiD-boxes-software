@@ -672,7 +672,14 @@ async def test_chat_message_requesting_an_image_range_sends_only_that_subset(
 
     async def fake_post(url, json=None, data=None, files=None, **kw):
         if url.endswith("/sendDocument"):
-            document_calls.append((url, data, files))
+            # _send_download passes an open file handle (streamed, not
+            # bytes -- see DEBUG_HANDOUT.md #1.15) and closes + deletes it
+            # right after this call returns, exactly as a real httpx.post
+            # would consume it mid-request. Read it now, like the real
+            # client does, rather than holding the (about-to-be-invalid)
+            # handle for inspection after the fact.
+            filename, fh, ctype = files["document"]
+            document_calls.append((url, data, (filename, fh.read(), ctype)))
         return _FakeResponse()
 
     monkeypatch.setattr(service._client, "post", fake_post)
@@ -680,8 +687,8 @@ async def test_chat_message_requesting_an_image_range_sends_only_that_subset(
     await service._handle_chat_message(42, "send me the first two images")
 
     assert len(document_calls) == 1
-    _, _data, files = document_calls[0]
-    filename, content, _ctype = files["document"]
+    _, _data, files_snapshot = document_calls[0]
+    filename, content, _ctype = files_snapshot
     assert filename == f"{exp.experiment_id}_2-images.zip"
     with zipfile.ZipFile(BytesIO(content)) as zf:
         assert set(zf.namelist()) == {"dark_00000.png", "dark_00001.png"}

@@ -19,6 +19,7 @@ from ..models import (
     FreeSpaceResponse,
     SavedExperimentConfig,
     StartResponse,
+    is_experiment_active,
 )
 from ..storage import ExperimentDir
 from .deps import AppState, get_state
@@ -36,12 +37,21 @@ async def start_experiment(config: ExperimentConfig, state: AppState = Depends(g
         raise HTTPException(
             400, "Link Telegram in Settings -> General before enabling issue alerts"
         )
+    response = await state.runner.start(config, state.settings.camera)
     # This is how the backend learns who the active researcher is: the name is
     # client-side state (localStorage, see client/lib/session.ts) that arrives
     # with every experiment config. Remote sync uses it as the destination
     # subfolder, and switches itself off if it changes mid-stream.
-    state.sync.note_active_researcher(config.username)
-    return await state.runner.start(config, state.settings.camera)
+    #
+    # Must only fire once a run has actually started. This used to run before
+    # start() and unconditionally -- so a start attempt that was rejected as
+    # busy/low_space/no_camera still flipped the "active researcher" and, if
+    # it differed from whoever's run was genuinely in progress, silently
+    # switched that other person's remote sync off for the rest of their run.
+    # See DEBUG_HANDOUT.md #1.6.
+    if response.status == "started":
+        state.sync.note_active_researcher(config.username)
+    return response
 
 
 @router.post("/free-space", response_model=FreeSpaceResponse)
@@ -55,7 +65,7 @@ async def free_space(body: FreeSpaceRequest, state: AppState = Depends(get_state
     requested = set(body.experimentIds)
     active_id = (
         state.runner.status.experimentId
-        if state.runner.status.state in ("running", "paused", "finishing")
+        if is_experiment_active(state.runner.status.state)
         else None
     )
     want_user = body.username.strip().lower()
@@ -229,7 +239,12 @@ async def download_all_experiments(
     if not exps:
         raise HTTPException(404, "no experiments found for this user")
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="download-all-")
+    # dir=state.storage.root, not the bare default (which is /tmp): the
+    # docstring above already explains why this must be disk, not memory --
+    # on this device /tmp is itself a 2GB tmpfs (RAM), so leaving dir unset
+    # built every archive in RAM anyway, the exact failure mode this streaming
+    # design exists to avoid. See DEBUG_HANDOUT.md #1.15.
+    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="download-all-", dir=state.storage.root)
     os.close(fd)
     try:
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:

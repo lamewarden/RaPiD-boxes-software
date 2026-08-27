@@ -10,6 +10,7 @@ Layout (flat, easy to resolve from a URL):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -24,11 +25,39 @@ from PIL import Image
 
 from . import user_defaults
 
+log = logging.getLogger("rapidboxes.storage")
+
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _slug(text: str) -> str:
     return _SAFE.sub("-", text.strip()) or "x"
+
+
+def _durable_replace(tmp: Path, final: Path) -> None:
+    """`os.replace(tmp, final)`, but with the write actually forced to disk
+    first.
+
+    `os.replace` alone only makes the *rename* atomic -- it says nothing about
+    whether `tmp`'s contents have left the OS page cache. Without an
+    `fsync()`, the exact power-loss/reboot this whole recovery design exists
+    to survive can leave `final` renamed into place with stale or truncated
+    contents; the previous version of this function's docstring said "a crash
+    mid-write can't corrupt the file", which was only half true. Also fsyncs
+    the containing directory: POSIX doesn't guarantee the rename entry itself
+    is durable until the directory is synced too. See DEBUG_HANDOUT.md #1.8.
+    """
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, final)
+    dir_fd = os.open(final.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _safe_component(name: str) -> Optional[str]:
@@ -65,12 +94,15 @@ class ExperimentDir:
         return self.path / f"{image_id}.png", image_id
 
     def write_metadata(self, data: dict) -> None:
-        """Atomic write so a crash mid-write can't corrupt the file."""
+        """Atomic + durable write -- see `_durable_replace`. This file is the
+        sole input to `ExperimentRunner.recover()`, and the crash/power-loss
+        scenario that exists to survive is exactly the one a bare
+        `os.replace` doesn't protect against."""
         tmp = self.path / "metadata.json.tmp"
         final = self.path / "metadata.json"
         with tmp.open("w") as f:
             json.dump(data, f, indent=2, default=str)
-        os.replace(tmp, final)
+        _durable_replace(tmp, final)
 
     def append_event(self, message: str) -> None:
         """One timestamped line appended to this experiment's own events.log
@@ -110,11 +142,13 @@ class ExperimentDir:
             return None
 
     def write_config_xml(self, xml_bytes: bytes, experiment_name: str) -> None:
-        """Atomic write of the saved-config XML, named after the experiment."""
+        """Atomic + durable write of the saved-config XML, named after the
+        experiment -- see `_durable_replace`. `recover()` reads this back to
+        restore a resumed run's real camera/illumination settings."""
         final = self.path / f"{_slug(experiment_name)}.xml"
         tmp = final.with_suffix(".xml.tmp")
         tmp.write_bytes(xml_bytes)
-        os.replace(tmp, final)
+        _durable_replace(tmp, final)
 
     def read_config_xml(self) -> Optional[bytes]:
         """Reads whatever single config xml is in the folder, if any."""
@@ -164,7 +198,15 @@ class ExperimentDir:
         real pressure on a box that may be mid-protocol on another
         experiment. Disk is comparatively plentiful under storage_root.
         """
-        fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=f"{self.experiment_id}-")
+        # dir=self.path.parent (== storage_root, since self.path IS
+        # storage_root/experiment_id) rather than the bare default -- see this
+        # method's own docstring above on why disk, not RAM, matters here.
+        # Leaving dir unset put every archive on /tmp, which on the real
+        # device is itself a 2GB tmpfs (RAM): the exact thing this streaming
+        # design exists to avoid. See DEBUG_HANDOUT.md #1.15.
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".zip", prefix=f"{self.experiment_id}-", dir=self.path.parent
+        )
         os.close(fd)
         try:
             with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -249,6 +291,11 @@ class ExperimentDir:
                 img.thumbnail((320, 240))
                 img.convert("RGB").save(thumb, "JPEG", quality=80)
             except Exception:
+                # Used to fail silently -- a truncated source file (see
+                # #1.22, now fixed) produced no log line at all, just a
+                # caller-side "not available", which is why this class of
+                # bug took a test failure and a bisect to actually find.
+                log.warning("thumbnail generation failed for %s", src, exc_info=True)
                 return None
         return thumb
 
@@ -270,6 +317,9 @@ class ExperimentDir:
                 img.thumbnail((320, 240))
                 img.convert("RGB").save(thumb, "JPEG", quality=80)
             except Exception:
+                # See artifact_thumb's identical comment above -- this used
+                # to fail silently. See DEBUG_HANDOUT.md #1.22.
+                log.warning("thumbnail generation failed for %s", src, exc_info=True)
                 return None
         return thumb
 
@@ -298,6 +348,31 @@ class Storage:
     def latest_experiment(self) -> Optional[ExperimentDir]:
         dirs = self.list_experiments()
         return ExperimentDir(dirs[0]) if dirs else None
+
+    def active_experiment(self) -> Optional[ExperimentDir]:
+        """The one experiment folder (if any) whose own metadata.json claims
+        it is still running/paused -- what `ExperimentRunner.recover()`
+        actually needs to find on startup.
+
+        Deliberately NOT `latest_experiment()` (newest by directory mtime,
+        the right choice for its own caller, Gallery's "show the most recent
+        experiment" fallback). `growth_viz.py`/`plant_mask.py` write derived
+        visualizations directly into whichever experiment folder is being
+        *viewed*, which bumps that folder's mtime -- so viewing an old,
+        already-finished experiment while a different one is genuinely
+        running can make the old folder look newest. `recover()` picking the
+        newest-by-mtime folder in that situation reads a `state: "done"` on
+        the wrong folder and never resumes the real run, which then simply
+        stops with its own metadata still saying "running". Scanning for the
+        folder that actually claims to be active is correct regardless of
+        anyone's browsing history. See DEBUG_HANDOUT.md #1.7.
+        """
+        for d in self.list_experiments():
+            exp = ExperimentDir(d)
+            meta = exp.read_metadata()
+            if meta and meta.get("state") in ("running", "paused"):
+                return exp
+        return None
 
     def get_experiment(self, experiment_id: str) -> Optional[ExperimentDir]:
         component = _safe_component(experiment_id)

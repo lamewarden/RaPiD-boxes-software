@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..hardware.base import CameraUnavailableError, HardwareTimeoutError
-from ..models import CameraSettings, ExperimentState
+from ..models import CameraSettings, is_experiment_active
 from .deps import AppState, get_state
 
 log = logging.getLogger("rapidboxes.preview")
@@ -30,11 +30,7 @@ class LiveBacklightResponse(BaseModel):
 
 
 def _busy_if_experiment(state: AppState) -> None:
-    if state.runner.status.state in (
-        ExperimentState.running,
-        ExperimentState.paused,
-        ExperimentState.finishing,
-    ):
+    if is_experiment_active(state.runner.status.state):
         raise HTTPException(409, "an experiment is running")
 
 
@@ -62,6 +58,14 @@ async def _mjpeg(state: AppState):
 
 @router.get("")
 async def preview_stream(state: AppState = Depends(get_state)):
+    # Was missing entirely: Live's own settings.py/preview.py/test-photo
+    # siblings all refuse while an experiment is active, but this one didn't.
+    # preview_frame() forces a fast RGBW-speed exposure (see
+    # _live_preview_settings) via a real camera.configure() call -- and
+    # nothing ever restored a running experiment's own exposure afterward, so
+    # opening Live mid-run silently underexposed every remaining capture for
+    # the rest of that run. See DEBUG_HANDOUT.md #1.5.
+    _busy_if_experiment(state)
     return StreamingResponse(
         _mjpeg(state),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY}",
@@ -87,6 +91,9 @@ async def set_live_backlight(
 
 @router.get("/frame.jpg")
 async def preview_frame(state: AppState = Depends(get_state)):
+    # See preview_stream's comment -- same gate, same reason. This is the
+    # route CameraLive.tsx actually polls every 250ms.
+    _busy_if_experiment(state)
     try:
         frame = await state.hw.preview_frame()
     except CameraUnavailableError:
@@ -112,7 +119,7 @@ async def test_photo_with_settings(settings: CameraSettings, state: AppState = D
     real dark/baseline/night capture would use. Camera settings may be unsaved
     edits from the editor; illumination is not editable from this screen.
     """
-    if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
+    if is_experiment_active(state.runner.status.state):
         raise HTTPException(409, "cannot take a test photo while an experiment is running")
     try:
         frame = await state.hw.capture_test_jpeg(settings)

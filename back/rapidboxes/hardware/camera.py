@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import time
+from pathlib import Path
 
 from ..models import AWB_BLUE_GAIN, AWB_RED_GAIN, CameraSettings, settle_seconds_for
 from .base import CameraBackend, CameraUnavailableError, zoom_crop_box
@@ -93,11 +95,20 @@ class Picamera2Camera(CameraBackend):
         self._ensure()
         # Let a just-changed exposure/AWB settle before the still.
         time.sleep(settle_seconds_for(self._settings.exposureMicroseconds))
+        # Capture to a temp path, then rename into place -- ExperimentDir.
+        # list_capture_images() is a bare glob, so without this it can see
+        # (and anything reading it, e.g. thumb_file, gets) a truncated PNG
+        # while the write is still in flight. A power cut mid-capture used to
+        # leave a permanently-truncated file that list_capture_images() would
+        # count forever. See DEBUG_HANDOUT.md #1.22.
+        final = Path(path)
+        tmp = final.with_name(final.name + ".tmp")
         if self._settings.zoom <= 1.0:
-            self._cam.capture_file(path)
+            self._cam.capture_file(str(tmp))
         else:
             arr = self._cam.capture_array("main")
-            self._zoomed_frame(arr, self._settings).save(path, "PNG")
+            self._zoomed_frame(arr, self._settings).save(tmp, "PNG")
+        os.replace(tmp, final)
         log.info("captured %s", path)
 
     def capture_jpeg(self, zoom: int = 1) -> bytes:

@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import user_defaults
-from ..models import DeviceSettings, ExperimentState, UserDefaultsUpdate
+from ..models import DeviceSettings, UserDefaultsUpdate, is_experiment_active
 from ..settings_store import save_device_settings
 from .deps import AppState, get_state
 
@@ -20,7 +20,7 @@ async def get_settings(state: AppState = Depends(get_state)):
 
 @router.put("", response_model=DeviceSettings)
 async def put_settings(settings: DeviceSettings, state: AppState = Depends(get_state)):
-    if state.runner.status.state in (ExperimentState.running, ExperimentState.paused):
+    if is_experiment_active(state.runner.status.state):
         raise HTTPException(409, "cannot change settings while an experiment is running")
     save_device_settings(state.config.settings_path, settings)
     await state.rebuild_hardware(settings)

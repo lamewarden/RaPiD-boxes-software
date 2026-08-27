@@ -149,6 +149,34 @@ class ExperimentState(str, Enum):
     error = "error"
 
 
+# Every "is an experiment currently active" gate in this codebase used to
+# spell out its own (running, paused) or (running, paused, finishing) tuple
+# independently -- ten call sites, inconsistent membership, some comparing
+# enum members and some comparing raw strings. `finishing` is never actually
+# assigned anywhere in ExperimentRunner today, so this was a silent no-op
+# inconsistency -- but the day something does assign it, roughly half those
+# gates would fail to fire. One definition, used everywhere: settings/preview/
+# update/assistant/telegram all gate on "is anything active right now",
+# which is the same question regardless of caller.
+_ACTIVE_EXPERIMENT_STATES = (
+    ExperimentState.running,
+    ExperimentState.paused,
+    ExperimentState.finishing,
+)
+ACTIVE_EXPERIMENT_STATE_VALUES = frozenset(s.value for s in _ACTIVE_EXPERIMENT_STATES)
+
+
+def is_experiment_active(state: "ExperimentState | str") -> bool:
+    """True while an experiment is running, paused, or finishing.
+
+    Accepts a bare string too -- some callers compare against a `state` field
+    that arrived off a WS/JSON payload rather than the live enum -- so both
+    forms are handled identically via `.value`/str comparison.
+    """
+    value = state.value if isinstance(state, ExperimentState) else state
+    return value in ACTIVE_EXPERIMENT_STATE_VALUES
+
+
 class ExperimentPhase(str, Enum):
     dark = "dark"
     bending = "bending"

@@ -23,7 +23,21 @@ def save_device_settings(path: Path, settings: DeviceSettings) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(settings.model_dump_json(indent=2))
+    # fsync before the rename, not just os.replace alone -- see
+    # storage.py's `_durable_replace` for the full reasoning (same fix,
+    # same DEBUG_HANDOUT.md #1.8; not sharing the helper directly to avoid a
+    # storage<->settings_store import for a five-line block).
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     os.replace(tmp, path)
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def load_device_settings_for_new_session(path: Path) -> DeviceSettings:

@@ -33,14 +33,22 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .config import get_config
-from .models import ExperimentState, UpdateApplyResult, UpdateCheckResult, UpdateHistoryEntry, VersionStatus
+from .models import (
+    ACTIVE_EXPERIMENT_STATE_VALUES,
+    UpdateApplyResult,
+    UpdateCheckResult,
+    UpdateHistoryEntry,
+    VersionStatus,
+)
 from .update_history import append_entry, load_history
 
-# Experiment states that make an update unsafe to apply -- mirrors the
-# "busy" check in engine/runner.py's own start() guard.
-BUSY_EXPERIMENT_STATES = frozenset(
-    {ExperimentState.running.value, ExperimentState.paused.value, ExperimentState.finishing.value}
-)
+# Experiment states that make an update unsafe to apply -- was previously its
+# own independent frozenset here, alongside nine other independently-spelled
+# "is an experiment active" checks across the codebase (see
+# DEBUG_HANDOUT.md #1.16); this already happened to have the correct/full
+# membership, but re-derives from the single shared definition now so it
+# can't silently drift from the others again.
+BUSY_EXPERIMENT_STATES = ACTIVE_EXPERIMENT_STATE_VALUES
 
 # Cap on how many "<hash> <subject>" lines we return from a check -- enough to
 # skim, not a changelog dump.

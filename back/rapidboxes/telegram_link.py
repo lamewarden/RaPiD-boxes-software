@@ -90,6 +90,7 @@ from .models import (
     AssistantMessage,
     ExperimentStatus,
     SavedExperimentConfig,
+    is_experiment_active,
 )
 from .storage import ExperimentDir, Storage
 
@@ -783,12 +784,19 @@ class TelegramLinkService:
             return
         tmp_path = exp.zip_to_temp_file(download.imageIds)
         try:
-            data = tmp_path.read_bytes()
-            res = await self._client.post(
-                f"/bot{self._token}/sendDocument",
-                data={"chat_id": str(chat_id)},
-                files={"document": (download.filename, data, "application/zip")},
-            )
+            # Stream from the open file handle rather than tmp_path.read_bytes()
+            # -- reading the whole archive into memory here doubled the RAM
+            # footprint on top of #1.15's tmpfs issue (disk copy + full Python
+            # heap copy, at the same time, for one zip). httpx encodes a
+            # file-like object's multipart body in chunks instead of buffering
+            # it whole. capped at TELEGRAM_MAX_UPLOAD_BYTES above, so this is
+            # bounded regardless.
+            with tmp_path.open("rb") as fh:
+                res = await self._client.post(
+                    f"/bot{self._token}/sendDocument",
+                    data={"chat_id": str(chat_id)},
+                    files={"document": (download.filename, fh, "application/zip")},
+                )
             res.raise_for_status()
         except (httpx.HTTPError, OSError) as exc:
             log.warning("telegram sendDocument failed for chat %s: %s", chat_id, _redact(exc))
@@ -944,7 +952,7 @@ class TelegramLinkService:
         if self._runner is None:
             return
         status = self._runner.status
-        if status.experimentId is None or status.state not in ("running", "paused"):
+        if status.experimentId is None or not is_experiment_active(status.state):
             return
         chat_ids = self._monitors.get(status.experimentId)
         if not chat_ids:
@@ -1075,7 +1083,7 @@ class TelegramLinkService:
             if (
                 self._runner is None
                 or self._runner.status.experimentId != experiment_id
-                or self._runner.status.state not in ("running", "paused")
+                or not is_experiment_active(self._runner.status.state)
             ):
                 await self._send_raw(chat_id, f"{experiment_id} isn't running anymore -- nothing to stop.")
                 return True
@@ -1531,7 +1539,7 @@ class TelegramLinkService:
             status.experimentId is None
             or status.username is None
             or _key(status.username) != _key(username)
-            or status.state not in ("running", "paused")
+            or not is_experiment_active(status.state)
         ):
             await self._send_raw(chat_id, "You don't have an experiment running right now.")
             return
@@ -1569,7 +1577,7 @@ class TelegramLinkService:
             status.experimentId is None
             or status.username is None
             or _key(status.username) != _key(username)
-            or status.state not in ("running", "paused")
+            or not is_experiment_active(status.state)
         ):
             await self._send_raw(chat_id, "You don't have an experiment running right now.")
             return

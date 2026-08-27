@@ -45,11 +45,11 @@ from ..models import (
     AssistantMessage,
     DeviceSettings,
     ExperimentProposal,
-    ExperimentState,
     GrowthConfig,
     SavedExperimentConfig,
     StartResponse,
     TropismConfig,
+    is_experiment_active,
 )
 from ..dsm_sharing import DsmSharingService
 from ..hardware.base import CameraUnavailableError, HardwareTimeoutError
@@ -795,7 +795,7 @@ class AssistantService:
             return None, "Starting an experiment isn't available right now -- try again shortly."
 
         status = self._runner.status
-        if status.state in (ExperimentState.running, ExperimentState.paused, ExperimentState.finishing):
+        if is_experiment_active(status.state):
             return (
                 StartResponse(status="busy", experimentId=status.experimentId),
                 f"{status.experimentId} is already running -- can't start another until it finishes.",
@@ -905,7 +905,7 @@ class AssistantService:
             return None, "That isn't available right now -- try again shortly."
 
         status = self._runner.status
-        if status.state in (ExperimentState.running, ExperimentState.paused):
+        if is_experiment_active(status.state):
             if status.username and status.username.strip().lower() == requesting_username.strip().lower():
                 exp = self._storage.get_experiment(status.experimentId) if status.experimentId else None
                 images = exp.list_capture_images() if exp is not None else []

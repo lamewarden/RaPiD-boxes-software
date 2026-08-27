@@ -29,6 +29,7 @@ from ..models import (
     StartResponse,
     StorageNotice,
     TropismConfig,
+    is_experiment_active,
 )
 from ..retention import (
     cleanup_expired_experiments,
@@ -217,7 +218,7 @@ class ExperimentRunner:
         return self._exp_dir
 
     async def start(self, config: Config, camera: Optional[CameraSettings] = None) -> StartResponse:
-        if self.status.state in (ExperimentState.running, ExperimentState.paused, ExperimentState.finishing):
+        if is_experiment_active(self.status.state):
             return StartResponse(status="busy", experimentId=self.status.experimentId)
         if not self._hw.camera_available:
             return StartResponse(status="no_camera")
@@ -338,7 +339,7 @@ class ExperimentRunner:
             await self._broadcast()
 
     async def stop(self) -> None:
-        if self.status.state in (ExperimentState.running, ExperimentState.paused):
+        if is_experiment_active(self.status.state):
             self._stop = True
             self._pause_event.set()  # unblock if paused
             if self._task:
@@ -390,7 +391,12 @@ class ExperimentRunner:
         paused, at the same point, with no time fast-forwarded -- pausing is a
         human decision that a reboot shouldn't override.
         """
-        latest = self._storage.latest_experiment()
+        # active_experiment(), NOT latest_experiment(): the newest-by-mtime
+        # folder can be an old, already-finished run whose mtime was bumped
+        # by viewing its growth/plant-mask visualization, not the genuinely
+        # active one. See Storage.active_experiment's docstring and
+        # DEBUG_HANDOUT.md #1.7.
+        latest = self._storage.active_experiment()
         if latest is None:
             return
         meta = latest.read_metadata()

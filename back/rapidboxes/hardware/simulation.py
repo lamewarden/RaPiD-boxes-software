@@ -7,8 +7,10 @@ from __future__ import annotations
 import io
 import logging
 import math
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 
@@ -68,7 +70,12 @@ class SimCamera(CameraBackend):
     def capture_file(self, path: str) -> None:
         time.sleep(0.05)  # pretend a capture takes a moment
         img = self._zoomed_frame(self._settings)
-        img.save(path, "PNG")
+        # Atomic write -- same fix and reasoning as the real
+        # Picamera2Camera.capture_file, see DEBUG_HANDOUT.md #1.22.
+        final = Path(path)
+        tmp = final.with_name(final.name + ".tmp")
+        img.save(tmp, "PNG")
+        os.replace(tmp, final)
         self._frame += 1
         log.info("sim capture -> %s", path)
 
