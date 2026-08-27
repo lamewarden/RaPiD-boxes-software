@@ -108,12 +108,66 @@ async def test_configured_requires_both_token_and_username(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_request_link_code_is_six_digits_and_not_yet_linked(tmp_path: Path):
+async def test_request_link_code_is_eight_hex_chars_and_not_yet_linked(tmp_path: Path):
+    # Was 6 decimal digits (900,000 possibilities, no rate limiting) --
+    # brute-forceable within a single link code's 10-minute TTL at
+    # Telegram's own throughput ceiling, and a successful guess is full
+    # account takeover. Now 8 lowercase hex chars (32 bits). See
+    # DEBUG_HANDOUT.md #2.2.
     service = TelegramLinkService("token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json")
     code = service.request_link_code("ivan")
-    assert code.isdigit()
-    assert len(code) == 6
+    assert len(code) == 8
+    assert all(c in "0123456789abcdef" for c in code)
     assert service.is_linked("ivan") is False
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wrong_link_codes_lock_out_after_max_attempts(tmp_path: Path, monkeypatch):
+    """Defense in depth on top of the entropy increase: a chat guessing
+    wrong, code-shaped strings repeatedly gets locked out rather than being
+    able to keep trying indefinitely. Only code-shaped guesses count -- see
+    the next test for ordinary chat not being penalized. DEBUG_HANDOUT.md
+    #2.2."""
+    service = TelegramLinkService(
+        "token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json"
+    )
+    calls = _mock_post(monkeypatch, service)
+    real_code = service.request_link_code("ivan")
+
+    for _ in range(telegram_link_module.MAX_LINK_ATTEMPTS - 1):
+        consumed = await service._try_complete_link("00000000", chat_id=99)
+        assert consumed is False  # under threshold: falls through, no lockout message yet
+
+    # The Nth wrong guess trips the lockout.
+    consumed = await service._try_complete_link("11111111", chat_id=99)
+    assert consumed is True
+    assert "too many incorrect codes" in calls[-1][1]["text"].lower()
+
+    # Even the REAL code is refused while locked out.
+    consumed = await service._try_complete_link(real_code, chat_id=99)
+    assert consumed is True
+    assert service.is_linked("ivan") is False
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_chat_text_is_never_counted_as_a_link_code_guess(tmp_path: Path, monkeypatch):
+    """A chat that just talks normally (nothing shaped like an 8-hex-char
+    code) must never trip the lockout -- only code-shaped strings are
+    guesses. DEBUG_HANDOUT.md #2.2."""
+    service = TelegramLinkService(
+        "token", "MyBot", tmp_path / "links.json", Storage(tmp_path / "storage"), tmp_path / "monitors.json"
+    )
+    _mock_post(monkeypatch, service)
+
+    for _ in range(telegram_link_module.MAX_LINK_ATTEMPTS + 5):
+        consumed = await service._try_complete_link("hello there", chat_id=77)
+        assert consumed is False
+
+    assert service._link_attempt_counts.get(77, 0) == 0
+    assert 77 not in service._link_lockout_until
+    await service.shutdown()
     await service.shutdown()
 
 
@@ -570,7 +624,11 @@ async def test_chat_message_expressing_stop_intent_hands_off_to_the_real_confirm
 
     await service._handle_chat_message(42, "please cancel my run")
 
-    assert service._stop_confirmations.get(42) == exp.experiment_id
+    # _stop_confirmations now stores (experiment_id, raised_at) rather than
+    # a bare experiment_id -- see DEBUG_HANDOUT.md #2.5 (the timestamp is
+    # what STOP_CONFIRMATION_TIMEOUT_S checks a stale confirmation against).
+    pending_id, _raised_at = service._stop_confirmations[42]
+    assert pending_id == exp.experiment_id
     sent_texts = [body["text"] for _, body in calls]
     assert any("7 image(s) captured" in t for t in sent_texts)
     # stop_experiment's own fallback reply (meant for channels with no
@@ -1251,6 +1309,78 @@ def test_wants_to_skip_launch_wizard_recognizes_common_phrasings_and_typos():
     assert _wants_to_skip_launch_wizard("tropism") is False
     assert _wants_to_skip_launch_wizard("yes") is False
     assert _wants_to_skip_launch_wizard("42") is False
+
+
+@pytest.mark.asyncio
+async def test_launch_confirmation_requires_an_exact_yes_not_a_fuzzy_skip_phrase(
+    chat_config: AppConfig, monkeypatch
+):
+    """_wants_to_skip_launch_wizard's fuzzy matcher (tested just above) is
+    correctly used MID-wizard to jump to the summary -- its own docstring's
+    safety argument is "the human still has to say yes to a summary
+    afterward". That reasoning breaks if the same fuzzy matcher is also
+    consulted at the summary's own yes/no gate, which is the one place a
+    chat reply directly starts real hardware: "it all looks good except the
+    interval" contains "looks good" and used to start the run with the
+    interval left unchanged. See DEBUG_HANDOUT.md #2.4."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fail_if_called(self, messages):
+        raise AssertionError("the /launch wizard must never call the model")
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fail_if_called)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "run it")  # skip straight to summary
+    assert "Ready to review" in calls[-1][1]["text"]
+
+    await service._maybe_continue_launch_wizard(42, "it all looks good except the interval")
+
+    # Must still be sitting at the confirmation gate, unstarted --
+    # not deleted, not staged, not started.
+    assert 42 in service._launch_wizards
+    assert service._launch_wizards[42].awaiting_confirmation is True
+    assert 'reply "yes"' in calls[-1][1]["text"].lower()
+
+    # A real "yes" afterward still works normally.
+    await service._maybe_continue_launch_wizard(42, "yes")
+    assert 42 not in service._launch_wizards
+    await assistant.aclose()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_launch_confirmation_discloses_the_shared_settings_write(
+    chat_config: AppConfig, monkeypatch
+):
+    """Confirming a Telegram-launched run also persists photoIlluminationSource
+    + camera color/exposure into the device-wide settings.json for whoever
+    uses the box next -- see start_experiment_from_launch. The confirmation
+    the human is actually approving must say so; previously it silently
+    didn't, and knowledge.md separately told the model the opposite. See
+    DEBUG_HANDOUT.md #2.7."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fail_if_called(self, messages):
+        raise AssertionError("the /launch wizard must never call the model")
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fail_if_called)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    await service._maybe_continue_launch_wizard(42, "run it")  # skip straight to summary
+
+    confirmation_text = calls[-1][1]["text"]
+    assert "Ready to review" in confirmation_text
+    assert "shared" in confirmation_text.lower()
+    assert "settings" in confirmation_text.lower()
+    await assistant.aclose()
+    await service.shutdown()
 
 
 def test_build_exposure_field_validates_against_the_chosen_sources_own_range():
@@ -1973,7 +2103,8 @@ async def test_stop_command_asks_for_confirmation_with_the_real_image_count(
     assert "exp1" in text
     assert "17" in text
     assert "kept" in text
-    assert service._stop_confirmations[42] == "exp1"
+    pending_id, _raised_at = service._stop_confirmations[42]
+    assert pending_id == "exp1"
     await service.shutdown()
 
 
@@ -2077,6 +2208,72 @@ async def test_stop_confirmation_when_the_run_already_ended_meanwhile(chat_confi
 
     assert runner.stop_calls == 0
     assert "isn't running anymore" in calls[-1][1]["text"]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stale_stop_confirmation_past_ttl_is_not_honored(chat_config: AppConfig, monkeypatch):
+    """A "yes" arriving after STOP_CONFIRMATION_TIMEOUT_S must not stop a
+    long-running experiment for a confirmation the person may have long
+    since forgotten they raised -- previously this was unbounded and sat in
+    memory until the process restarted. See DEBUG_HANDOUT.md #2.5."""
+    import time
+
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    _mock_post(monkeypatch, service)
+    await service._dispatch_command(42, "/stop", "")
+    experiment_id, _raised_at = service._stop_confirmations[42]
+
+    # Back-date it past the timeout, as if it had been sitting unanswered.
+    service._stop_confirmations[42] = (
+        experiment_id,
+        time.monotonic() - telegram_link_module.STOP_CONFIRMATION_TIMEOUT_S - 1.0,
+    )
+
+    consumed = await service._maybe_continue_stop_confirmation(42, "yes")
+
+    assert consumed is False  # falls through -- not treated as an answer at all
+    assert runner.stop_calls == 0
+    assert 42 not in service._stop_confirmations  # the stale entry is dropped
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_command_breaks_out_of_an_open_launch_wizard(chat_config: AppConfig, monkeypatch):
+    """Reported risk: an open /launch wizard swallowed every other command,
+    /stop included, as a field answer for up to LAUNCH_WIZARD_TIMEOUT_S --
+    a realistic scenario is setting up a NEW run, noticing on the pinned
+    progress bar that the CURRENT run has gone wrong, and typing /stop.
+    See DEBUG_HANDOUT.md #2.6."""
+    service = await _linked_service(chat_config, monkeypatch, "ivan", 42)
+    runner = _FakeRunner(ExperimentStatus(state=ExperimentState.running, experimentId="exp1", username="ivan"))
+    service.attach_runner(runner)
+    assistant = AssistantService(chat_config, service._storage)
+
+    async def fail_if_called(self, messages):
+        raise AssertionError("the /launch wizard must never call the model")
+
+    monkeypatch.setattr(AssistantService, "_call_llm", fail_if_called)
+    service.attach_assistant(assistant)
+    calls = _mock_post(monkeypatch, service)
+
+    await service._dispatch_command(42, "/launch", "")
+    assert 42 in service._launch_wizards
+
+    consumed = await service._maybe_continue_launch_wizard(42, "/stop")
+
+    assert consumed is False  # not eaten -- the wizard steps aside
+    assert 42 not in service._launch_wizards
+    assert "cancelled" in calls[-1][1]["text"].lower()
+
+    # Mirrors what _poll_once actually does when this returns False: dispatch
+    # the parsed command normally.
+    await service._dispatch_command(42, "/stop", "")
+    assert 42 in service._stop_confirmations
+    assert "exp1" in calls[-1][1]["text"]
+    await assistant.aclose()
     await service.shutdown()
 
 

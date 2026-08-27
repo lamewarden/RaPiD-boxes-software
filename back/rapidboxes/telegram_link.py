@@ -103,6 +103,42 @@ log = logging.getLogger("rapidboxes.telegram")
 API_BASE = "https://api.telegram.org"
 LINK_CODE_TTL_S = 600.0  # 10 minutes -- long enough to switch apps and type it, short enough that a stale code isn't a standing risk.
 POLL_INTERVAL_S = 3.0
+
+# Link codes used to be 6 decimal digits (900,000 possibilities) with no rate
+# limiting on guesses at all -- an attacker messaging the bot at Telegram's
+# own throughput ceiling got a real, non-negligible shot at any code still
+# valid within its 10-minute window, and a successful guess is full account
+# takeover (starts real experiments, stops a colleague's, reads their whole
+# history). See DEBUG_HANDOUT.md #2.2.
+#
+# 8 lowercase hex characters = 32 bits = ~4.3 billion possibilities. Even
+# ignoring the lockout below entirely, ~18,000 guesses (the most an attacker
+# can fit in one 10-minute TTL window at Telegram's rate limit) against that
+# space is a ~1-in-240,000 chance -- the entropy increase alone is what
+# actually neutralizes brute force here, not the lockout.
+_LINK_CODE_BYTES = 4
+_LINK_CODE_RE = re.compile(r"^[0-9a-f]{8}$")
+
+# Defense in depth on top of the entropy above, for a slow/targeted attempt
+# against one still-valid code: after this many wrong guesses from one chat,
+# lock that chat out of further attempts for a while. Deliberately per-chat,
+# not per-code or per-target-user -- a guess is just a bare string with no
+# visible target, so "which user was being guessed" isn't something this can
+# observe; rate-limiting the guesser is what's actually enforceable.
+MAX_LINK_ATTEMPTS = 5
+LINK_ATTEMPT_LOCKOUT_S = 300.0  # 5 minutes
+
+# How long a pending /stop confirmation stays live with no reply. Previously
+# unbounded -- the entry sat in memory until the process restarted, and the
+# only guard at redemption time was "is this same experiment_id still
+# active", which does nothing to protect a long-running Growth protocol (up
+# to 30 days): raise /stop, get asked to confirm, then never reply (change
+# your mind, get distracted) -- days later, in an unrelated conversation, a
+# stray "yes" satisfies the still-pending confirmation and ends the same
+# experiment_id, which is quite possibly still genuinely running. Same order
+# of magnitude as LINK_CODE_TTL_S; a stop decision doesn't need the /launch
+# wizard's generous hour. See DEBUG_HANDOUT.md #2.5.
+STOP_CONFIRMATION_TIMEOUT_S = 600.0
 # Turns (user+assistant messages) kept per Telegram chat -- same "don't let
 # this grow forever" reasoning as the web UI's own localStorage history,
 # just server-side since there's no client to hold it for this channel.
@@ -516,6 +552,21 @@ def _key(username: str) -> str:
     return username.strip().lower()
 
 
+# Every /command _dispatch_command recognizes -- used by the two
+# continuation handlers (_maybe_continue_launch_wizard/
+# _maybe_continue_stop_confirmation) as the "break out of an in-progress
+# wizard/confirmation instead of silently swallowing it" escape hatch. Keep
+# in sync with _dispatch_command itself; a command missing here just means
+# it's swallowed like before this fix rather than causing an error. See
+# DEBUG_HANDOUT.md #2.6.
+_KNOWN_COMMANDS = frozenset(
+    {
+        "/help", "/status", "/experiments", "/unlink", "/launch",
+        "/cancel", "/monitor", "/stop", "/snapshot", "/screenshot",
+    }
+)
+
+
 def _parse_command(text: str) -> Optional[Tuple[str, str]]:
     """Splits a Telegram command message into (command, rest), e.g.
     "/launch like my run from tuesday" -> ("/launch", "like my run from
@@ -585,6 +636,14 @@ class TelegramLinkService:
         # code -> (username, expires_at). Only ever touched from the single
         # event loop thread (API handlers + the poll task), no lock needed.
         self._pending: Dict[str, Tuple[str, float]] = {}
+        # Link-code guess rate limiting (see MAX_LINK_ATTEMPTS above) --
+        # chat_id -> count of consecutive wrong guesses, and chat_id -> the
+        # monotonic time a lockout expires. In-memory only, same
+        # resets-on-restart precedent as _progress_messages/_launch_wizards
+        # below -- an attacker able to restart this box already has far
+        # worse access than a link code would grant.
+        self._link_attempt_counts: Dict[int, int] = {}
+        self._link_lockout_until: Dict[int, float] = {}
         # chat_id -> turns, for the chat-over-Telegram feature. Same
         # single-event-loop-thread reasoning, no lock needed.
         self._chat_history: Dict[int, List[AssistantMessage]] = {}
@@ -609,10 +668,12 @@ class TelegramLinkService:
         # same reasoning as _progress_messages: nothing here needs to
         # survive a restart, a fresh /launch just starts clean.
         self._launch_wizards: Dict[int, _LaunchWizardState] = {}
-        # /stop confirmations pending a yes/no, keyed by chat_id -> the
-        # experiment_id it was raised for -- same in-memory-only reasoning
-        # as _launch_wizards above.
-        self._stop_confirmations: Dict[int, str] = {}
+        # /stop confirmations pending a yes/no, keyed by chat_id -> (the
+        # experiment_id it was raised for, when it was raised) -- same
+        # in-memory-only reasoning as _launch_wizards above. The timestamp is
+        # what STOP_CONFIRMATION_TIMEOUT_S checks against; see its own
+        # docstring for why an unbounded confirmation was a real risk here.
+        self._stop_confirmations: Dict[int, Tuple[str, float]] = {}
         self._update_offset = 0
         self._worker: Optional[asyncio.Task] = None
         self._progress_worker: Optional[asyncio.Task] = None
@@ -641,7 +702,7 @@ class TelegramLinkService:
         key = _key(username)
         for stale in [c for c, (u, _) in self._pending.items() if u == key]:
             del self._pending[stale]
-        code = f"{secrets.randbelow(900_000) + 100_000}"
+        code = secrets.token_hex(_LINK_CODE_BYTES)
         self._pending[code] = (key, time.monotonic() + LINK_CODE_TTL_S)
         return code
 
@@ -1054,6 +1115,22 @@ class TelegramLinkService:
         if parsed is not None and parsed[0] == "/launch":
             await self._handle_launch_command(chat_id, parsed[1])
             return True
+        if parsed is not None and parsed[0] in _KNOWN_COMMANDS:
+            # Any other recognized command breaks out instead of being
+            # silently consumed as a field answer -- previously a genuine
+            # /stop typed mid-wizard (a real, reported scenario: noticing on
+            # the pinned progress bar that the CURRENT run has gone wrong
+            # while setting up a next one) got "please answer yes or no" for
+            # up to LAUNCH_WIZARD_TIMEOUT_S. Cancels the wizard outright
+            # rather than trying to preserve/resume it -- simpler and more
+            # predictable than partial-state resumption; /launch restarts it
+            # from the top if still wanted. Returning False (not calling
+            # _dispatch_command directly) lets the normal dispatch a few
+            # lines up the call stack in _poll_once handle `parsed` itself.
+            # See DEBUG_HANDOUT.md #2.6.
+            del self._launch_wizards[chat_id]
+            await self._send_raw(chat_id, "Setup cancelled -- send /launch to start over.")
+            return False
 
         state.last_activity = time.monotonic()
         if state.awaiting_confirmation:
@@ -1067,8 +1144,12 @@ class TelegramLinkService:
         confirmation for this chat. Only ever reached after /stop already
         found a real, currently-running experiment belonging to this
         person -- see _handle_stop_command."""
-        experiment_id = self._stop_confirmations.get(chat_id)
-        if experiment_id is None:
+        pending = self._stop_confirmations.get(chat_id)
+        if pending is None:
+            return False
+        experiment_id, raised_at = pending
+        if time.monotonic() - raised_at > STOP_CONFIRMATION_TIMEOUT_S:
+            del self._stop_confirmations[chat_id]
             return False
 
         parsed = _parse_command(text)
@@ -1076,6 +1157,15 @@ class TelegramLinkService:
             del self._stop_confirmations[chat_id]
             await self._send_raw(chat_id, "Cancelled -- your experiment keeps running.")
             return True
+        if parsed is not None and parsed[0] in _KNOWN_COMMANDS:
+            # Same escape hatch as the launch wizard's, same reason -- see
+            # its comment and DEBUG_HANDOUT.md #2.6. Includes a re-issued
+            # /stop itself: clearing the old confirmation first and falling
+            # through to the normal dispatch just re-raises a fresh one via
+            # _handle_stop_command, not a double-processed stop.
+            del self._stop_confirmations[chat_id]
+            await self._send_raw(chat_id, "Stop request cancelled.")
+            return False
 
         answer = text.strip().lower()
         if answer in ("yes", "y", "confirm", "confirmed", "stop"):
@@ -1131,12 +1221,49 @@ class TelegramLinkService:
     async def _try_complete_link(self, text: str, chat_id: int) -> bool:
         """Returns True if `text` was a valid pending code (and has now been
         consumed) -- callers use this to decide whether to also treat the
-        message as a chat turn."""
+        message as a chat turn.
+
+        Also returns True (without linking anything) while this chat is
+        locked out from guessing, or once a wrong guess trips the lockout --
+        both cases fully handle the message themselves, so it must not also
+        fall through to _handle_chat_message. A message that doesn't even
+        look like a code (_LINK_CODE_RE) is never counted as a guess at all,
+        so ordinary chat from an already-linked user is never rate-limited
+        by this. See MAX_LINK_ATTEMPTS's docstring for why entropy, not this
+        lockout, is what actually neutralizes brute force -- this is
+        defense in depth for one patient, targeted attempt.
+        """
         now = time.monotonic()
         self._pending = {c: (u, exp) for c, (u, exp) in self._pending.items() if exp > now}
-        entry = self._pending.pop(text, None)
-        if entry is None:
+
+        candidate = text.strip().lower()
+        if not _LINK_CODE_RE.match(candidate):
             return False
+
+        locked_until = self._link_lockout_until.get(chat_id, 0.0)
+        if now < locked_until:
+            await self._send_raw(
+                chat_id,
+                f"Too many incorrect codes -- try again in {int(locked_until - now) // 60 + 1} min.",
+            )
+            return True
+
+        entry = self._pending.pop(candidate, None)
+        if entry is None:
+            count = self._link_attempt_counts.get(chat_id, 0) + 1
+            if count >= MAX_LINK_ATTEMPTS:
+                self._link_attempt_counts.pop(chat_id, None)
+                self._link_lockout_until[chat_id] = now + LINK_ATTEMPT_LOCKOUT_S
+                log.warning("telegram chat %s locked out after %d wrong link codes", chat_id, count)
+                await self._send_raw(
+                    chat_id,
+                    f"Too many incorrect codes -- try again in {int(LINK_ATTEMPT_LOCKOUT_S) // 60} min.",
+                )
+                return True
+            self._link_attempt_counts[chat_id] = count
+            return False
+
+        self._link_attempt_counts.pop(chat_id, None)
         username, _ = entry
         self._links[username] = chat_id
         _save_links(self._links_path, self._links)
@@ -1411,12 +1538,37 @@ class TelegramLinkService:
         final_config = state.base.model_copy(update=state.values)
         if state.camera_overrides:
             final_config.camera = final_config.camera.model_copy(update=state.camera_overrides)
+        # model_copy(update=...) never runs field or model validators -- see
+        # HANDOFF.md's note on commit 956cf6c, which had to fix exactly this
+        # regression once already elsewhere. Neither SavedExperimentConfig
+        # nor CameraSettings defines a validator today, so this specific spot
+        # was latent rather than live -- but it exists so the next validator
+        # added to either doesn't get silently bypassed here too.
+        # model_validate(model_dump()) re-validates the whole assembled tree,
+        # nested `camera` included. See DEBUG_HANDOUT.md #2.8.
+        final_config = SavedExperimentConfig.model_validate(final_config.model_dump())
         state.final_config = final_config
 
         lines = [format_config_knobs(final_config)]
         lines.append(f"Image color: {'black-and-white' if final_config.camera.grayscale else 'color'}")
         if "exposureMicroseconds" in state.camera_overrides:
             lines.append(f"Exposure (manual override): {final_config.camera.exposureMicroseconds / 1_000_000:g}s")
+
+        # start_experiment_from_launch persists photoIlluminationSource +
+        # camera_overrides into the device-wide settings.json whenever either
+        # is set -- and grayscale (in camera_overrides) is asked on every
+        # single run through this wizard, so in practice this write always
+        # happens, not just on some runs. That's a real, persistent change to
+        # "Current device settings (shared by whoever uses the box next)"
+        # (see _resolve_my_settings's own framing) -- the confirmation must
+        # say so, not just the protocol/phase knobs above it. Previously it
+        # didn't, and knowledge.md separately told the model "you never
+        # change a setting" -- both silently false. See DEBUG_HANDOUT.md #2.7.
+        lines.append(
+            "\n(Confirming also updates this device's shared Camera + Illumination "
+            "settings -- source, color, and any exposure override above -- for "
+            "whoever uses it next, immediately.)"
+        )
         summary = "\n".join(lines)
 
         await self._send_raw(
@@ -1426,8 +1578,19 @@ class TelegramLinkService:
         )
 
     async def _handle_launch_confirmation(self, chat_id: int, state: _LaunchWizardState, text: str) -> None:
+        # Deliberately an exact-match set here, NOT
+        # _wants_to_skip_launch_wizard's fuzzy substring matcher -- that
+        # matcher's own docstring justifies its looseness with "the human
+        # still has to explicitly say yes to a summary", which is exactly
+        # the gate this function IS. Reused here, it meant e.g. "it all
+        # looks good except the interval" (contains "looks good") started
+        # the run with the interval unchanged, or a reply containing both a
+        # refusal and a skip phrase started it regardless of the refusal,
+        # since this branch was checked first. This is the one place in the
+        # whole assistant layer where a chat reply directly triggers real
+        # hardware -- it gets the strict list. See DEBUG_HANDOUT.md #2.4.
         answer = text.strip().lower()
-        if answer in ("yes", "y", "confirm", "confirmed", "start") or _wants_to_skip_launch_wizard(answer):
+        if answer in ("yes", "y", "confirm", "confirmed", "start"):
             del self._launch_wizards[chat_id]
             await self._confirm_and_start_launch(chat_id, state)
             return
@@ -1544,7 +1707,7 @@ class TelegramLinkService:
             await self._send_raw(chat_id, "You don't have an experiment running right now.")
             return
 
-        self._stop_confirmations[chat_id] = status.experimentId
+        self._stop_confirmations[chat_id] = (status.experimentId, time.monotonic())
         await self._send_raw(
             chat_id,
             f"Stop {status.experimentId} now? It has {status.imagesCaptured} image(s) captured so far -- "
