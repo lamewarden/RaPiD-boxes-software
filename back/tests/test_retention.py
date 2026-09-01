@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
-from rapidboxes.models import CameraSettings, GrowthConfig
+from rapidboxes.models import CameraSettings, GrowthConfig, TropismConfig
 from rapidboxes.retention import (
     RETENTION_DAYS,
     cleanup_expired_experiments,
@@ -48,6 +48,32 @@ def test_estimate_scales_with_resolution_count_and_color():
 
     longer = GrowthConfig(dayLengthHours=16, experimentLengthDays=10, intervalMinutes=240)
     assert estimate_experiment_bytes(longer, big_gray) > big  # more planned images -> bigger estimate
+
+
+def test_grayscale_estimate_is_within_a_sane_multiple_of_real_measured_usage():
+    """Reported live: a real 336-image, 2304x1296 grayscale tropism run
+    measured 1.485MB/image (41 real captures averaged) -- 0.50GB projected
+    for the full run -- against a stored estimate of 2.2GB, a ~4.4x
+    overestimate. GRAYSCALE_BYTES_PER_PIXEL was tuned against three real
+    grayscale experiments sampled directly off the device (0.20-0.81
+    bytes/pixel depending on content); this pins the estimate for the exact
+    reported config+camera to stay within a sane band of that real number --
+    comfortably conservative (so it can't regress toward under-estimating
+    and risking a real mid-experiment out-of-space failure) but no longer
+    wildly divorced from reality. See DEBUG_HANDOUT.md-adjacent report,
+    2026-08-31."""
+    config = TropismConfig(
+        experimentName="t", username="u",
+        darkPhaseEnabled=True, darkPhaseHours=168.0, lateralIlluminationHours=0,
+        spectra=["blue"], intervalMinutes=30.0, intensity=25,
+    )
+    camera = CameraSettings(width=2304, height=1296, grayscale=True)
+
+    estimate_bytes = estimate_experiment_bytes(config, camera)
+    real_measured_projection_bytes = 1.485e6 * 336  # avg real MB/image * planned images
+
+    assert estimate_bytes > real_measured_projection_bytes  # still conservative, not an underestimate
+    assert estimate_bytes < real_measured_projection_bytes * 3  # but not wildly so (was ~4.4x before this fix)
 
 
 def test_experiments_near_expiration_window_and_ownership(tmp_path):

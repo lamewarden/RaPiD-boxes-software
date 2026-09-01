@@ -30,7 +30,21 @@ EXPIRATION_WARNING_DAYS = 30
 # (it depends on image content/noise), so we lean conservative on the
 # per-pixel estimate and then apply SIZE_ESTIMATE_MULTIPLIER on top as a
 # deliberate safety margin.
-GRAYSCALE_BYTES_PER_PIXEL = 1.2
+#
+# GRAYSCALE_BYTES_PER_PIXEL was 1.2 (2.4 effective after the multiplier) --
+# reported live as wildly overestimating: a real tropism run at 12% complete
+# showed 58MB used against a 2.2GB prediction (~4.4x off), with a real
+# average of 1.485MB/image at 2304x1296. That's not a one-off: three real
+# grayscale experiments sampled directly off the device (2026-08-31 --
+# checked while investigating this report) gave 0.20-0.81 bytes/pixel
+# depending on content, at 2304x1296 and 4608x2592. 0.7 keeps the effective
+# (post-multiplier) value at 1.4 bytes/pixel -- comfortably above the worst
+# of those three real samples (0.81) for genuine margin, while being close
+# to reality instead of ~3x over it. No real color (non-grayscale) capture
+# exists anywhere on the device to ground COLOR_BYTES_PER_PIXEL the same
+# way (every color-configured experiment on it either errored before
+# capturing or was aborted) -- left unchanged rather than guessed.
+GRAYSCALE_BYTES_PER_PIXEL = 0.7
 COLOR_BYTES_PER_PIXEL = 2.2
 SIZE_ESTIMATE_MULTIPLIER = 2.0
 
